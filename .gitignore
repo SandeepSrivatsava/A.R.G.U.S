@@ -1,0 +1,25 @@
+# Secrets never belong in this repo (setup.sh keeps them in ~/.hermes/.env and ~/.argus)
+.env
+.env.*
+*.local
+*.key
+*.pem
+phone_token
+voiceprint.npy
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Speech models and audio are downloaded / produced at runtime, never committed
+models/
+*.onnx
+*.wav
+
+# macOS / editors
+.DS_Store
+.vscode/
+.idea/
