@@ -1,5 +1,5 @@
-"""Privacy guard: knows when the Mac is locked and which app is in front, and enforces the
-"never touch these" lists for Hermes's desktop and browser tools (via the hook in hook.py)."""
+"""Privacy guard: knows when the Mac is locked, which app is in front and which apps are visible,
+and matches apps and web addresses against the "never touch these" lists that policy.py enforces."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 log = logging.getLogger("argus.guard")
 
@@ -48,6 +48,35 @@ def frontmost_app() -> Optional[Tuple[str, str]]:
     except Exception:
         pass
     return None
+
+
+def visible_apps() -> Optional[List[str]]:
+    """Names and bundle ids of apps with windows on screen right now (no Screen Recording needed)."""
+    try:
+        import Quartz
+        from AppKit import NSRunningApplication
+        windows = Quartz.CGWindowListCopyWindowInfo(
+            Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements, Quartz.kCGNullWindowID)
+    except Exception:
+        return None
+    seen: List[str] = []
+    for w in windows or []:
+        if int(w.get("kCGWindowLayer", 0)) != 0:
+            continue
+        name = str(w.get("kCGWindowOwnerName") or "")
+        pid = int(w.get("kCGWindowOwnerPID") or 0)
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid) if pid else None
+        for value in (name, str(app.bundleIdentifier() or "") if app is not None else ""):
+            if value and value not in seen:
+                seen.append(value)
+    return seen
+
+
+def desktop_state() -> Dict[str, Any]:
+    """Fresh look at the screen's privacy-relevant state, for the policy check before a desktop action."""
+    front = frontmost_app()
+    return {"locked": screen_locked(), "front_bundle": front[0] if front else None,
+            "front_name": front[1] if front else None, "visible_apps": visible_apps() or []}
 
 
 def is_blocked_app(app: str, blocked: Iterable[str]) -> bool:

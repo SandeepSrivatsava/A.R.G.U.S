@@ -1,90 +1,119 @@
 # Argus
 
-A speaking, always-listening assistant for your Mac, named after the hundred-eyed watchman of Greek myth.
-Say "Argus" anywhere in a sentence and it answers out loud. It can look at your screen when you ask,
-open apps, click and type for you, search the web, read the news, and remind you of things. You can
-also reach it from your iPhone (Siri or a double-tap on the back of the phone) and from Telegram.
+A speaking, always-listening assistant for your Mac, iPhone and Meta glasses, named after Argus
+Panoptes, the hundred-eyed watchman of Greek myth who never slept. Say "Argus" anywhere in a sentence,
+or clap twice, and it answers out loud. It can look at your screen when you ask, use your apps, run
+commands, search the web, read the news, remember what you tell it, remind you of things, and see
+through your Meta glasses.
 
-Argus is two parts:
-
-* **The brain** is [Hermes Agent](https://github.com/NousResearch/hermes-agent) running Claude
-  (Sonnet 5.5 for conversations, Haiku 5.5 for background chores) on your own Claude API key.
-  It does the thinking, the web, the terminal, scheduled jobs and Telegram.
-* **The ears and voice** are this repo's macOS app. Listening, speech recognition and the voice all
-  run on the Mac. Only sentences addressed to Argus are sent to Claude.
+Argus is its own code, written from scratch for this project. The brain talks straight to the Claude
+API (no agent framework in between), and listening, speech recognition and the voice all run on your Mac.
+Useful ideas and small pieces of MIT-licensed code from open-source assistants were studied, ported and
+improved, with credit in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Ideas for what A.R.G.U.S.
+could stand for (and other names): [docs/NAMES.md](docs/NAMES.md).
 
 ```
-microphone ──► voice detection ──► speech-to-text ──► "was that for Argus?" ──► Hermes + Claude ──► tools
- (on Mac)      (Silero VAD)        (Moonshine)          no: dropped, never stored                 │
-                                                        yes ▼                                       │
- speakers ◄── on-device voice (Piper) ◄── reply streamed sentence by sentence ◄────────────────────┘
-                                           risky action? ──► dialog on screen + Touch ID (never by voice)
+microphone ─► voice detection ─► speech-to-text ─► "for Argus?" ─► brain ◄──► Claude API (Sonnet 5.5)
+double clap ────────────────────────────────────────►    │ no: dropped,  │
+                                                          never stored    ▼ every tool call
+                                                               policy: allow · ask you (dialog + Touch ID) · block
+                                                                          ▼
+speakers ◄─ on-device voice ◄─ reply, sentence by sentence    tools: shell, files, web, news, memory,
+                                                               reminders, apps, screen, glasses camera
+Telegram, Siri shortcuts and the Argus Eye iPhone app (Meta glasses) talk to the same brain.
 ```
+
+## What's inside
+
+| Part | What it does | Code |
+|---|---|---|
+| Brain | Streams replies from Claude, runs tools in a loop, caches the prompt to keep costs down, keeps conversations and memories in a private SQLite database, summarises long chats, tracks spend | `argus/llm.py`, `agent.py`, `prompts.py`, `store.py` |
+| Hands | Shell commands, files, web pages, news, reminders, memory, opening apps and links, and the screen (Claude's computer-use tools, carried out with macOS Quartz events) | `argus/toolbox.py`, `computer.py` |
+| Rules | Checks every tool call first: allowed, needs your OK, or blocked | `argus/policy.py`, `guard.py`, `approvals.py` |
+| Ears | Microphone, voice detection, speech recognition, name spotting, double-clap detection, voice lock | `argus/hearing.py`, `wake.py`, `listener.py`, `clap.py` |
+| Voice | On-device Piper voice (or any macOS voice); you can interrupt it | `argus/voice.py`, `brain.py` |
+| Reach | Telegram bot, iPhone gateway, Meta glasses bridge, scheduled jobs | `argus/telegram.py`, `phone.py`, `glasses.py`, `scheduler.py`, `cron.py` |
+| Mac app | Menu bar, Touch ID, lock detection, starts at login | `argus/app.py`, `daemon.py`, `macos/` |
+| iPhone app | Argus Eye: Meta glasses camera, push-to-talk | `ios/` |
 
 ## What you can say
 
-| You say | Argus |
+| You say (or do) | Argus |
 |---|---|
-| "Argus, what's the news today?" / "What's on my calendar, Argus?" | Answers out loud. The name can be anywhere in the sentence. |
+| "Argus, what's the news today?" / "What's the weather, Argus?" | Answers out loud. The name can be anywhere in the sentence. |
+| *clap clap*, then "what time is my flight?" | Two sharp claps (less than a second apart) open listening without the name. Single claps, applause and speech are ignored. |
 | (right after a reply) "And tomorrow?" | Follow-ups within 8 seconds don't need the name. |
 | "Argus, let's chat" … "that's all" | Conversation mode: no name needed until you say "that's all" (or 2 minutes of quiet). |
 | "Argus, open Safari and find flights to Delhi for Friday" | Uses your apps. Each kind of action asks for your OK on screen first. |
-| "Argus, what am I looking at?" | Takes a look at the screen (only when asked) and tells you. |
+| "Argus, what am I looking at?" | Looks through your Meta glasses if they're connected (Argus Eye app), otherwise at the screen. Only when asked. |
+| "Argus, remember that my sister's birthday is 12 March" | Remembers across conversations. "What do you remember?" / "Forget number 3." |
+| "Argus, remind me at 6 to call Mom" / "every weekday at 8, check the weather" | Reminders and scheduled tasks; spoken at the Mac and sent to Telegram. |
 | "Argus, stop" | Stops talking and cancels the current task, even mid-sentence. |
-| "Argus, go to sleep" / "Argus, wake up" | Sleep: nothing is sent anywhere until it hears "Argus, wake up". |
-| "Argus, turn off the microphone" | Closes the mic completely; turn it back on from the menu bar. |
-| "Argus, new conversation" | Starts a fresh thread (it otherwise remembers the last 30 minutes). |
+| "Argus, go to sleep" / "Argus, wake up" (or a double clap) | Sleep: nothing is sent anywhere until you wake it. |
+| "Argus, turn off the microphone" | Closes the microphone; turn it back on from the menu bar. |
+| "Argus, new conversation" | Starts a fresh thread (it otherwise keeps the last 30 minutes in mind). |
 
-The menu bar icon (◉) shows what Argus is doing and has switches for the microphone, conversation
-mode, sleep, letting Argus see the screen, stop, and the activity log.
+The menu bar icon (◉) shows what Argus is doing (and "glasses on" when your glasses are connected),
+with switches for the microphone, conversation mode, sleep, screen access, stop, and the activity log.
+In Telegram, just message your bot; `/new` starts a fresh conversation and `/stop` cancels.
+
+## Meta glasses
+
+* **Now, no extra app:** say "Hey Meta, take a photo", then "Hey Siri, Argus look". The photo comes
+  from the Meta AI app's auto-import and Argus describes it. Setup: [docs/IPHONE.md](docs/IPHONE.md).
+* **Next, the Argus Eye app** ([ios/](ios/README.md)): uses Meta's official Wearables Device Access
+  Toolkit. Argus knows when your glasses are connected, can take a photo through them when you ask
+  "what am I looking at?", and you can talk to Argus through the glasses. The app is written but hasn't
+  been compiled yet (that needs Xcode on your Mac and a free Meta developer account).
 
 ## Security in one minute
 
 The full list is in [SECURITY.md](SECURITY.md). The short version:
 
-* **Your voice stays on the Mac.** Audio is processed locally and never recorded. Speech that isn't
-  for Argus is thrown away (not stored, not sent). The microphone closes while the Mac is locked.
-* **Nothing risky happens by voice alone.** Clicking, typing, deleting, sending: each needs a click on
-  an on-screen dialog *and* Touch ID (or your Mac password). A TV or a video call can't approve anything.
-  Approvals cover one action or one task, never "always".
-* **Off-limits apps and sites.** Password managers, Keychain Access, System Settings and the banking
-  sites you list can't be looked at or touched, enforced before every desktop or browser action.
-* **No open doors.** The brain's API only listens on 127.0.0.1 with a random key. The iPhone gateway
-  only listens on your private Tailscale network with its own token. Telegram only answers your user ID.
-* **Keys never in the repo.** They live in `~/.hermes/.env` (owner-only) and are never put on a command
-  line. Your Claude Pro subscription is never used (Anthropic doesn't allow it for agents); Argus uses a
-  separate pay-per-use API key.
+* **Your voice stays on the Mac.** Audio is processed locally and never recorded. Speech that isn't for
+  Argus is thrown away (not stored, not sent). The microphone closes while the Mac is locked.
+* **Nothing risky happens by voice.** Deleting, installing, sending, clicking and typing need a click on
+  an on-screen dialog *and* Touch ID, or the buttons in your own Telegram chat. A TV or a video call
+  can't approve anything. Approvals cover one action or one task, never "always".
+* **Hard limits.** `sudo`, wiping disks, reading your keys or Argus's own secrets, password managers,
+  Keychain Access, System Settings and the banking sites you list are blocked outright, before anything runs.
+* **No open doors.** The iPhone gateway only listens on your private Tailscale network and needs a
+  256-bit token. Telegram only answers your user ID. Nothing listens on your Wi-Fi or the internet.
+* **Keys never in the repo.** They live in `~/.argus/secrets.env` (owner-only), are typed with hidden
+  input, never appear on a command line, and are removed from the environment of commands Argus runs.
+  Your Claude Pro subscription is never used; Argus uses its own pay-per-use API key.
 
 ## What you need
 
 * An Apple Silicon Mac on macOS 13 or newer (an 8 GB MacBook Air is fine) with Apple's Command Line
   Tools (`xcode-select --install`).
 * A **Claude API key** with some credit, from [platform.claude.com](https://platform.claude.com)
-  (separate from Claude Pro). Typical use is a few dollars a month; heavy screen tasks cost more because
-  screenshots are large. You can set a monthly spend limit in the console.
-* A **Telegram bot** (free, two minutes): message [@BotFather](https://t.me/BotFather), send `/newbot`,
-  copy the token. Get your numeric user ID from [@userinfobot](https://t.me/userinfobot).
-* For the iPhone: **Tailscale** (free) on the Mac and the iPhone. See [docs/IPHONE.md](docs/IPHONE.md).
+  (separate from Claude Pro). Rough guide: a spoken question costs 1 to 3 cents, a web search adds a
+  cent or two, and a ten-step task on the screen costs 10 to 30 cents. `argusctl usage` shows the running
+  estimate, and you can set a monthly limit in the Claude console.
+* Optional: a **Telegram bot** (free, two minutes): message [@BotFather](https://t.me/BotFather), send
+  `/newbot`, copy the token. Get your numeric user ID from [@userinfobot](https://t.me/userinfobot).
+* Optional, for the iPhone and glasses: **Tailscale** (free) on the Mac and the iPhone.
 
 ## Install
 
 ```bash
-git clone https://github.com/SandeepSrivatsava/argus.git ~/argus   # private repo: sign in when asked
+git clone https://github.com/SandeepSrivatsava/A.R.G.U.S.git ~/argus   # private repo: sign in when asked
 cd ~/argus
 ./setup.sh
 ```
 
-The script asks for the key, the bot token and your Telegram ID (typing is hidden), installs Hermes,
-the voice app and its speech models (checksums verified), and starts everything at login. Then:
+The script checks the Mac, asks for the key, the bot token and your Telegram ID (typing is hidden),
+installs Python and Argus's packages (every file checked against a pinned hash), downloads the speech
+models (checksums verified), builds Argus.app, and starts it at login. Then:
 
 1. **Click Allow** when macOS asks whether Argus may use the microphone.
-2. **Allow CuaDriver** in System Settings → Privacy & Security → Accessibility and Screen Recording
-   (setup offers to open these; later: `hermes computer-use permissions grant`). This is what lets
-   Argus use apps for you.
+2. **Switch on Argus** in System Settings → Privacy & Security → **Screen Recording** and
+   **Accessibility**, then run `argusctl restart`. This is what lets Argus see and use apps for you.
 3. **Teach it your voice** (recommended): `argusctl enroll`. You read five short sentences; Argus learns
-   how you pronounce its name and makes a voiceprint. To make it ignore other voices, set
-   `voice_lock = true` in `~/.argus/config.toml` and run `argusctl restart`.
-4. **iPhone**: follow [docs/IPHONE.md](docs/IPHONE.md) to add the Siri and Back Tap shortcuts.
+   how you say its name and makes a voiceprint. To make it ignore other voices, set `voice_lock = true`
+   in `~/.argus/config.toml` and run `argusctl restart`.
+4. **iPhone and glasses**: follow [docs/IPHONE.md](docs/IPHONE.md).
 5. In Telegram, open your bot and tap **Start**.
 
 Then say: "Argus, what's the news today?"
@@ -93,57 +122,69 @@ Then say: "Argus, what's the news today?"
 
 ```bash
 argusctl status            # what Argus is doing
-argusctl log               # recent activity (what was asked, which tools ran, approvals, blocks)
+argusctl log               # recent activity (requests, tools, approvals, blocks)
+argusctl usage             # estimated Claude spend today and this month
+argusctl ask "any news?"   # type a request instead of saying it (Argus answers out loud)
 argusctl say "Hello"       # speak something
+argusctl telegram "text"   # send yourself a message
 argusctl mic off|on        # microphone
 argusctl screen block|allow
+argusctl doctor            # check models, keys, Claude, Telegram, the app and its permissions
 argusctl restart           # after editing ~/.argus/config.toml
-argusctl quit              # stop the voice app (Hermes and Telegram keep running)
-./scripts/doctor.sh        # full health check
-./scripts/update.sh        # update Hermes, Argus and its packages (do this every week or two)
+argusctl quit              # stop Argus
+./scripts/doctor.sh        # doctor, plus file privacy, login item and stay-awake checks
+./scripts/update.sh        # get the latest Argus and its packages
 ```
 
-Settings live in `~/.argus/config.toml` (voice, follow-up time, blocked sites, voice lock, phone).
-The voice is an on-device British male voice (Piper "Alan"); set `engine = "say"` under `[voice]`
-to use any macOS voice instead.
+Settings live in `~/.argus/config.toml`: your name and city, the model, web search, the per-request
+token budget, follow-up time, clap mode (`"double"`, `"single"` or `"off"`), voice lock, the voice,
+blocked apps and sites, whether Telegram may use the screen (off by default), the phone gateway, the
+glasses, and the morning headlines (7:00, free) and optional AI briefing. The voice is an on-device
+British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a macOS voice instead.
 
 ## Troubleshooting
 
-* **It doesn't react to its name.** Check the menu bar icon (◌ means the mic is off or the Mac is
-  locked). Run `argusctl enroll` so it learns how you say "Argus". If your accent makes "Argus" hard,
-  set `name = "Nova"` (any single word) in `~/.argus/config.toml` and restart.
-* **It answers the TV.** Turn on voice lock (above), or use sleep mode while watching.
-* **"I can't reach my brain right now."** Hermes isn't running: `hermes gateway restart`, then
-  `./scripts/doctor.sh`.
-* **Desktop actions fail.** Run `hermes computer-use doctor` and grant the permissions it lists.
+* **It doesn't react to its name.** Check the menu bar icon (◌ means the microphone is off or the Mac is
+  locked). Run `argusctl enroll` so it learns how you say "Argus". Or clap twice and talk.
+* **It answers the TV.** Turn on voice lock (above), or put it to sleep while watching.
+* **Claps don't work.** Clap sharply twice, less than a second apart, in a quiet moment. Soft claps or
+  claps far from the Mac's microphone may not register. `clap = "off"` under `[listening]` turns it off.
+* **"I can't reach Claude right now."** Run `argusctl doctor`: it checks the internet, the key and
+  your credit.
+* **Screen actions fail.** `argusctl doctor` says whether Argus has Screen Recording and Accessibility.
+  Switch Argus on in both (System Settings → Privacy & Security), then `argusctl restart`.
 * **Microphone permission was denied.** System Settings → Privacy & Security → Microphone → turn on Argus.
-* Logs: `~/.argus/logs/` (activity log and app log) and `~/.hermes/logs/`.
+* Logs: `~/.argus/logs/` (activity log `audit.jsonl` and `argus.log`).
 
 ## How this was tested
 
-* 120 automated tests: name detection (including mishearings like "August"), listening rules
-  (follow-ups, conversation mode, sleep, barge-in), the speech queue, the Hermes client, approvals
-  (answers are clamped to once/this task/deny), the privacy hook, the control socket, the iPhone gateway
-  (tokens, lockout, image checks), settings and logs.
-* Real speech: synthesised sentences go through the real voice-detection and speech-recognition models
-  into the listening loop.
-* End to end (`tests/e2e_hermes.sh`, 42 checks): runs `setup.sh` twice against a real Hermes install,
-  then talks to Argus with real speech models and the real Hermes agent (mock model): a question is
-  answered by actually running the news script, a dangerous `rm -rf` is held for approval and denied
-  (nothing deleted), a banking site is blocked by the privacy hook, speech without the name never
-  reaches the model, and the iPhone gateway answers only with the right token.
-* Not testable off a Mac, so check these on first run: the microphone prompt, the menu bar, the
-  approval dialog with Touch ID, lock detection, and real desktop control through cua-driver.
+* **194 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+  keys), the tool loop, approvals (once / this task / deny), the policy rules, screen control (scaling,
+  stopping after a failed action, locked Mac, password apps), web-fetch safety, cost estimates, memory,
+  reminders and cron schedules, Telegram (strangers ignored, approval buttons), the iPhone gateway
+  (tokens, lockout, image checks), the glasses bridge, clap detection (double clap yes; single claps,
+  triple claps, applause and speech no), name detection including mishearings like "August", the
+  listening rules, settings, secrets and logs.
+* **Real speech**: sentences spoken by the real voice go through the real voice-detection and
+  speech-recognition models into the listening loop.
+* **End to end** (`tests/e2e.sh`, 34 checks): runs `setup.sh` twice, then starts the whole app with the
+  real speech models and a stand-in Claude server: a spoken question is answered by actually running the
+  news tool, a dangerous `rm -rf` is held for approval and denied (nothing deleted), a banking site is
+  blocked, a double clap opens listening, Telegram answers only its owner, a reminder is spoken and sent
+  to the phone, and the iPhone gateway answers only with the right token.
+* **Not testable off a Mac, so check on first run:** the microphone prompt, the menu bar, the approval
+  dialog with Touch ID, lock detection, real screen control, the live Claude API with the computer
+  tools, live Telegram, and the iPhone app (not yet compiled).
 
 ## Uninstall
 
 ```bash
-argusctl quit; launchctl bootout gui/$(id -u)/com.argus.voice; launchctl bootout gui/$(id -u)/com.argus.phone
-rm -rf ~/.argus ~/Applications/Argus.app ~/Library/LaunchAgents/com.argus.*.plist ~/.local/bin/argusctl
-hermes gateway uninstall   # and, to remove Hermes entirely: see its docs
+argusctl quit; launchctl bootout gui/$(id -u)/com.argus.voice
+./scripts/stay-awake.sh off      # if you turned it on during setup
+rm -rf ~/.argus ~/Applications/Argus.app ~/Library/LaunchAgents/com.argus.voice.plist ~/.local/bin/argusctl
 ```
 
 ## License
 
-MIT. Hermes Agent, sherpa-onnx and the speech models keep their own licenses; see
+MIT. The speech models and libraries keep their own licenses; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

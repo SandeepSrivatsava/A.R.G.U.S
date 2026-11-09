@@ -1,4 +1,5 @@
-"""Settings from ~/.argus/config.toml (written by setup.sh; safe to edit by hand)."""
+"""Settings from ~/.argus/config.toml (written by setup.sh; safe to edit by hand), and secrets from
+~/.argus/secrets.env (owner-only; never in the repo, never on a command line)."""
 from __future__ import annotations
 
 import os
@@ -28,6 +29,19 @@ def argus_home() -> Path:
 class Settings:
     name: str = "Argus"
     user_name: str = ""
+    city: str = ""
+    timezone: str = ""
+    # brain
+    model: str = "claude-sonnet-5-5"
+    small_model: str = "claude-haiku-5-5"
+    web_search: bool = True
+    session_idle_minutes: float = 30.0
+    max_steps: int = 30
+    max_turn_tokens: int = 400_000
+    context_tokens: int = 60_000
+    history_messages: int = 80
+    workspace_dir: str = "~/argus-workspace"
+    api_base: str = "https://api.anthropic.com"
     # listening
     followup_seconds: float = 8.0
     conversation_idle_seconds: float = 120.0
@@ -37,24 +51,31 @@ class Settings:
     voice_lock_threshold: float = 0.45
     mic_device: str = ""
     vad_threshold: float = 0.5
+    clap: str = "double"            # "double", "single" or "off": clapping wakes Argus up
     # voice
     voice_engine: str = "piper"
     say_voice: str = "Daniel"
     rate: int = 190
     speed: float = 1.0
     greeting: str = "Online and listening."
-    # brain
-    session_idle_minutes: float = 30.0
-    hermes_env: str = ""            # default: $HERMES_HOME/.env, else ~/.hermes/.env
     # security
     approval_needs_touch_id: bool = True
     pause_when_locked: bool = True
+    screen_control: bool = True
+    telegram_desktop: bool = False
     blocked_apps: List[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_APPS))
     blocked_sites: List[str] = field(default_factory=list)
-    # phone
+    # telegram
+    telegram_enabled: bool = True
+    telegram_user_id: int = 0
+    # phone + glasses
     phone_enabled: bool = False
     phone_host: str = ""
     phone_port: int = 8765
+    glasses_enabled: bool = True
+    # built-in scheduled jobs ("" turns one off)
+    morning_headlines: str = "0 7 * * *"
+    morning_briefing: str = ""
 
     # ---- paths -------------------------------------------------------------------------------------
     @property
@@ -62,10 +83,8 @@ class Settings:
         return argus_home()
 
     @property
-    def hermes_env_file(self) -> str:
-        if self.hermes_env:
-            return self.hermes_env
-        return str(Path(os.environ.get("HERMES_HOME") or "~/.hermes").expanduser() / ".env")
+    def workspace(self) -> Path:
+        return Path(os.path.expanduser(self.workspace_dir))
 
     @property
     def models_dir(self) -> Path:
@@ -74,6 +93,14 @@ class Settings:
     @property
     def run_dir(self) -> Path:
         return self.home / "run"
+
+    @property
+    def db_path(self) -> Path:
+        return self.home / "argus.db"
+
+    @property
+    def secrets_path(self) -> Path:
+        return self.home / "secrets.env"
 
     @property
     def audit_path(self) -> Path:
@@ -106,16 +133,35 @@ class Settings:
         return [v.lower() for v in self.extra_variants] + learned
 
 
-_SECTIONS = {
-    "listening": ("followup_seconds", "conversation_idle_seconds", "extra_variants", "soft_variants", "voice_lock",
-                  "voice_lock_threshold", "mic_device", "vad_threshold"),
-    "voice": ("voice_engine", "say_voice", "rate", "speed", "greeting"),
-    "brain": ("session_idle_minutes", "hermes_env"),
-    "security": ("approval_needs_touch_id", "pause_when_locked", "blocked_apps", "blocked_sites"),
-    "phone": ("phone_enabled", "phone_host", "phone_port"),
+# config.toml layout: top-level keys plus these sections. (section, key) -> Settings field.
+_TOP = ("name", "user_name", "city", "timezone")
+_SECTIONS: Dict[str, Dict[str, str]] = {
+    "brain": {"model": "model", "small_model": "small_model", "web_search": "web_search",
+              "session_idle_minutes": "session_idle_minutes", "max_steps": "max_steps",
+              "max_turn_tokens": "max_turn_tokens", "context_tokens": "context_tokens",
+              "history_messages": "history_messages", "workspace": "workspace_dir", "api_base": "api_base"},
+    "listening": {k: k for k in ("followup_seconds", "conversation_idle_seconds", "extra_variants", "soft_variants",
+                                 "voice_lock", "voice_lock_threshold", "mic_device", "vad_threshold", "clap")},
+    "voice": {"engine": "voice_engine", "say_voice": "say_voice", "rate": "rate", "speed": "speed", "greeting": "greeting"},
+    "security": {k: k for k in ("approval_needs_touch_id", "pause_when_locked", "screen_control", "telegram_desktop",
+                                "blocked_apps", "blocked_sites")},
+    "telegram": {"enabled": "telegram_enabled", "user_id": "telegram_user_id"},
+    "phone": {"enabled": "phone_enabled", "host": "phone_host", "port": "phone_port"},
+    "glasses": {"enabled": "glasses_enabled"},
+    "schedule": {"morning_headlines": "morning_headlines", "morning_briefing": "morning_briefing"},
 }
-_KEY_ALIASES = {("voice", "engine"): "voice_engine", ("phone", "enabled"): "phone_enabled",
-                ("phone", "host"): "phone_host", ("phone", "port"): "phone_port"}
+
+
+def _coerce(default: Any, value: Any) -> Any:
+    if isinstance(default, bool):
+        return bool(value)
+    if isinstance(default, float):
+        return float(value)
+    if isinstance(default, int):
+        return int(value)
+    if isinstance(default, list):
+        return [str(v) for v in value]
+    return str(value)
 
 
 def load(path: Path = None) -> Settings:
@@ -125,27 +171,22 @@ def load(path: Path = None) -> Settings:
         return settings
     with path.open("rb") as fh:
         data: Dict[str, Any] = tomllib.load(fh)
-    known = {f.name: f for f in fields(Settings)}
-    for key in ("name", "user_name"):
+    unknown = [k for k in data if k not in _TOP and k not in _SECTIONS]
+    if unknown:  # a typo in a security section must not be silently ignored
+        raise ValueError(f"unknown setting(s) in {path}: {', '.join(unknown)}")
+    for key in _TOP:
         if key in data:
-            setattr(settings, key, data[key])
-    for section, keys in _SECTIONS.items():
+            setattr(settings, key, str(data[key]))
+    known = {f.name for f in fields(Settings)}
+    for section, mapping in _SECTIONS.items():
         table = data.get(section) or {}
+        if not isinstance(table, dict):
+            raise ValueError(f"[{section}] in {path} must be a section")
         for raw_key, value in table.items():
-            key = _KEY_ALIASES.get((section, raw_key), raw_key)
-            if key in keys and key in known:
-                default = getattr(settings, key)
-                if isinstance(default, bool):
-                    value = bool(value)
-                elif isinstance(default, float):
-                    value = float(value)
-                elif isinstance(default, int):
-                    value = int(value)
-                elif isinstance(default, list):
-                    value = [str(v) for v in value]
-                setattr(settings, key, value)
-    if section_missing := [s for s in data if s not in _SECTIONS and s not in ("name", "user_name")]:
-        raise ValueError(f"unknown section(s) in {path}: {', '.join(section_missing)}")
+            target = mapping.get(raw_key)
+            if target is None or target not in known:
+                raise ValueError(f"unknown setting {section}.{raw_key} in {path}")
+            setattr(settings, target, _coerce(getattr(settings, target), value))
     return settings
 
 
@@ -153,3 +194,21 @@ def ensure_private_dirs(settings: Settings) -> None:
     for d in (settings.home, settings.run_dir, settings.audit_path.parent, settings.models_dir):
         d.mkdir(parents=True, exist_ok=True)
         os.chmod(d, 0o700)
+    settings.workspace.mkdir(parents=True, exist_ok=True)
+
+
+def read_secrets(path: Path) -> Dict[str, str]:
+    """KEY=VALUE lines from the owner-only secrets file. Refuses a file others can read."""
+    values: Dict[str, str] = {}
+    p = Path(path)
+    if not p.exists():
+        return values
+    if os.stat(p).st_mode & 0o077:
+        raise PermissionError(f"{p} can be read by other users; fix with: chmod 600 {p}")
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip("'\"")
+    return values

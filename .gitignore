@@ -1,4 +1,4 @@
-# Secrets never belong in this repo (setup.sh keeps them in ~/.hermes/.env and ~/.argus)
+# Secrets never belong in this repo (setup.sh keeps them in ~/.argus/secrets.env, mode 600)
 .env
 .env.*
 *.local

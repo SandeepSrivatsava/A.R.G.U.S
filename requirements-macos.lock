@@ -1,5 +1,9 @@
 # Argus voice app dependencies for macOS on Apple Silicon (Python 3.12), pinned with hashes.
 # Regenerate: uv pip compile requirements-macos.in --python-platform aarch64-apple-darwin --python-version 3.12 --generate-hashes -o requirements-macos.lock
+certifi==2026.10.23 \
+    --hash=sha256:a9895e6e2758b371e0545e321a3a8fd1fcfd9829ada8824a936dfb16aaaf36cd \
+    --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1
+    # via -r requirements-macos.in
 cffi==2.1.1 \
     --hash=sha256:046bfc24911b37851ee1b51aab8bffe713d89c68c6a057b09484ce9fd5f69b4e \
     --hash=sha256:06c72bb76605a4b0cd0aad6930b69d4baf7dd5d806cfc409b824191099700e66 \
@@ -169,7 +173,7 @@ numpy==2.5.4 \
     --hash=sha256:fbde6962867ee75b48b0ee29b2b9372ec5d617799dbaf38e82dc0596f2f7738a \
     --hash=sha256:fe4d21ab149f15e4e6043dfb0de87e6e5f34ac176cde83060e9802981fca2ac2 \
     --hash=sha256:ffa6ce09a1c6a08e9667dd9c97aa0b14184e8d18f2a14b78b2a2328c9147f076
-    # via -r req.in
+    # via -r requirements-macos.in
 pycparser==3.12 \
     --hash=sha256:a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e \
     --hash=sha256:f03387877eab82ce01bbdfd0ba7252ee55a90b1c708d5129e2ce915475cf1db6
@@ -185,10 +189,23 @@ pyobjc-core==13.0 \
     --hash=sha256:fe470bd7b8163b4b8d216b1ebe5b227f01c0fa1c4e0085d7ccade269dec02bb0 \
     --hash=sha256:ffe154462d14aa4852f424e9116f17b5f8d44f78fc0f6c4727e721a5fa7177da
     # via
+    #   pyobjc-framework-applicationservices
     #   pyobjc-framework-cocoa
+    #   pyobjc-framework-coretext
     #   pyobjc-framework-localauthentication
     #   pyobjc-framework-quartz
     #   pyobjc-framework-security
+pyobjc-framework-applicationservices==13.0 \
+    --hash=sha256:048819e0b8dd840110d1dd59ce253d86c81876da8d360f841bd2fd82dc5f8f34 \
+    --hash=sha256:0b5b8afb749172d366a01dc390cd2da41d66dd8fa9fd6b4df3773a9f4d55b0b6 \
+    --hash=sha256:577db13bad26a0f71d6349e2aae5871e133eae754e17afaa79aea1b1124cab75 \
+    --hash=sha256:5a1c79671cb17eeb3197f892bc59c18674b58d341198064a463c4790071ef5f2 \
+    --hash=sha256:7520db6b2f54f171eebcfb862f0d1f00b2ba106717590db1a567044ce2ebb9c9 \
+    --hash=sha256:934cbc41e2f51f0e37c15bb9ed1b5cb2de4688cb2177e52b345f4b2d8618b6bb \
+    --hash=sha256:aade217e9f90381df1ac8c3e10f31a58ad71b430e487bef91ce8210b804a547b \
+    --hash=sha256:d869115dd13300fa9ce926cdc23e6cceec1279bc02cc75d1be24562c89cd9ecc \
+    --hash=sha256:efff0825e220b401e1a9694765e347edf4b35792ea4cea7693c786840b65a4ca
+    # via -r requirements-macos.in
 pyobjc-framework-cocoa==13.0 \
     --hash=sha256:16dd1e8890ed695ce12bcd367ed0ac9f3e70dd1f7a8098b6398427c162591b83 \
     --hash=sha256:1a6b9f9e0ab123e51fa7df43bbc6c0414a444facd2225ad4f221a0d842c49ad6 \
@@ -200,11 +217,24 @@ pyobjc-framework-cocoa==13.0 \
     --hash=sha256:e1618d315939c9fae57cb858d4db496ec61f82495ce6a877398131ee494fc19d \
     --hash=sha256:f1e26ad2225d1c84973cce725f2f4aeeb4d5f653a36c8a9f0b691c5529dc7780
     # via
-    #   -r req.in
+    #   -r requirements-macos.in
+    #   pyobjc-framework-applicationservices
+    #   pyobjc-framework-coretext
     #   pyobjc-framework-localauthentication
     #   pyobjc-framework-quartz
     #   pyobjc-framework-security
     #   rumps
+pyobjc-framework-coretext==13.0 \
+    --hash=sha256:0ee3b7e886ffa4be769402c5341b2101d949e31a33d1a468d64b3a3579d2aea1 \
+    --hash=sha256:3800a5465dcff6c9c4aa02d94641e7eb9dcd1724dc4c2e2aea30815741546376 \
+    --hash=sha256:4d6d4133668b746b33f7df11d023f8ef205bd1e849d6d8d1a269ec753e12d678 \
+    --hash=sha256:5eba0d51a810ef36a031ebba1b2c39d2c48b545ddb071b6b4827c4c11a04b498 \
+    --hash=sha256:85cff5f6c8fdd19bf7b047ad5a5fda4b91fcbdfbf025856e7b79a9b069eff157 \
+    --hash=sha256:aab3187971bd7d79149c265b888647c4272d4cd51f8978dbee3fbf93a19136f8 \
+    --hash=sha256:cc5e05ed2dc532cabf0a595230eb6ab39de13055239d9dfc08751225de6d7da5 \
+    --hash=sha256:d8e36723d180bd8c63d93001683feb80c84760a78083152379f921de62bfc9d5 \
+    --hash=sha256:e954c63241fa450dff15984f10e1e70a20f631100c5335d9857d1a156e80d04c
+    # via pyobjc-framework-applicationservices
 pyobjc-framework-localauthentication==13.0 \
     --hash=sha256:19451d072fc2ff616ac8ff74becb0f903a6ebae6a2fa09402c1bcf9791d40954 \
     --hash=sha256:2b310323616b7b848706d192d41496f58639aa3a444f1a8ed393d248d9fcffc7 \
@@ -215,7 +245,7 @@ pyobjc-framework-localauthentication==13.0 \
     --hash=sha256:df7269cbcb9d86d3a68c91ec6709388c44d42eacecb521a09f2eff2f49883b89 \
     --hash=sha256:f11af1d32f704f1cbc8b9037936dd975c6e1dfee83e7d3a41b39037520158461 \
     --hash=sha256:fc838e39a31621ebbb8c885e6c6f7eebcf1cf01022830eab04c53ada1724c79c
-    # via -r req.in
+    # via -r requirements-macos.in
 pyobjc-framework-quartz==13.0 \
     --hash=sha256:5e1d49f2699d128553a52fad473622ff4fd424d05e879d9585dad0a9f7c3dcfd \
     --hash=sha256:90630977d69975e94f49f06e7b32b5e757334d71239944ad38c3efabb73aa4ef \
@@ -226,7 +256,10 @@ pyobjc-framework-quartz==13.0 \
     --hash=sha256:ea179def24ffbdd61e43e7c33a0cb2b2d79c7cb39fa8d212ab87c964702e5f87 \
     --hash=sha256:f7a4fab3bb1a78640135db257f2c75277d0931bad26c500e34b88480c33dece1 \
     --hash=sha256:fdba4c5d095e2f88812d0584fdb4b35dc31f38d93145830cc955f42710f1f8ec
-    # via -r req.in
+    # via
+    #   -r requirements-macos.in
+    #   pyobjc-framework-applicationservices
+    #   pyobjc-framework-coretext
 pyobjc-framework-security==13.0 \
     --hash=sha256:027e4ec0a3080efa82fadb88de68c7aa5aedacceacf5115faf4c6924704500fb \
     --hash=sha256:28a54bc028ac5951271ce168043111a478434e2271cbd054d460fdb246acc8ca \
@@ -240,7 +273,7 @@ pyobjc-framework-security==13.0 \
     # via pyobjc-framework-localauthentication
 rumps==0.4.0 \
     --hash=sha256:17fb33c21b54b1e25db0d71d1d793dc19dc3c0b7d8c79dc6d833d0cffc8b1596
-    # via -r req.in
+    # via -r requirements-macos.in
 sherpa-onnx==1.12.40 \
     --hash=sha256:010f8fbd384d30d8cdb3706f821a0dd142aff03bd922f54ca54a4f4d9da95e3c \
     --hash=sha256:01fe9bec150d53da1d612d23b8e79c441bbfe426a74886a886a8ecddc2dca51b \
@@ -300,7 +333,7 @@ sherpa-onnx==1.12.40 \
     --hash=sha256:fabd47a37a3c91b10b80f476c78d9eda6eacd1f09cf8fa65fd07381e23f94495 \
     --hash=sha256:fc137bacd30176ee7ea803cf7f57d438472de0a391e233254d1739c5cb1e429e \
     --hash=sha256:fd800210e0dcb8abd3fa708a85cd47884693a5b10271c4cdf38f4b82b8341572
-    # via -r req.in
+    # via -r requirements-macos.in
 sherpa-onnx-core==1.12.40 \
     --hash=sha256:0ebfcdaaedd0c146518190af728bf00d068aff68f405cc192a83f163188962d9 \
     --hash=sha256:102277449f95d73a272dcbbff96d33957895996ea5301e89b6d8124c3e996050 \
@@ -318,4 +351,8 @@ sounddevice==0.5.6 \
     --hash=sha256:c8ae19173e5f27f8c12d4b5eee2dbfe542cee125d591e663e0fb4dfb75246d45 \
     --hash=sha256:de099612311ad81e55d31ccbd83f43ea6bf4d87b48f9b6ea55a1fbcde0eee4e0 \
     --hash=sha256:e3aef00ad8b1d1740eb66d9a7671eab88a4d2b8fa4ab33498d742e63b65c309c
-    # via -r req.in
+    # via -r requirements-macos.in
+truststore==0.10.5 \
+    --hash=sha256:30d36967ccaded5cbb38d602c433f53600036c79d502f4533a49b60a03bbefcd \
+    --hash=sha256:9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c
+    # via -r requirements-macos.in

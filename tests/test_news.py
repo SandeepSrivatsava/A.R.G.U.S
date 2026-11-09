@@ -1,4 +1,4 @@
-"""Tests for skills/news-briefing/scripts/news.py. Run: python3 -m unittest discover -s tests -v"""
+"""Tests for argus/news.py (the headlines used by the get_news tool and the morning job)."""
 
 import contextlib
 import importlib.util
@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
-SCRIPT = ROOT / "skills" / "news-briefing" / "scripts" / "news.py"
+SCRIPT = ROOT / "argus" / "news.py"
 
 spec = importlib.util.spec_from_file_location("argus_news", SCRIPT)
 news = importlib.util.module_from_spec(spec)

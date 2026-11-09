@@ -4,10 +4,7 @@ set -euo pipefail
 PY="${ARGUS_VENV:-${ARGUS_HOME:-$HOME/.argus}/venv}/bin/python3"
 case "${1:-}" in
   restart)
-    launchctl kickstart -k "gui/$(id -u)/com.argus.voice" && echo "Argus restarted."
-    if launchctl print "gui/$(id -u)/com.argus.phone" > /dev/null 2>&1; then
-      launchctl kickstart -k "gui/$(id -u)/com.argus.phone" && echo "Phone gateway restarted."
-    fi ;;
+    launchctl kickstart -k "gui/$(id -u)/com.argus.voice" && echo "Argus restarted." ;;
   quit)
     launchctl kill TERM "gui/$(id -u)/com.argus.voice" && echo "Argus stopped. Start again: argusctl restart" ;;
   *)

@@ -1,73 +1,80 @@
-# Argus on your iPhone
+# Argus on your iPhone and Meta glasses
 
-Two shortcuts give you Argus on the phone:
+Three ways, from simplest to fullest:
 
-* **"Hey Siri, Argus"**: say your request; Argus answers out loud.
-* **Double-tap the back of the phone**: Argus looks at what's on your iPhone screen and tells you about
-  it (or answers a question about it).
+| | What you get | What it takes |
+|---|---|---|
+| **Siri shortcut** | "Hey Siri, Argus" → ask anything, hear the answer | Tailscale + one Shortcut |
+| **Glasses photo shortcut** | "Hey Meta, take a photo", then "Hey Siri, Argus look" → Argus describes it | One more Shortcut |
+| **Argus Eye app** | Live link to the glasses: knows when you wear them, Look button, push-to-talk through the glasses, and "Argus, what am I looking at?" at the Mac | Build it in Xcode ([ios/README.md](../ios/README.md)) |
 
-The phone talks to your Mac over **Tailscale**, a free private network between your own devices, so
-the Mac is never exposed to the internet, and every request needs Argus's secret token.
-
-What the phone can't do: approve risky actions (do those at the Mac with Touch ID, or in Telegram),
-and it isn't always listening. Apple doesn't let any app listen in the background or watch the screen
-without a dedicated iPhone app; that's the planned next phase (it needs Xcode and a $99/year Apple
-developer account).
+What the phone can't do: approve risky actions (do those at the Mac with Touch ID, or in Telegram). It
+also can't listen all the time: Apple doesn't let any app listen in the background or watch the screen.
 
 ## 1. Connect the Mac and the iPhone with Tailscale (free)
 
-1. On the Mac: install Tailscale from the Mac App Store (or tailscale.com/download) and sign in.
-2. On the iPhone: install Tailscale from the App Store and sign in **with the same account**.
-   Turn it on (it can stay on; it uses very little battery).
-3. On the Mac, run `./setup.sh` again in the `argus` folder. It notices Tailscale and starts the phone
+1. On the Mac, install Tailscale (Mac App Store or tailscale.com/download) and sign in.
+2. On the iPhone, install Tailscale from the App Store and sign in **with the same account**. Turn it on.
+3. On the Mac, run `./setup.sh` again in the `argus` folder. It notices Tailscale and turns on the phone
    gateway. At the end it prints the address, like `http://100.101.102.103:8765`.
-4. Get the token (treat it like a password): `argusctl phone-token`. To send it to your phone
-   privately, copy it into an AirDrop note or a Notes note you delete afterwards. Don't email it.
+4. Get the token (treat it like a password): `argusctl phone-token`. Send it to your phone privately,
+   for example in a Notes note you delete afterwards. Don't email it.
 
-## 2. Shortcut 1: "Argus" (Siri)
+The gateway only listens on the Mac's Tailscale address, never on Wi-Fi or the internet.
+
+## 2. Shortcut: "Argus" (Siri)
 
 Open **Shortcuts** → **+** and add these actions in order:
 
 1. **Dictate Text** (Language: English, Stop Listening: After Pause).
-2. **Get Contents of URL**
-   * URL: `http://100.x.y.z:8765/ask` (your Mac's Tailscale address)
-   * Tap the arrow to show more: Method **POST**
-   * Headers: add `Authorization` with the value `Bearer YOUR-TOKEN` (the word Bearer, a space, the token)
-   * Request Body: **JSON**; add a field `text` (Text) and set it to the **Dictated Text** variable
-3. **Get Dictionary Value**: Get **Value** for `reply` in **Contents of URL**
-4. **Speak Text**: **Dictionary Value**
+2. **Get Contents of URL**. Set it up like this:
+   * URL: `http://100.x.y.z:8765/ask`
+   * Method: **POST**
+   * Headers: `Authorization` = `Bearer YOUR-TOKEN`
+   * Request Body: **JSON**, field `text` = **Dictated Text**
+3. **Get Dictionary Value**: `reply` in **Contents of URL**.
+4. **Speak Text**: **Dictionary Value**.
 
-Name the shortcut **Argus**. Now say "Hey Siri, Argus", wait for the listening sound, and talk.
-Optional: on iPhones with an Action Button, set it to run the Argus shortcut (Settings → Action Button).
+Name it **Argus**. Say "Hey Siri, Argus", wait for the tone, and talk. On iPhones with an Action Button
+you can also assign it there.
 
-## 3. Shortcut 2: "Argus Look" (Back Tap, sees your screen)
+## 3. Shortcut: "Argus look" (glasses photo or screenshot)
 
-1. **Take Screenshot**
-2. **Convert Image** to **JPEG** (keeps it small; Argus only accepts PNG or JPEG)
-3. **Base64 Encode** (tap to show more: Line Breaks **None**)
-4. **Dictate Text** (optional: lets you ask about the screen; leave it out to just get a description)
-5. **Get Contents of URL**
-   * URL: `http://100.x.y.z:8765/look`, Method **POST**
-   * Header `Authorization` = `Bearer YOUR-TOKEN`
-   * Request Body: **JSON** with `image` (Text) = **Base64 Encoded**, and `text` (Text) = **Dictated Text**
-6. **Get Dictionary Value**: `reply` in **Contents of URL**
-7. **Speak Text**: **Dictionary Value**
+Your glasses' photos land in the iPhone's Photos app automatically if auto-import is on. To check, open
+the Meta AI app → Glasses → Device settings → auto-import. So:
 
-Name it **Argus Look**. Then on the iPhone: Settings → Accessibility → Touch → **Back Tap** →
-Double Tap → **Argus Look**.
+1. **Find Photos** where Media Type is Image, Sort by Creation Date, Latest First, Limit 1.
+2. **Resize Image** to width 1280.
+3. **Convert Image** to **JPEG**.
+4. **Base64 Encode** (Line Breaks: None).
+5. **Dictate Text** (optional: your question).
+6. **Get Contents of URL**:
+   * URL: `http://100.x.y.z:8765/look`
+   * Method: **POST**
+   * Header: `Authorization` = `Bearer YOUR-TOKEN`
+   * JSON: `image` = **Base64 Encoded**, `text` = **Dictated Text**
+7. **Get Dictionary Value** `reply` → **Speak Text**.
 
-The screenshot is only taken when you trigger the shortcut, it's sent over Tailscale to your Mac and
-from there to Claude to be described, and it isn't stored (the activity log only notes that a "look"
-request happened).
+Name it **Argus look**. Use: "Hey Meta, take a photo", then "Hey Siri, Argus look". For the iPhone's own
+screen instead, replace step 1 with **Take Screenshot** and assign it to Back Tap (Settings →
+Accessibility → Touch → Back Tap → Double Tap).
+
+## 4. The Argus Eye app
+
+See [ios/README.md](../ios/README.md). It needs Xcode on your Mac and a free Meta developer account.
+Once it's running and linked to your glasses:
+
+* the menu bar shows "glasses on" while they're connected, and Argus knows you're wearing them;
+* "Argus, what am I looking at?" at the Mac takes a photo with the glasses (the app must be open);
+* in the app, **Look** and **Hold to talk** work anywhere you have Tailscale, and replies play through
+  the glasses.
 
 ## Good to know
 
-* Long jobs ("research these five laptops") can take longer than Shortcuts likes to wait. Use Telegram
-  for those; it shows progress and lets you approve steps with buttons.
-* If Argus says "Your Mac couldn't answer right now", the Mac may be asleep. `./scripts/stay-awake.sh on`
-  keeps it awake while plugged in.
-* Five wrong tokens lock the phone out for 15 minutes. If the token ever leaks, delete
-  `~/.argus/phone_token`, run `argusctl restart`, then `argusctl phone-token` for a new one, and update
-  both shortcuts.
-* Turn the gateway off at any time: set `enabled = false` under `[phone]` in `~/.argus/config.toml`
-  and run `argusctl restart`.
+* Long jobs can take longer than Shortcuts likes to wait. Use Telegram for those.
+* "Your Mac couldn't answer right now" usually means the Mac is asleep. Run `./scripts/stay-awake.sh on`
+  to keep it awake while it's plugged in.
+* Five wrong tokens lock the phone out for 15 minutes. If the token leaks: delete `~/.argus/phone_token`,
+  run `argusctl restart`, then `argusctl phone-token` for a new one, and update the shortcuts and the app.
+* To turn the gateway off, set `enabled = false` under `[phone]` in `~/.argus/config.toml`, then run
+  `argusctl restart`.

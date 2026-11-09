@@ -139,8 +139,9 @@ def cmd_log(args) -> int:
 
 
 def cmd_doctor(args) -> int:
+    from pathlib import Path
     from .hearing import model_paths
-    from .hermes import Hermes
+    from .llm import Claude, LLMError
     settings = config_mod.load()
     ok = True
 
@@ -150,17 +151,28 @@ def cmd_doctor(args) -> int:
         print(f"{'PASS' if passed else 'FAIL'}  {text}")
 
     paths = model_paths(settings.models_dir)
-    from pathlib import Path
     line(Path(paths["vad"]).exists(), "voice activity model")
     line(Path(paths["asr"]).is_dir(), "speech recognition model")
     line(settings.voice_engine != "piper" or Path(paths["tts"]).is_dir(), "voice model")
     try:
-        hermes = Hermes.from_env(settings.hermes_env_file)
-        line(hermes.healthy(), "Hermes API answering on 127.0.0.1")
-    except ValueError as exc:
-        line(False, f"Hermes API settings ({exc})")
+        secrets = config_mod.read_secrets(settings.secrets_path)
+        line(bool(secrets.get("ANTHROPIC_API_KEY")), "Claude API key saved (private file)")
+    except PermissionError as exc:
+        line(False, str(exc))
+        secrets = {}
+    if secrets.get("ANTHROPIC_API_KEY") and not args.offline:
+        try:
+            Claude(secrets["ANTHROPIC_API_KEY"], base_url=settings.api_base, max_retries=1).create(
+                {"model": settings.small_model, "max_tokens": 5, "messages": [{"role": "user", "content": "ping"}]})
+            line(True, f"Claude API answers ({settings.model} for conversations)")
+        except LLMError as exc:
+            line(False, f"Claude API: {exc}")
+    if settings.telegram_enabled:
+        line(bool(secrets.get("TELEGRAM_BOT_TOKEN")) and bool(settings.telegram_user_id),
+             "Telegram bot token and your user ID are set")
     for module, what in (("sounddevice", "microphone library"), ("rumps", "menu bar library"),
-                         ("LocalAuthentication", "Touch ID library"), ("Quartz", "screen-lock detection")):
+                         ("LocalAuthentication", "Touch ID library"), ("Quartz", "screen and lock detection"),
+                         ("ApplicationServices", "accessibility check"), ("truststore", "TLS trust store")):
         try:
             __import__(module)
             line(True, what)
@@ -170,8 +182,39 @@ def cmd_doctor(args) -> int:
         status = _send_quiet("status")
         line(True, f"Argus running: {status.get('mode')}")
     except OSError:
-        line(False, "Argus app isn't running (open -a Argus)")
+        line(False, "Argus app isn't running (argusctl restart)")
+        return 0 if ok else 1
+    if settings.screen_control:
+        try:
+            perms = _send_quiet("permissions")
+        except OSError:
+            perms = {}
+        if perms.get("ok"):
+            fix = "System Settings > Privacy & Security > {} > switch on Argus, then: argusctl restart"
+            line(bool(perms.get("screen_recording")), "Screen Recording allowed" if perms.get("screen_recording")
+                 else "Screen Recording not allowed yet: " + fix.format("Screen Recording"))
+            line(bool(perms.get("accessibility")), "Accessibility allowed (clicks and typing)" if perms.get("accessibility")
+                 else "Accessibility not allowed yet: " + fix.format("Accessibility"))
     return 0 if ok else 1
+
+
+def cmd_usage(args) -> int:
+    """Claude API spend from the activity log (estimates from token counts)."""
+    import time
+    from .audit import Audit
+    settings = config_mod.load()
+    entries = [e for e in Audit(settings.audit_path).tail(100_000) if e.get("cost_usd")]
+    today, month = time.strftime("%Y-%m-%d"), time.strftime("%Y-%m")
+
+    def spent(prefix):
+        return sum(float(e["cost_usd"]) for e in entries if str(e.get("ts", "")).startswith(prefix))
+
+    requests = sum(1 for e in entries if e.get("event") == "turn" and str(e.get("ts", "")).startswith(today))
+    searches = sum(int(e.get("web_searches") or 0) for e in entries if str(e.get("ts", "")).startswith(month))
+    print(f"Today: ${spent(today):.2f} over {requests} requests")
+    print(f"This month: ${spent(month):.2f} (including {searches} web searches)")
+    print("(Estimates from token counts; the Claude console shows the exact bill.)")
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -197,23 +240,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--no-voiceprint", action="store_true", help="only learn how you say the name")
     s = sub.add_parser("transcribe", help="test speech recognition on a WAV file")
     s.add_argument("file")
-    sub.add_parser("doctor", help="check that everything Argus needs is in place")
-    sub.add_parser("phone-token", help="show the token for the iPhone Shortcuts")
+    s = sub.add_parser("doctor", help="check that everything Argus needs is in place")
+    s.add_argument("--offline", action="store_true", help="skip the check that calls the Claude API")
+    sub.add_parser("usage", help="estimated Claude API spend today and this month")
+    s = sub.add_parser("telegram", help="send a message to your phone")
+    s.add_argument("text", nargs="+")
+    sub.add_parser("phone-token", help="show the token for the iPhone shortcuts and app")
     s = sub.add_parser("run", help="run Argus in the foreground")
     s.add_argument("--headless", action="store_true", help="no menu bar")
-    sub.add_parser("phone", help="run the iPhone gateway in the foreground")
-    sub.add_parser("hook", help="(used by Hermes) privacy check for one tool call")
     args = p.parse_args(argv)
 
-    if args.cmd == "hook":
-        from .hook import main as hook_main
-        return hook_main()
     if args.cmd == "run":
         from .app import main as app_main
         return app_main(headless=args.headless)
-    if args.cmd == "phone":
-        from .phone import serve
-        return serve()
+    if args.cmd == "usage":
+        return cmd_usage(args)
     if args.cmd == "phone-token":
         from .phone import load_or_create_token
         print(load_or_create_token(config_mod.load().phone_token_path))
@@ -238,6 +279,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "screen": lambda: _send("screen", allow=args.state == "allow"),
         "stop": lambda: _send("stop"),
         "new": lambda: _send("new"),
+        "telegram": lambda: _send("telegram", text=" ".join(args.text)),
     }
     print(json.dumps(simple[args.cmd](), indent=2))
     return 0

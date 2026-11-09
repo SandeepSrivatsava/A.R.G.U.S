@@ -1,4 +1,4 @@
-"""The always-listening loop: microphone -> utterances -> (name check) -> Hermes -> voice."""
+"""The always-listening loop: microphone -> utterances (or a double clap) -> name check -> brain -> voice."""
 from __future__ import annotations
 
 import logging
@@ -24,7 +24,7 @@ class Argus:
     def __init__(self, *, source, segmenter: Segmenter, transcriber: Transcriber, listener: Listener,
                  speaker: Speaker, brain: Brain, audit: Audit, voiceprint: Optional[VoicePrint] = None,
                  voice_lock: bool = False, greeting: str = "", min_utterance_seconds: float = 0.35,
-                 barge_in_interval: float = 0.8, on_change: Callable[[], None] = lambda: None):
+                 barge_in_interval: float = 0.8, on_change: Callable[[], None] = lambda: None, clap=None):
         self.source = source
         self.segmenter = segmenter
         self.transcriber = transcriber
@@ -38,6 +38,7 @@ class Argus:
         self.min_samples = int(min_utterance_seconds * SAMPLE_RATE)
         self.barge_in_interval = barge_in_interval
         self.on_change = on_change
+        self.clap = clap                # ClapDetector: a double clap wakes Argus / starts listening
         self.mic_wanted = True          # the user's choice (menu / voice / argusctl)
         self.locked = False             # Mac screen locked: microphone closed
         self.screen_private = False     # "don't look at my screen" switch, enforced by the hook
@@ -117,9 +118,24 @@ class Argus:
                         self.handle_utterance(utterance)
                     return
                 continue
+            if self.clap is not None and self.clap.feed(chunk):
+                self.on_clap()
             for utterance in self.segmenter.feed(chunk):
                 self.handle_utterance(utterance)
             self._maybe_barge_in()
+
+    def on_clap(self) -> None:
+        """Clap clap: wake up from sleep, or listen for the next sentence without needing the name."""
+        if self.speaker.speaking or self.brain.busy or not self.mic_wanted or self.locked:
+            return
+        self.audit.log("clap")
+        if self.listener.sleeping:
+            self.run_command(Command.WAKE)
+        else:
+            self.speaker.say(ACKNOWLEDGEMENTS[self._ack % len(ACKNOWLEDGEMENTS)])
+            self._ack += 1
+            threading.Thread(target=self._ack_done, daemon=True).start()
+        self.on_change()
 
     def _maybe_barge_in(self) -> None:
         """While Argus is talking, listen for "Argus, stop" without waiting for the sentence to end."""

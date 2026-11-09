@@ -41,13 +41,10 @@ class ApprovalRequest:
         return TASK in self.choices
 
     def summary(self) -> str:
-        what = self.command or self.description or "an action"
-        if what.startswith("computer_use: "):
-            what = "use your Mac: " + what[len("computer_use: "):]
-        return what
+        return self.command or self.description or "an action"
 
     def spoken(self) -> str:
-        if self.pattern_key.startswith("cua:"):
+        if self.pattern_key.startswith("computer:"):
             return "I need your OK to use your Mac. Please check the screen."
         return "I need your OK for that. Please check the screen."
 

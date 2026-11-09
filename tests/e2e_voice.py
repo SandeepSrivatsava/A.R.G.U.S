@@ -1,88 +1,139 @@
-"""Voice end-to-end check, run by tests/e2e_hermes.sh after setup.sh and a real Hermes gateway are up.
+"""End-to-end check, run by tests/e2e.sh after setup.sh has installed Argus into a throwaway home.
 
-Spoken sentences (synthesised with the installed Piper voice) go through the installed VAD and
-speech models into the real Argus listening loop, which talks to the real Hermes Runs API (backed by
-tests/mock_llm.py). Checks: unaddressed speech never leaves the Mac; a question gets a spoken answer;
-a dangerous command is held for approval and denied; a blocked website is refused by the privacy hook.
+Builds the real Argus app from the installed settings, secrets and speech models, with three stand-ins:
+the microphone plays synthesised speech (and a double clap), the speakers record what would be said,
+and Claude / Telegram are local mock servers. Then it talks to Argus every way Sandeep would.
 
-Usage: python e2e_voice.py HERMES_ENV_FILE DANGER_DIR WORK_DIR
+Usage: python e2e_voice.py DANGER_DIR WORK_DIR
 """
+import http.client
 import json
+import os
 import sys
-import threading
 import time
 from pathlib import Path
 
-from argus import config as config_mod
-from argus.app import name_matcher
-from argus.approvals import ScriptedApprover
-from argus.audit import Audit
-from argus.brain import VOICE_RULES, Brain, Sessions
-from argus.daemon import Argus
-from argus.hearing import AudioFile, Segmenter, SherpaTranscriber, model_paths, resample, write_wav
-from argus.hermes import Hermes
-from argus.listener import Listener
-from argus.voice import PiperVoice, RecordingVoice, Speaker
+import numpy as np
 
-env_file, danger_dir, work = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
-settings = config_mod.load()
-paths = model_paths(settings.models_dir)
+sys.path.insert(0, str(Path(__file__).parent))
+from fakes import FakeTelegram, wait_for  # noqa: E402
+
+from argus import config as config_mod  # noqa: E402
+from argus.app import App  # noqa: E402
+from argus.approvals import ScriptedApprover  # noqa: E402
+from argus.hearing import AudioFile, model_paths, resample, write_wav  # noqa: E402
+from argus.voice import PiperVoice, RecordingVoice  # noqa: E402
+
+danger_dir, work = Path(sys.argv[1]), Path(sys.argv[2])
 failed = 0
 
 
 def check(desc, ok):
     global failed
-    print(("PASS  " if ok else "FAIL  ") + desc)
+    print(("PASS  " if ok else "FAIL  ") + desc, flush=True)
     failed += not ok
 
 
-lines = [
-    ("I think we should repaint the kitchen this weekend.", 3.0),
-    ("Argus, what's the top news today?", 7.0),
-    ("Argus, please delete the old files in my workspace.", 9.0),
-    ("Argus, open my bank statement.", 7.0),
-]
-tts = PiperVoice(paths["tts"], deterministic=True)
-files = []
-for i, (text, _) in enumerate(lines):
-    samples, rate = tts.synthesize(text)
-    path = work / f"voice{i}.wav"
-    write_wav(path, resample(samples, rate))
-    files.append(str(path))
+settings = config_mod.load()
+paths = model_paths(settings.models_dir)
+tg = FakeTelegram(token=config_mod.read_secrets(settings.secrets_path)["TELEGRAM_BOT_TOKEN"])
+os.environ["ARGUS_TELEGRAM_API"] = tg.url
 
-# Each sentence is followed by enough silence for its request to finish; played in real time.
-source = AudioFile(files, gap_seconds=[gap for _, gap in lines], on_chunk=lambda: time.sleep(512 / 16000))
+# ---- what the microphone will hear --------------------------------------------------------------------
+tts = PiperVoice(paths["tts"], deterministic=True)
+rng = np.random.default_rng(3)
+
+
+def clip(text):
+    s, r = tts.synthesize(text)
+    return resample(s, r)
+
+
+def clap():
+    t = np.arange(int(0.08 * 16000))
+    return (rng.standard_normal(len(t)) * 0.5 * np.exp(-t / 192)).astype(np.float32)
+
+
+def quiet(seconds):
+    return (rng.standard_normal(int(seconds * 16000)) * 0.002).astype(np.float32)
+
+
+parts = [
+    (clip("I think we should repaint the kitchen this weekend."), 3.0),       # not for Argus
+    (clip("Argus, what's the top news today?"), 7.0),                         # answered with a tool
+    (clip("Argus, please delete the old files in my workspace."), 8.0),       # held for approval, denied
+    (clip("Argus, open my bank statement."), 6.0),                            # blocked site
+    (np.concatenate([clap(), quiet(0.35), clap()]), 2.0),                     # clap clap: listening...
+    (clip("What's the weather in Portland?"), 6.0),                            # ...so no name needed
+]
+files = []
+for i, (audio, gap) in enumerate(parts):
+    path = work / f"mic{i}.wav"
+    write_wav(path, np.concatenate([quiet(0.6), audio]))
+    files.append(str(path))
+source = AudioFile(files, gap_seconds=[gap for _, gap in parts], on_chunk=lambda: time.sleep(512 / 16000))
 
 voice = RecordingVoice()
-speaker = Speaker(voice)
-audit = Audit(settings.audit_path)
 approver = ScriptedApprover(["deny"])
-brain = Brain(Hermes.from_env(env_file), speaker, approver, audit,
-              instructions=VOICE_RULES.format(user="Sandeep"), sessions=Sessions(30))
-argus = Argus(source=source, segmenter=Segmenter(paths["vad"]), transcriber=SherpaTranscriber(paths["asr"]),
-              listener=Listener(name_matcher(settings)), speaker=speaker, brain=brain, audit=audit)
-runner = threading.Thread(target=argus.run)
-runner.start()
-runner.join(180)
-brain.wait(60)
-speaker.wait_idle(10)
+app = App(settings, source=source, speaker_voice=voice, approver=approver)
+app.start_services()
+argus = app.argus
+argus.greeting = ""
+argus.run()
+argus.brain.wait(60)
+argus.speaker.wait_idle(10)
 
-print("spoken:", json.dumps(voice.spoken))
 mock_log = (work / "mock.log").read_text()
-check("speech without the name never reached the model", "kitchen" not in mock_log)
-check("answered the spoken question with the news script's top story",
+requests = [json.loads(line) for line in mock_log.splitlines()]
+print("spoken:", json.dumps(voice.spoken), flush=True)
+check("speech without the name never reached Claude", "kitchen" not in mock_log)
+check("answered the spoken question by running the news tool",
       "Top story: Storm closes Bay Area highways" in voice.spoken)
-check("the voice rules reached the model", "Never say your own name" in mock_log)
-check("dangerous command was held for approval", len(approver.seen) == 1 and "rm -rf" in approver.seen[0].command)
-check("approval was denied and nothing was deleted", danger_dir.is_dir() and (danger_dir / "keep.txt").exists())
+check("Claude got Argus's persona, voice rules and Sandeep's city",
+      "You are Argus, the personal assistant of Sandeep" in mock_log and "Portland" in mock_log
+      and "Never say your own name" in mock_log)
+check("the dangerous delete was held for approval", len(approver.seen) == 1 and "rm -rf" in approver.seen[0].command)
+check("denied, and nothing was deleted", (danger_dir / "keep.txt").exists())
 check("Argus said what happened", "Okay, I didn't delete anything." in voice.spoken)
-if '"web_extract"' in mock_log:
-    check("privacy hook blocked the banking site", any("privacy rules" in s for s in voice.spoken))
-    entries = [json.loads(l) for l in settings.audit_path.read_text().splitlines()]
-    check("the block is in the activity log",
-          any(e.get("event") == "tool_blocked" and e.get("tool") == "web_extract" for e in entries))
-else:
-    print("SKIP  privacy hook check (web_extract isn't offered by this Hermes build)")
-log_text = settings.audit_path.read_text()
-check("activity log has requests but no unaddressed speech", "top news" in log_text and "kitchen" not in log_text)
+check("the banking site was blocked by the privacy rules", any("privacy rules" in s for s in voice.spoken))
+check("double clap opened listening without the name", "weather in portland" in mock_log.lower())
+check("tools offered include the screen-free set on Linux and web search",
+      any(t.get("name") == "web_search" for t in requests[0]["tools"]))
+audit = settings.audit_path.read_text()
+check("activity log: requests, approval, block, clap, costs", all(k in audit for k in (
+    '"event": "approval"', '"event": "tool_blocked"', '"event": "clap"', '"cost_usd"')))
+check("activity log never has the unaddressed speech", "kitchen" not in audit)
+
+# ---- Telegram --------------------------------------------------------------------------------------------
+tg.message("What are the top headlines today?", user=settings.telegram_user_id)
+tg.message("hello", user=4242)                                   # a stranger
+check("Telegram: the owner gets an answer", wait_for(lambda: any(
+    m["text"] == "Top story: Storm closes Bay Area highways" for m in tg.sent), 20))
+check("Telegram: strangers get nothing", all(m["chat_id"] == settings.telegram_user_id for m in tg.sent))
+
+# ---- a reminder ------------------------------------------------------------------------------------------
+app.store.add_task("stretch your legs", "reminder", due=time.time() - 1)
+app.scheduler.tick()
+check("reminder spoken at the Mac and sent to the phone",
+      "Reminder: stretch your legs" in voice.spoken and any(m["text"] == "Reminder: stretch your legs" for m in tg.sent))
+
+# ---- iPhone gateway --------------------------------------------------------------------------------------
+token = (settings.phone_token_path).read_text().strip()
+
+
+def phone(path, body, tok):
+    conn = http.client.HTTPConnection("127.0.0.1", settings.phone_port, timeout=60)
+    conn.request("POST", path, body=json.dumps(body), headers={"Authorization": f"Bearer {tok}"})
+    resp = conn.getresponse()
+    return resp.status, json.loads(resp.read() or b"{}")
+
+
+check("iPhone: wrong token refused", phone("/ask", {"text": "hi"}, "nope")[0] == 401)
+check("iPhone: Siri-style question answered",
+      phone("/ask", {"text": "What are the top headlines today?"}, token) ==
+      (200, {"reply": "Top story: Storm closes Bay Area highways"}))
+check("iPhone: phone token file is private", oct(settings.phone_token_path.stat().st_mode & 0o777) == "0o600")
+
+app.stop()
+tg.shutdown()
 sys.exit(1 if failed else 0)

@@ -1,22 +1,15 @@
 import base64
-import http.client
-import io
 import json
 import os
 import stat
-import threading
 
 import pytest
 
 from argus import config as config_mod
 from argus.audit import Audit
 from argus.control import ControlServer, send
-from argus.guard import Guard, is_blocked_app, mentions_blocked_site, read_state, write_state
-from argus.hermes import Hermes
-from argus.hook import evaluate, main as hook_main
-from argus.phone import Gatekeeper, PhoneServer, image_data_url, load_or_create_token
-
-from fakes import FakeHermes
+from argus.guard import Guard, is_blocked_app, read_state, write_state
+from argus.phone import Gatekeeper, image_data_url, load_or_create_token
 
 
 @pytest.fixture
@@ -36,19 +29,32 @@ def settings_with(**kw):
 def test_config_loads_sections(home):
     home.mkdir(parents=True)
     (home / "config.toml").write_text(
-        'name = "Argus"\nuser_name = "Sandeep"\n[voice]\nengine = "say"\nrate = 200\n'
-        '[security]\nblocked_sites = ["mybank.com"]\n[phone]\nenabled = true\nport = 9999\n')
+        'name = "Argus"\nuser_name = "Sandeep"\ncity = "Portland, OR"\n[voice]\nengine = "say"\nrate = 200\n'
+        '[security]\nblocked_sites = ["mybank.com"]\n[phone]\nenabled = true\nport = 9999\n'
+        '[telegram]\nuser_id = 987654321\n[brain]\nworkspace = "~/ws"\n[listening]\nclap = "single"\n')
     s = config_mod.load()
     assert (s.user_name, s.voice_engine, s.rate, s.blocked_sites, s.phone_enabled, s.phone_port) == \
         ("Sandeep", "say", 200, ["mybank.com"], True, 9999)
+    assert s.telegram_user_id == 987654321 and s.clap == "single" and str(s.workspace).endswith("/ws")
     assert "com.1password.1password" in s.blocked_apps
 
 
-def test_config_typo_in_section_is_an_error(home):
+def test_config_typos_are_errors(home):
     home.mkdir(parents=True)
-    (home / "config.toml").write_text('[secutiry]\nblocked_sites = ["mybank.com"]\n')
-    with pytest.raises(ValueError):
-        config_mod.load()
+    for bad in ('[secutiry]\nblocked_sites = ["mybank.com"]\n', '[security]\nblocked_site = ["mybank.com"]\n'):
+        (home / "config.toml").write_text(bad)
+        with pytest.raises(ValueError):
+            config_mod.load()
+
+
+def test_secrets_file_must_be_private(tmp_path):
+    p = tmp_path / "secrets.env"
+    p.write_text("ANTHROPIC_API_KEY=sk-ant-x\n# note\nTELEGRAM_BOT_TOKEN='1:abc'\n")
+    os.chmod(p, 0o600)
+    assert config_mod.read_secrets(p) == {"ANTHROPIC_API_KEY": "sk-ant-x", "TELEGRAM_BOT_TOKEN": "1:abc"}
+    os.chmod(p, 0o644)
+    with pytest.raises(PermissionError):
+        config_mod.read_secrets(p)
 
 
 def test_private_dirs(home):
@@ -66,78 +72,6 @@ def test_audit_is_private_and_rotates(tmp_path):
     assert stat.S_IMODE(os.stat(tmp_path / "audit.jsonl").st_mode) == 0o600
     assert (tmp_path / "audit.jsonl.1").exists() and not (tmp_path / "audit.jsonl.3").exists()
     assert a.tail(1)[0]["text"] == "message 19"
-
-
-# ---- privacy rules (the Hermes pre_tool_call hook) -------------------------------------------------------
-UNLOCKED_SAFARI = {"locked": False, "front_bundle": "com.apple.Safari", "front_name": "Safari"}
-
-
-def call(tool, **args):
-    return {"tool_name": tool, "tool_input": args, "session_id": "s"}
-
-
-def test_blocked_apps_cannot_be_targeted():
-    s = settings_with()
-    assert evaluate(call("computer_use", action="capture", app="1Password"), s, UNLOCKED_SAFARI)
-    assert evaluate(call("computer_use", action="click", app="com.apple.keychainaccess"), s, UNLOCKED_SAFARI)
-    assert evaluate(call("computer_use", action="capture", app="Safari"), s, UNLOCKED_SAFARI) is None
-
-
-def test_front_app_checked_when_no_app_named():
-    s = settings_with()
-    front_pw = {"locked": False, "front_bundle": "com.1password.1password", "front_name": "1Password"}
-    assert "1Password" in evaluate(call("computer_use", action="capture"), s, front_pw)
-    assert evaluate(call("computer_use", action="capture", app="screen"), s, front_pw)
-    assert evaluate(call("computer_use", action="capture"), s, UNLOCKED_SAFARI) is None
-    assert evaluate(call("computer_use", action="list_apps"), s, front_pw) is None
-
-
-def test_locked_mac_and_private_screen_block_desktop_use():
-    s = settings_with()
-    assert "locked" in evaluate(call("computer_use", action="capture", app="Safari"), s, {"locked": True})
-    private = dict(UNLOCKED_SAFARI, screen_private=True)
-    assert "switched off" in evaluate(call("computer_use", action="capture", app="Safari"), s, private)
-
-
-def test_unknown_front_app_fails_closed(monkeypatch):
-    import argus.hook as hook
-    monkeypatch.setattr(hook, "frontmost_app", lambda: None)
-    reason = evaluate(call("computer_use", action="click"), settings_with(), {"locked": False})
-    assert reason and "couldn't check" in reason
-
-
-def test_blocked_sites_anywhere_in_arguments():
-    s = settings_with(blocked_sites=["mybank.com", "paypal.com"])
-    assert evaluate(call("browser_navigate", url="https://secure.mybank.com/login"), s, UNLOCKED_SAFARI)
-    assert evaluate(call("computer_use", action="type", app="Safari", text="paypal.com\n"), s, UNLOCKED_SAFARI)
-    assert evaluate(call("web_extract", urls=["https://news.example.com", "https://www.paypal.com/x"]), s, {})
-    assert evaluate(call("browser_navigate", url="https://notmybank.com.au"), s, {}) is None
-    assert mentions_blocked_site({"a": ["x", {"b": "go to MyBank.com"}]}, ["mybank.com"]) == "mybank.com"
-
-
-def test_other_tools_pass(home):
-    assert evaluate(call("web_search", query="weather"), settings_with(), {}) is None
-
-
-def test_hook_main_reads_stdin_and_audits(home):
-    config_mod.ensure_private_dirs(config_mod.load())
-    write_state(config_mod.load().state_path, dict(UNLOCKED_SAFARI))
-    out = io.StringIO()
-    hook_main(io.StringIO(json.dumps(call("computer_use", action="capture", app="Keychain Access"))), out)
-    assert json.loads(out.getvalue())["decision"] == "block"
-    out = io.StringIO()
-    hook_main(io.StringIO(json.dumps(call("computer_use", action="capture", app="Notes"))), out)
-    assert json.loads(out.getvalue()) == {}
-    events = [e["event"] for e in Audit(config_mod.load().audit_path).tail(5)]
-    assert events == ["tool_blocked", "tool_allowed"]
-
-
-def test_hook_blocks_when_settings_are_broken(home):
-    home.mkdir(parents=True)
-    (home / "config.toml").write_text("this is not toml = = =")
-    out = io.StringIO()
-    hook_main(io.StringIO(json.dumps(call("computer_use", action="capture", app="Notes"))), out)
-    assert json.loads(out.getvalue())["decision"] == "block"
 
 
 def test_is_blocked_app_variants():
@@ -214,40 +148,13 @@ def test_gatekeeper_locks_out_after_bad_tokens():
     assert not g.locked_out("100.1.1.2")
 
 
-@pytest.fixture
-def phone(tmp_path):
-    hermes = FakeHermes()
-    server = PhoneServer(("127.0.0.1", 0), Hermes(hermes.url, "test-key"), Gatekeeper("phone-secret-token"),
-                         Audit(tmp_path / "audit.jsonl"), user="Sandeep")
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield server, hermes
-    server.shutdown()
-    hermes.shutdown()
-
-
-def post(server, path, body, token="phone-secret-token"):
-    conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=10)
-    data = json.dumps(body).encode()
-    conn.request("POST", path, body=data, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-    resp = conn.getresponse()
-    return resp.status, json.loads(resp.read() or b"{}")
-
-
-def test_phone_ask_and_look(phone):
-    server, hermes = phone
-    assert post(server, "/ask", {"text": "What's on my calendar?"}) == (200, {"reply": "Sure thing."})
-    chat = hermes.chats[-1]
-    assert chat["session"].startswith("argus-phone-")
-    assert chat["messages"][0]["role"] == "system" and "Siri" in chat["messages"][0]["content"]
-    assert post(server, "/look", {"image": PNG})[0] == 200
-    parts = hermes.chats[-1]["messages"][1]["content"]
-    assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
-
-
-def test_phone_rejects_bad_requests(phone):
-    server, hermes = phone
-    assert post(server, "/ask", {"text": "hi"}, token="nope")[0] == 401
-    assert post(server, "/ask", {"text": ""})[0] == 400
-    assert post(server, "/look", {"image": "zzz"})[0] == 400
-    assert post(server, "/admin", {"text": "hi"})[0] == 404
-    assert hermes.chats == []
+def test_usage_adds_up_spend_from_the_activity_log(home, capsys):
+    from argus.__main__ import cmd_usage
+    audit = Audit(config_mod.load().audit_path)
+    audit.log("turn", cost_usd=0.0123, web_searches=2)
+    audit.log("turn", cost_usd=0.0200)
+    audit.log("conversation_compacted", cost_usd=0.0007)
+    audit.log("request", text="no cost here")
+    assert cmd_usage(None) == 0
+    out = capsys.readouterr().out
+    assert "Today: $0.03 over 2 requests" in out and "including 2 web searches" in out

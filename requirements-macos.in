@@ -1,7 +1,10 @@
 numpy>=1.26,<3
 sherpa-onnx==1.12.40
 sounddevice>=0.5
+truststore>=0.10
+certifi>=2024.2.2
 rumps>=0.4.0
 pyobjc-framework-Quartz>=11
 pyobjc-framework-LocalAuthentication>=11
 pyobjc-framework-Cocoa>=11
+pyobjc-framework-ApplicationServices>=11

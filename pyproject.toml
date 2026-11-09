@@ -1,15 +1,17 @@
 [project]
 name = "argus-assistant"
-version = "1.0.0"
-description = "Argus: an always-listening, speaking assistant for your Mac, built on Hermes Agent"
+version = "2.0.0"
+description = "Argus: an always-listening, speaking assistant for your Mac, iPhone and Meta glasses, with its own Claude-powered brain"
 requires-python = ">=3.11"
 license = "MIT"
-# Installed by setup.sh from requirements-macos.lock (hash-pinned); listed here for reference.
-dependencies = ["numpy>=1.26", "sherpa-onnx==1.12.40", "sounddevice>=0.5"]
+# setup.sh installs exactly the versions in requirements-macos.lock (every file hash-checked);
+# this list is for reference and for development installs.
+dependencies = ["numpy>=1.26", "sherpa-onnx==1.12.40", "sounddevice>=0.5", "truststore>=0.10", "certifi"]
 
 [project.optional-dependencies]
 mac = ["rumps>=0.4.0", "pyobjc-framework-Quartz>=11", "pyobjc-framework-LocalAuthentication>=11",
-       "pyobjc-framework-Cocoa>=11"]
+       "pyobjc-framework-Cocoa>=11", "pyobjc-framework-ApplicationServices>=11"]
+dev = ["pytest>=8"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

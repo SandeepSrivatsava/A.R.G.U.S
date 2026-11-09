@@ -1,5 +1,5 @@
 """Real speech through the real on-device models: Piper speaks test sentences, Silero VAD cuts them,
-Moonshine transcribes them, and the listening loop decides what reaches Hermes.
+Moonshine transcribes them, and the listening loop decides what reaches the brain.
 
 Needs the model files; set ARGUS_TEST_MODELS to a folder holding silero_vad.onnx,
 sherpa-onnx-moonshine-base-en-int8/ and vits-piper-en_US-ryan-medium/ (setup.sh downloads the same files).
@@ -65,16 +65,15 @@ def test_voiceprint_tells_voices_apart(tmp_path):
 
 
 def test_listening_loop_end_to_end(tts, stt, tmp_path):
-    from fakes import FakeHermes
+    from fakes import Script, make_agent, say
     from argus.approvals import ScriptedApprover
     from argus.audit import Audit
-    from argus.brain import Brain
+    from argus.brain import Brain, Sessions
     from argus.daemon import Argus
     from argus.hearing import AudioFile, Segmenter
-    from argus.hermes import Hermes
     from argus.listener import Listener
     from argus.voice import RecordingVoice, Speaker
-    from argus.wake import NameMatcher
+    from argus.wake import NameMatcher, words
 
     lines = [
         "I think we should repaint the kitchen this weekend.",   # not for Argus
@@ -85,14 +84,12 @@ def test_listening_loop_end_to_end(tts, stt, tmp_path):
         "Argus, wake up.",                                      # local command
     ]
     files = [wav_for(tts, tmp_path, i, t) for i, t in enumerate(lines)]
-    hermes = FakeHermes()
-    hermes.script = [[{"event": "message.delta", "delta": "A storm closed roads in the Bay Area. "},
-                      {"event": "run.completed", "output": "A storm closed roads in the Bay Area."}],
-                     [{"event": "run.completed", "output": "The Warriors won last night."}]]
+    script = Script(say("A storm closed roads in the Bay Area."), say("The Warriors won last night."))
+    agent, _ = make_agent(tmp_path, script)
     voice = RecordingVoice()
     speaker = Speaker(voice)
     audit = Audit(tmp_path / "audit.jsonl")
-    brain = Brain(Hermes(hermes.url, "test-key"), speaker, ScriptedApprover([]), audit)
+    brain = Brain(agent, speaker, ScriptedApprover([]), audit, Sessions(agent.store))
     # play the audio in real time so the follow-up window behaves as it would live
     source = AudioFile(files, gap_seconds=1.2, on_chunk=lambda: time.sleep(512 / 16000))
     argus = Argus(source=source, segmenter=Segmenter(str(MODELS / "silero_vad.onnx")), transcriber=stt,
@@ -102,14 +99,10 @@ def test_listening_loop_end_to_end(tts, stt, tmp_path):
     t.join(90)
     brain.wait(10)
     speaker.wait_idle(5)
-    try:
-        from argus.wake import words
-        assert [words(r["input"]) for r in hermes.runs] == [words("Argus, what's the top news today?"),
-                                                            words("And what about the sports news?")]
-        assert voice.spoken[:2] == ["A storm closed roads in the Bay Area.", "The Warriors won last night."]
-        assert any(s.startswith("Going quiet") for s in voice.spoken) and "I'm back." in voice.spoken
-        assert argus.ignored >= 2
-        log = (tmp_path / "audit.jsonl").read_text()
-        assert "kitchen" not in log and "weather" not in log
-    finally:
-        hermes.shutdown()
+    asked = [words(b["messages"][-1]["content"][0]["text"]) for b in script.bodies]
+    assert asked == [words("Argus, what's the top news today?"), words("And what about the sports news?")]
+    assert voice.spoken[:2] == ["A storm closed roads in the Bay Area.", "The Warriors won last night."]
+    assert any(s.startswith("Going quiet") for s in voice.spoken) and "I'm back." in voice.spoken
+    assert argus.ignored >= 2
+    log = (tmp_path / "audit.jsonl").read_text()
+    assert "kitchen" not in log and "weather" not in log

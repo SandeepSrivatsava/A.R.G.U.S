@@ -7,8 +7,7 @@ Ported from the original personal_assistant/news_updater.py, with these fixes:
 - the same story from several feeds is shown once
 - certificate checks work on macOS Python builds (uses truststore or certifi when present)
 
-Standard library only, so it runs under any Python 3.8+, including Hermes's own interpreter
-for script-only cron jobs.
+Standard library only, so it runs under any Python 3.8+ and can also be used on its own from a terminal.
 
 Examples:
   news.py                              top 8 headlines as text (good for Telegram)
@@ -42,7 +41,7 @@ DEFAULT_FEEDS: List[Tuple[str, str]] = [
     ("Reuters", "https://news.google.com/rss/search?q=when:24h+site:reuters.com&hl=en-US&gl=US&ceid=US:en"),
 ]
 TOPIC_FEED = "https://news.google.com/rss/search?q={query}+when:2d&hl=en-US&gl=US&ceid=US:en"
-USER_AGENT = "argus-news/1.0 (+https://github.com/NousResearch/hermes-agent)"
+USER_AGENT = "argus-news/2.0"
 MAX_FEED_BYTES = 5 * 1024 * 1024
 TIMEOUT_SECONDS = 10
 
@@ -215,6 +214,27 @@ def as_text(articles: List[Article], heading: str) -> str:
     return "\n".join(lines)
 
 
+def headlines(topic: Optional[str] = None, top: int = 8,
+              offline: Optional[Sequence[str]] = None) -> Tuple[List[Article], List[str]]:
+    """Top stories (optionally about `topic`), plus any feed errors."""
+    top = max(1, min(int(top), 50))
+    errors: List[str] = []
+    if offline:
+        parsed = []
+        for path in offline:
+            try:
+                with open(path, "rb") as handle:
+                    parsed.append(parse_feed(handle.read()))
+            except (OSError, ValueError) as exc:
+                errors.append(f"{path}: {exc}")
+        return merge(parsed, top), errors
+    if topic:
+        feeds = [(f"Google News: {topic}", TOPIC_FEED.format(query=urllib.parse.quote_plus(topic)))]
+    else:
+        feeds = feeds_from_env() or DEFAULT_FEEDS
+    return collect(feeds, top)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Print today's top news headlines.")
     parser.add_argument("--top", type=int, default=8, help="how many stories (default 8)")
@@ -223,25 +243,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--offline", metavar="FILE", action="append",
                         help="read a saved RSS file instead of fetching (repeatable)")
     args = parser.parse_args(argv)
-    top = max(1, min(args.top, 50))
-
-    errors: List[str] = []
-    if args.offline:
-        parsed = []
-        for path in args.offline:
-            try:
-                with open(path, "rb") as handle:
-                    parsed.append(parse_feed(handle.read()))
-            except (OSError, ValueError) as exc:
-                errors.append(f"{path}: {exc}")
-        articles = merge(parsed, top)
-    else:
-        if args.topic:
-            query = urllib.parse.quote_plus(args.topic)
-            feeds = [(f"Google News: {args.topic}", TOPIC_FEED.format(query=query))]
-        else:
-            feeds = feeds_from_env() or DEFAULT_FEEDS
-        articles, errors = collect(feeds, top)
+    articles, errors = headlines(args.topic, args.top, args.offline)
 
     for error in errors:
         print(f"warning: feed failed: {error}", file=sys.stderr)
