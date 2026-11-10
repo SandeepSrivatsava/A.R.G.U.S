@@ -104,7 +104,19 @@ class FakeSegmenter:
         return np.zeros(0, dtype=np.float32)
 
 
-def make_argus(tmp_path, transcripts, script=None, answers=()):
+class FakeVoicePrint:
+    """Voice check stand-in: scores are queued per utterance (default: clearly the owner)."""
+    enrolled = True
+    threshold = 0.45
+
+    def __init__(self, *scores: float):
+        self.scores = list(scores)
+
+    def score(self, samples) -> float:
+        return self.scores.pop(0) if self.scores else 0.9
+
+
+def make_argus(tmp_path, transcripts, script=None, answers=(), approver=None, **argus_kwargs):
     from argus.approvals import ScriptedApprover
     from argus.audit import Audit
     from argus.brain import Brain, Sessions
@@ -118,9 +130,9 @@ def make_argus(tmp_path, transcripts, script=None, answers=()):
     voice = RecordingVoice()
     speaker = Speaker(voice)
     audit = Audit(tmp_path / "audit.jsonl")
-    brain = Brain(agent, speaker, ScriptedApprover(list(answers)), audit, Sessions(agent.store))
+    brain = Brain(agent, speaker, approver or ScriptedApprover(list(answers)), audit, Sessions(agent.store))
     argus = Argus(source=FakeSource(), segmenter=FakeSegmenter(), transcriber=ScriptedTranscriber(transcripts),
-                  listener=Listener(NameMatcher("argus")), speaker=speaker, brain=brain, audit=audit)
+                  listener=Listener(NameMatcher("argus")), speaker=speaker, brain=brain, audit=audit, **argus_kwargs)
     argus.set_mic(True)
     return argus, voice, script
 

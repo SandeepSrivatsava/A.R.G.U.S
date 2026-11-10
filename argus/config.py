@@ -41,6 +41,7 @@ class Settings:
     session_idle_minutes: float = 30.0
     max_steps: int = 30
     max_turn_tokens: int = 400_000
+    self_learning: bool = True     # after a request that hit errors, write one lesson (lessons.py)
     context_tokens: int = 60_000
     history_messages: int = 80
     workspace_dir: str = "~/argus-workspace"
@@ -50,8 +51,10 @@ class Settings:
     conversation_idle_seconds: float = 120.0
     extra_variants: List[str] = field(default_factory=list)
     soft_variants: List[str] = field(default_factory=lambda: ["august", "angus"])
-    voice_lock: bool = False
+    voice_lock: bool = True        # only answer the enrolled voice (takes effect after argusctl enroll)
     voice_lock_threshold: float = 0.45
+    guests: str = "ask"            # someone else talks to Argus: "ask" you first, or "never" answer them
+    guest_minutes: float = 60.0    # "talk to everyone" lasts this long
     mic_device: str = ""
     vad_threshold: float = 0.5
     end_of_speech_seconds: float = 0.6   # how long a pause ends a sentence (shorter = snappier)
@@ -64,6 +67,8 @@ class Settings:
     greeting: str = "Online and listening."
     # security
     approval_needs_touch_id: bool = True
+    voice_approvals: bool = True            # your voice + a spoken code word can approve (never for paying)
+    voice_approval_threshold: float = 0.55  # stricter than the voice lock
     pause_when_locked: bool = True
     screen_control: bool = True
     blocked_apps: List[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_APPS))
@@ -73,6 +78,15 @@ class Settings:
     phone_host: str = ""
     phone_port: int = 8765
     glasses_enabled: bool = True
+    # phone calls from your own number, through the Mac (calls.py)
+    calls_enabled: bool = False
+    call_model: str = ""                    # "" = the brain's model
+    call_max_minutes: float = 6.0
+    call_monitor: bool = True               # also play both sides of the call on the Mac's speakers
+    call_international: bool = False        # allow numbers outside +1 (US/Canada)
+    calls_per_hour: int = 6
+    call_input_device: str = "BlackHole 2ch"
+    call_tap: str = "~/.argus/bin/audiotee"
     # built-in scheduled jobs ("" turns one off)
     morning_headlines: str = "0 7 * * *"
     morning_briefing: str = ""
@@ -138,16 +152,19 @@ _TOP = ("name", "user_name", "city", "timezone")
 _SECTIONS: Dict[str, Dict[str, str]] = {
     "brain": {"model": "model", "small_model": "small_model", "web_search": "web_search",
               "session_idle_minutes": "session_idle_minutes", "max_steps": "max_steps",
-              "max_turn_tokens": "max_turn_tokens", "context_tokens": "context_tokens",
+              "max_turn_tokens": "max_turn_tokens", "context_tokens": "context_tokens", "self_learning": "self_learning",
               "history_messages": "history_messages", "workspace": "workspace_dir", "api_base": "api_base"},
     "listening": {k: k for k in ("followup_seconds", "conversation_idle_seconds", "extra_variants", "soft_variants",
                                  "voice_lock", "voice_lock_threshold", "mic_device", "vad_threshold", "clap",
-                                 "end_of_speech_seconds")},
+                                 "end_of_speech_seconds", "guests", "guest_minutes")},
     "voice": {"engine": "voice_engine", "say_voice": "say_voice", "rate": "rate", "speed": "speed", "greeting": "greeting"},
     "security": {k: k for k in ("approval_needs_touch_id", "pause_when_locked", "screen_control",
-                                "blocked_apps", "blocked_sites")},
+                                "blocked_apps", "blocked_sites", "voice_approvals", "voice_approval_threshold")},
     "phone": {"enabled": "phone_enabled", "host": "phone_host", "port": "phone_port"},
     "glasses": {"enabled": "glasses_enabled"},
+    "calls": {"enabled": "calls_enabled", "model": "call_model", "max_minutes": "call_max_minutes",
+              "monitor": "call_monitor", "international": "call_international", "per_hour": "calls_per_hour",
+              "input_device": "call_input_device", "tap": "call_tap"},
     "schedule": {"morning_headlines": "morning_headlines", "morning_briefing": "morning_briefing"},
 }
 
@@ -178,6 +195,8 @@ def _validate(s: "Settings") -> None:
     from .cron import Cron, CronError
     if s.clap not in ("double", "single", "off"):
         raise ValueError('listening.clap must be "double", "single" or "off"')
+    if s.guests not in ("ask", "never"):
+        raise ValueError('listening.guests must be "ask" or "never"')
     if s.voice_engine not in ("piper", "say"):
         raise ValueError('voice.engine must be "piper" or "say"')
     if s.timezone:
@@ -202,7 +221,10 @@ def _validate(s: "Settings") -> None:
               ("brain.context_tokens", s.context_tokens >= 1000), ("brain.history_messages", s.history_messages >= 2),
               ("brain.session_idle_minutes", s.session_idle_minutes > 0),
               ("voice.rate", s.rate > 0), ("voice.speed", s.speed > 0),
-              ("phone.port", 1 <= s.phone_port <= 65535))
+              ("phone.port", 1 <= s.phone_port <= 65535),
+              ("listening.guest_minutes", 1 <= s.guest_minutes <= 1440),
+              ("security.voice_approval_threshold", 0 <= s.voice_approval_threshold <= 1),
+              ("calls.max_minutes", 1 <= s.call_max_minutes <= 30), ("calls.per_hour", 1 <= s.calls_per_hour <= 30))
     for name, ok in checks:
         if not ok:
             raise ValueError(f"{name} is out of range")

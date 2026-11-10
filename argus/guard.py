@@ -72,11 +72,54 @@ def visible_apps() -> Optional[List[str]]:
     return seen
 
 
+def _ax_value(element, attribute: str):
+    from ApplicationServices import AXUIElementCopyAttributeValue  # pyobjc-framework-ApplicationServices
+    error, value = AXUIElementCopyAttributeValue(element, attribute, None)
+    return value if error == 0 else None
+
+
+def front_window_title() -> str:
+    """Title of the window in front (for a browser: the page title), via the Accessibility interface."""
+    try:
+        from ApplicationServices import AXUIElementCreateSystemWide
+        app = _ax_value(AXUIElementCreateSystemWide(), "AXFocusedApplication")
+        window = _ax_value(app, "AXFocusedWindow") if app is not None else None
+        title = _ax_value(window, "AXTitle") if window is not None else None
+        return str(title or "")[:200]
+    except Exception:
+        return ""
+
+
+def element_at(x: float, y: float) -> Dict[str, str]:
+    """Role and label of whatever is at this screen point (a button's text, a link's name)."""
+    try:
+        from ApplicationServices import AXUIElementCopyElementAtPosition, AXUIElementCreateSystemWide
+        error, element = AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), float(x), float(y), None)
+        if error != 0 or element is None:
+            return {}
+        info: Dict[str, str] = {}
+        for _ in range(3):           # web buttons often keep their text on a parent element
+            for key, attr in (("role", "AXRole"), ("title", "AXTitle"), ("description", "AXDescription"),
+                              ("value", "AXValue"), ("help", "AXHelp")):
+                value = _ax_value(element, attr)
+                if isinstance(value, str) and value.strip() and not info.get(key):
+                    info[key] = value.strip()[:120]
+            if any(info.get(k) for k in ("title", "description", "value")):
+                break
+            element = _ax_value(element, "AXParent")
+            if element is None:
+                break
+        return info
+    except Exception:
+        return {}
+
+
 def desktop_state() -> Dict[str, Any]:
     """Fresh look at the screen's privacy-relevant state, for the policy check before a desktop action."""
     front = frontmost_app()
     return {"locked": screen_locked(), "front_bundle": front[0] if front else None,
-            "front_name": front[1] if front else None, "visible_apps": visible_apps() or []}
+            "front_name": front[1] if front else None, "visible_apps": visible_apps() or [],
+            "front_title": front_window_title()}
 
 
 def is_blocked_app(app: str, blocked: Iterable[str]) -> bool:

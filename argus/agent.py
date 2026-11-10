@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 from .approvals import DENY, ONCE, TASK, ApprovalRequest
 from .audit import Audit
 from .computer import NOT_EXECUTED, TOOLSET, Computer
+from .lessons import IN_PROMPT, MAX_LESSONS, pick, request_text
 from .llm import Claude, LLMError, StreamAccumulator
 from .policy import ASK, BLOCK, Policy
 from .prompts import system_blocks
@@ -63,6 +64,7 @@ class Turn:
     error: Optional[str] = None
     usage: Dict[str, int] = field(default_factory=dict)
     cost: float = 0.0
+    steps: List[Dict[str, Any]] = field(default_factory=list)    # what each tool call did (for lessons)
 
 
 def request_cost(model: str, usage: Dict[str, int]) -> float:
@@ -154,12 +156,26 @@ def prune_images(messages: List[Dict[str, Any]], keep: int = KEEP_IMAGES) -> Lis
     return out
 
 
+def _step(block: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    """One tool call, summarised for the lessons Argus learns from its own mistakes."""
+    name, args = str(block.get("name")), block.get("input")
+    if block.get("toolset_name") == "computer":
+        what = f"screen: {name.replace('_', ' ')}"
+    else:
+        what = describe_call(name, args if isinstance(args, dict) else {})
+    content = result.get("content")
+    error = content if isinstance(content, str) else "error"
+    return {"tool": name, "what": what, "ok": not result.get("is_error"),
+            "error": error[:300] if result.get("is_error") else ""}
+
+
 class Agent:
     def __init__(self, llm: Claude, store: Store, policy: Policy, tools: Dict[str, Tool], *, settings,
                  audit: Audit, computer: Optional[Computer] = None,
                  glasses=None, glasses_status: Callable[[], Optional[str]] = lambda: None,
-                 secrets: Sequence[str] = ()):
+                 secrets: Sequence[str] = (), reflector=None):
         self.llm = llm
+        self.reflector = reflector            # learns a lesson after a request that hit errors (lessons.py)
         self.store = store
         self.policy = policy
         self.tools = tools
@@ -289,7 +305,8 @@ class Agent:
             return fail(f"Blocked by Argus rules: {verdict.reason}")
         if verdict.action == ASK and verdict.scope not in grants:
             request = ApprovalRequest(run_id=session_id, command=what, description=verdict.reason,
-                                      choices=["once", "session", "deny"], pattern_key=verdict.scope, origin=channel)
+                                      choices=["once", "session", "deny"], pattern_key=verdict.scope, origin=channel,
+                                      money=verdict.money)
             try:
                 choice = events.approve(request)
             except Exception as exc:   # a broken dialog must never count as a yes
@@ -327,9 +344,15 @@ class Agent:
         messages = repair(self.store.history(session_id, limit=self.settings.history_messages))
         self.store.append(session_id, "user", content)
         messages.append({"role": "user", "content": content})
+        guest = channel == "guest"           # someone other than the owner: nothing personal in the prompt
+        asked = request_text(content)
+        lessons = [] if guest else pick(self.store.lessons(MAX_LESSONS), asked, IN_PROMPT)
+        self.store.used_lessons([i for i, _, _ in lessons])
         system = system_blocks(user=self.settings.user_name, city=self.settings.city, timezone=self.settings.timezone,
                                workspace=str(self.settings.workspace), channel=channel,
-                               facts=self.store.facts(limit=40), glasses=self.glasses_status())
+                               facts=() if guest else self.store.facts(limit=40),
+                               lessons=[(i, text) for i, text, _ in lessons],
+                               glasses=None if guest else self.glasses_status())
         ctx = Context(channel=channel, workspace=self.settings.workspace, store=self.store, cancel=cancel,
                       glasses=self.glasses, timezone=self.settings.timezone or None)
         grants: Set[str] = set()
@@ -402,6 +425,7 @@ class Agent:
                 if block.get("toolset_name") == "computer" and res.get("is_error"):
                     screen_failed = True
                 results.append(res)
+                turn.steps.append(_step(block, res))
             messages.append({"role": "user", "content": results})
             self.store.append(session_id, "user", results)
             if spent > self.settings.max_turn_tokens:
@@ -413,4 +437,6 @@ class Agent:
                        input_tokens=turn.usage.get("input_tokens"), output_tokens=turn.usage.get("output_tokens"),
                        cache_read=turn.usage.get("cache_read_input_tokens"),
                        web_searches=turn.usage.get("web_search_requests"), cost_usd=round(turn.cost, 4))
+        if self.reflector is not None and channel in ("voice", "phone", "cli") and not turn.stopped:
+            self.reflector.learn_later(asked, turn.steps, turn.text)
         return turn

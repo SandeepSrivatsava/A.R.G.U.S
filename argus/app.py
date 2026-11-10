@@ -14,15 +14,16 @@ from datetime import datetime
 from typing import Any, Optional
 
 from . import config as config_mod
-from .agent import Agent, Events
-from .approvals import MacApprover
+from .agent import Agent, Events, request_cost
+from .approvals import MacApprover, VoiceGate, VoiceOrScreenApprover
 from .audit import Audit
 from .brain import Brain, Sessions
 from .clap import ClapDetector
 from .control import ControlServer
 from .daemon import Argus
 from .glasses import GlassesBridge
-from .guard import Guard, desktop_state
+from .guard import Guard, desktop_state, element_at
+from .lessons import Reflector
 from .hearing import Microphone, Segmenter, SherpaTranscriber, VoicePrint, model_paths
 from .listener import Listener
 from .llm import Claude
@@ -88,11 +89,15 @@ class App:
             except Exception as exc:
                 log.warning("screen control unavailable: %s", exc)
         self.computer = computer
-        self.policy = Policy(settings, workspace=settings.workspace, desktop_state=self._desktop_state)
+        self.policy = Policy(settings, workspace=settings.workspace, desktop_state=self._desktop_state,
+                             inspect_point=self._inspect_point)
+        reflector = Reflector(self.llm, self.store, model=settings.small_model, audit=self.audit,
+                              cost=request_cost) if settings.self_learning else None
         self.agent = Agent(self.llm, self.store, self.policy,
                            build_tools(mac=IS_MAC or computer is not None, glasses=settings.glasses_enabled),
-                           settings=settings, audit=self.audit, computer=computer, glasses=self.glasses, glasses_status=(self.glasses.describe if self.glasses else lambda: None),
-                           secrets=self._secret_values(secrets))
+                           settings=settings, audit=self.audit, computer=computer, glasses=self.glasses,
+                           glasses_status=(self.glasses.describe if self.glasses else lambda: None),
+                           secrets=self._secret_values(secrets), reflector=reflector)
         self.scheduler = Scheduler(self.store, deliver=self.deliver, run_task=self.run_task, headlines=format_headlines,
                                    tz=settings.timezone or None)
         self.phone: Optional[PhoneServer] = None
@@ -108,6 +113,13 @@ class App:
             pass
         return values
 
+    def _inspect_point(self, coordinate) -> dict:
+        """What's under a click (for spotting Buy / Pay buttons). Screenshot coordinates -> screen points."""
+        if not IS_MAC or self.computer is None:
+            return {}
+        x, y = self.computer._to_screen(coordinate)
+        return element_at(x, y)
+
     def _desktop_state(self) -> dict:
         state = desktop_state() if IS_MAC else {"locked": False, "front_bundle": "", "front_name": "", "visible_apps": []}
         state["screen_private"] = bool(self.argus and self.argus.screen_private)
@@ -120,9 +132,13 @@ class App:
                                                       piper_dir=paths["tts"], speed=s.speed, tmp_dir=str(s.run_dir)))
         listener = Listener(name_matcher(s), followup_seconds=s.followup_seconds,
                             conversation_idle_seconds=s.conversation_idle_seconds)
-        brain = Brain(self.agent, speaker, approver or MacApprover(require_owner_auth=s.approval_needs_touch_id,
-                                                                   audit=self.audit),
-                      self.audit, Sessions(self.store, "voice", "mac", s.session_idle_minutes))
+        gate = VoiceGate()
+        if approver is None:
+            screen = MacApprover(require_owner_auth=s.approval_needs_touch_id, audit=self.audit)
+            approver = VoiceOrScreenApprover(screen, gate, audit=self.audit, voice_ok=lambda: bool(
+                s.voice_approvals and self.argus is not None and self.argus.voice_approvals_available()))
+        brain = Brain(self.agent, speaker, approver, self.audit,
+                      Sessions(self.store, "voice", "mac", s.session_idle_minutes))
         voiceprint = None
         if s.voice_lock and s.voiceprint_path.exists():
             voiceprint = VoicePrint(paths["speaker"], str(s.voiceprint_path), s.voice_lock_threshold)
@@ -130,7 +146,9 @@ class App:
                      segmenter=Segmenter(paths["vad"], threshold=s.vad_threshold, min_silence=s.end_of_speech_seconds),
                      transcriber=transcriber or SherpaTranscriber(paths["asr"]), listener=listener, speaker=speaker,
                      brain=brain, audit=self.audit, voiceprint=voiceprint, voice_lock=s.voice_lock,
-                     greeting=s.greeting, clap=ClapDetector(s.clap) if s.clap != "off" else None)
+                     greeting=s.greeting, clap=ClapDetector(s.clap) if s.clap != "off" else None,
+                     gate=gate, voice_approval_threshold=s.voice_approval_threshold, guests=s.guests,
+                     guest_minutes=s.guest_minutes, owner_name=s.user_name)
 
     def deliver(self, text: str) -> None:
         """A reminder or scheduled result, spoken at the Mac. If the Mac is locked or the microphone is off,

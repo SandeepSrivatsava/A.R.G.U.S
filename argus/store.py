@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   due REAL, cron TEXT, next_run REAL, created REAL NOT NULL, done INTEGER NOT NULL DEFAULT 0,
   last_run REAL, origin TEXT NOT NULL DEFAULT 'voice');
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS lessons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, lesson TEXT NOT NULL, source TEXT NOT NULL,
+  created REAL NOT NULL, used REAL, uses INTEGER NOT NULL DEFAULT 0);
 """
 
 
@@ -119,6 +122,48 @@ class Store:
         else:
             rows = self._q("SELECT id, fact FROM memory ORDER BY id DESC LIMIT ?", (limit,))
         return [(int(i), f) for i, f in rows]
+
+    # ---- lessons (rules learned from corrections and mistakes; see lessons.py) -------------------------
+    def add_lesson(self, lesson: str, source: str = "you") -> int:
+        with self._lock:
+            cur = self._db.execute("INSERT INTO lessons(lesson, source, created) VALUES (?,?,?)",
+                                   (lesson.strip(), source, time.time()))
+            return int(cur.lastrowid)
+
+    def update_lesson(self, lesson_id: int, lesson: str, source: str) -> None:
+        with self._lock:
+            self._db.execute("UPDATE lessons SET lesson=?, source=?, created=? WHERE id=?",
+                             (lesson.strip(), source, time.time(), int(lesson_id)))
+
+    def lessons(self, limit: int = 200) -> List[Tuple[int, str, str]]:
+        rows = self._q("SELECT id, lesson, source FROM lessons ORDER BY id DESC LIMIT ?", (limit,))
+        return [(int(i), text, source) for i, text, source in rows]
+
+    def forget_lesson(self, lesson_id: int) -> bool:
+        with self._lock:
+            return self._db.execute("DELETE FROM lessons WHERE id=?", (int(lesson_id),)).rowcount > 0
+
+    def clear_lessons(self) -> int:
+        with self._lock:
+            return self._db.execute("DELETE FROM lessons").rowcount
+
+    def used_lessons(self, ids: List[int]) -> None:
+        if not ids:
+            return
+        with self._lock:
+            self._db.executemany("UPDATE lessons SET used=?, uses=uses+1 WHERE id=?",
+                                 [(time.time(), int(i)) for i in ids])
+
+    def prune_lessons(self, keep: int) -> int:
+        """Past `keep` lessons, drop the ones Argus wrote itself that were least recently useful."""
+        with self._lock:
+            total = self._db.execute("SELECT COUNT(*) FROM lessons").fetchone()[0]
+            extra = total - keep
+            if extra <= 0:
+                return 0
+            return self._db.execute(
+                "DELETE FROM lessons WHERE id IN (SELECT id FROM lessons WHERE source='self' "
+                "ORDER BY COALESCE(used, created) LIMIT ?)", (extra,)).rowcount
 
     # ---- scheduled tasks ---------------------------------------------------------------------------
     def add_task(self, text: str, mode: str, *, due: Optional[float] = None, cron: Optional[str] = None,

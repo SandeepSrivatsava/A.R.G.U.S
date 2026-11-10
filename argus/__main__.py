@@ -196,6 +196,30 @@ def cmd_doctor(args) -> int:
     return 0 if ok else 1
 
 
+def cmd_lessons(args) -> int:
+    from .store import Store
+    store = Store(config_mod.load().db_path)
+    if args.action == "clear":
+        print(f"Forgot {store.clear_lessons()} lessons.")
+        return 0
+    if args.action == "forget":
+        try:
+            lesson_id = int(str(args.id or "").upper().lstrip("L"))
+        except ValueError:
+            print("Say which lesson, e.g.: argusctl lessons forget L3")
+            return 2
+        ok = store.forget_lesson(lesson_id)
+        print(f"Forgot L{lesson_id}." if ok else f"There's no lesson L{lesson_id}.")
+        return 0 if ok else 1
+    rows = store.lessons(500)
+    if not rows:
+        print("No lessons yet. Argus learns them when you correct it, and from its own mistakes.")
+        return 0
+    for lesson_id, text, source in sorted(rows):
+        print(f"L{lesson_id:<4} {'you ' if source == 'you' else 'self'}  {text}")
+    return 0
+
+
 def cmd_usage(args) -> int:
     """Claude API spend from the activity log (estimates from token counts)."""
     import time
@@ -241,6 +265,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     s = sub.add_parser("doctor", help="check that everything Argus needs is in place")
     s.add_argument("--offline", action="store_true", help="skip the check that calls the Claude API")
     sub.add_parser("usage", help="estimated Claude API spend today and this month")
+    s = sub.add_parser("lessons", help="what Argus has learned from your corrections and its own mistakes")
+    s.add_argument("action", nargs="?", choices=["list", "forget", "clear"], default="list")
+    s.add_argument("id", nargs="?", help="lesson number to forget, e.g. 3 or L3")
     sub.add_parser("phone-token", help="show the token for the iPhone shortcuts and app")
     s = sub.add_parser("run", help="run Argus in the foreground")
     s.add_argument("--headless", action="store_true", help="no menu bar")
@@ -256,6 +283,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return app_main(headless=args.headless)
     if args.cmd == "usage":
         return cmd_usage(args)
+    if args.cmd == "lessons":
+        return cmd_lessons(args)
     if args.cmd == "phone-token":
         from .phone import load_or_create_token
         print(load_or_create_token(config_mod.load().phone_token_path))

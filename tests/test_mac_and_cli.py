@@ -7,6 +7,7 @@ ARGUS_PYOBJC_WHEELS pointing at unpacked macOS wheels; skipped otherwise)."""
 import json
 import os
 import re
+import io
 import subprocess
 import sys
 import threading
@@ -270,36 +271,71 @@ def test_touch_id(monkeypatch):
     assert approvals_mod.touch_id("approve") is False
 
 
+class FakeDialog:
+    """Stands in for the osascript approval dialog (subprocess.Popen)."""
+
+    def __init__(self, button: str = "", *, hang: bool = False, fail: Exception = None):
+        self.button, self.hang, self.fail = button, hang, fail
+        self.terminated = False
+        self.cmd = None
+
+    def __call__(self, cmd, **kw):
+        if self.fail is not None:
+            raise self.fail
+        self.cmd = cmd
+        self.stdout = io.StringIO(self.button + "\n")
+        return self
+
+    def poll(self):
+        return None if self.hang and not self.terminated else 0
+
+    def terminate(self):
+        self.terminated = True
+
+
 @pytest.mark.parametrize("button,touch,expected", [
     ("Allow once", True, ONCE), ("Allow for this task", True, TASK), ("Deny", True, DENY), ("", True, DENY),
     ("Allow once", False, DENY), ("Something else", True, DENY)])
-def test_approval_dialog_answers(monkeypatch, tmp_path, button, touch, expected):
-    monkeypatch.setattr(approvals_mod.subprocess, "run",
-                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, button + "\n", ""))
-    monkeypatch.setattr(approvals_mod, "touch_id", lambda reason: touch)
+def test_approval_dialog_answers(tmp_path, button, touch, expected):
     audit = Audit(tmp_path / "audit.jsonl")
     request = ApprovalRequest(run_id="r", command="rm notes.txt", description="deleting files",
                               choices=["once", "session", "deny"], pattern_key="shell:deleting files")
-    assert MacApprover(audit=audit).decide(request) == expected
+    approver = MacApprover(audit=audit, popen=FakeDialog(button), auth=lambda reason, cancel=None: touch)
+    assert approver.decide(request) == expected
     if button == "Allow once" and not touch:
         assert "approval_auth_failed" in (tmp_path / "audit.jsonl").read_text()
 
 
-@pytest.mark.parametrize("problem", [subprocess.TimeoutExpired(["osascript"], 150), FileNotFoundError("osascript")])
-def test_a_dialog_that_hangs_or_cant_open_is_a_no(monkeypatch, problem):
-    def run(cmd, **kw):
-        raise problem
-    monkeypatch.setattr(approvals_mod.subprocess, "run", run)
+@pytest.mark.parametrize("problem", [OSError("no window server"), FileNotFoundError("osascript")])
+def test_a_dialog_that_cant_open_is_a_no(problem):
     request = ApprovalRequest(run_id="r", command="rm x", choices=["once", "deny"])
-    assert MacApprover().decide(request) == DENY
+    assert MacApprover(popen=FakeDialog(fail=problem)).decide(request) == DENY
 
 
-def test_without_touch_id_the_dialog_alone_decides(monkeypatch):
-    monkeypatch.setattr(approvals_mod.subprocess, "run",
-                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "Allow once\n", ""))
-    monkeypatch.setattr(approvals_mod, "touch_id", lambda reason: pytest.fail("Touch ID shouldn't be asked"))
+def test_a_dialog_nobody_answers_is_taken_away_and_is_a_no(monkeypatch):
+    dialog = FakeDialog(hang=True)
+    clock = iter(range(0, 10_000, 100))
+    monkeypatch.setattr(approvals_mod.time, "monotonic", lambda: float(next(clock)))
+    monkeypatch.setattr(approvals_mod.time, "sleep", lambda s: None)
     request = ApprovalRequest(run_id="r", command="rm x", choices=["once", "deny"])
-    assert MacApprover(require_owner_auth=False).decide(request) == ONCE
+    assert MacApprover(timeout=60, popen=dialog).decide(request) == DENY
+    assert dialog.terminated
+
+
+def test_without_touch_id_the_dialog_alone_decides():
+    request = ApprovalRequest(run_id="r", command="rm x", choices=["once", "deny"])
+    approver = MacApprover(require_owner_auth=False, popen=FakeDialog("Allow once"),
+                           auth=lambda reason, cancel=None: pytest.fail("Touch ID shouldn't be asked"))
+    assert approver.decide(request) == ONCE
+
+
+def test_paying_always_asks_for_touch_id_even_when_it_is_switched_off():
+    asked = []
+    request = ApprovalRequest(run_id="r", command="click Place order", choices=["once", "deny"], money=True)
+    approver = MacApprover(require_owner_auth=False, popen=FakeDialog("Allow once"),
+                           auth=lambda reason, cancel=None: asked.append(reason) or True)
+    assert approver.decide(request) == ONCE and asked
+    assert "involves paying" in approver.message(request)
 
 
 # ---- the menu bar ------------------------------------------------------------------------------------------

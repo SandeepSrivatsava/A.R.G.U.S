@@ -25,6 +25,7 @@ class Verdict:
     action: str
     reason: str = ""
     scope: str = ""        # what an "Allow for this task" answer covers
+    money: bool = False    # paying or buying: only Touch ID can approve it
 
 
 def _rx(patterns: Iterable[Tuple[str, str]]) -> List[Tuple[re.Pattern, str]]:
@@ -104,13 +105,50 @@ def canon_keys(combo: str) -> frozenset:
     return frozenset(_KEY_ALIASES.get(p, p) for p in parts)
 
 
+# ---- paying and buying: always Touch ID ------------------------------------------------------------------
+# A click looks the same whether it opens a menu or places an order, so Argus looks at what's being pressed
+# (the button's label, from the Mac's accessibility interface), the page it's on (window title) and what's
+# being typed (a card number). Not perfect (a button may have no label), so the model is also told to stop
+# before paying, but anything that matches needs Touch ID even when screen use was allowed by voice.
+MONEY_BUTTON = re.compile(
+    r"\b(buy|purchase|pay|checkout|check out|place (my |your |the )?order|complete (my |your |the )?(order|purchase|"
+    r"payment|booking and pay)|confirm (and |& )?pay|pay now|order now|subscribe|start (my |your )?(free )?trial|"
+    r"donate|send money|add (a )?(card|payment method)|book and pay|reserve and pay|top up|add funds)\b", re.I)
+MONEY_PAGE = re.compile(
+    r"\b(check ?out|payment|billing|place (your )?order|order (review|summary)|purchase|buy now|subscribe|"
+    r"subscription|donat\w+|wallet|top ?up|add funds)\b", re.I)
+CLICKS = frozenset({"left_click", "right_click", "middle_click", "double_click", "triple_click", "left_mouse_down",
+                    "left_mouse_up"})
+
+
+def luhn_ok(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        n = int(ch)
+        if i % 2:
+            n = n * 2 - 9 if n > 4 else n * 2
+        total += n
+    return total % 10 == 0
+
+
+def has_card_number(text: str) -> bool:
+    for match in re.finditer(r"(?:\d[ -]?){13,19}", str(text)):
+        digits = re.sub(r"\D", "", match.group())
+        if 13 <= len(digits) <= 19 and luhn_ok(digits):
+            return True
+    return False
+
+
 class Policy:
     def __init__(self, settings, *, workspace: Path, home: Optional[Path] = None,
-                 desktop_state: Callable[[], Dict[str, Any]] = dict):
+                 desktop_state: Callable[[], Dict[str, Any]] = dict,
+                 inspect_point: Callable[[Any], Dict[str, Any]] = lambda coordinate: {}):
         self.settings = settings
         self.workspace = Path(workspace).expanduser().resolve()
         self.home = Path(home or Path.home()).expanduser().resolve()
-        self.desktop_state = desktop_state     # {"locked", "screen_private", "front_bundle", "front_name", "visible_apps"}
+        self.desktop_state = desktop_state     # {"locked", "screen_private", "front_bundle", "front_name", "visible_apps",
+        #                                         "front_title"}
+        self.inspect_point = inspect_point     # screenshot coordinate -> {"role", "title", "description", "value"}
 
     # ---- paths -------------------------------------------------------------------------------------
     def resolve(self, path: str) -> Path:
@@ -206,5 +244,26 @@ class Policy:
                 if rx.search(str(args.get("text") or "")):
                     return Verdict(BLOCK, f"not allowed: {why}.")
         if member in COMPUTER_INPUT:
+            money = self._money(member, args, state)
+            if money:
+                return Verdict(ASK, f"pay or buy something ({money})", scope="money", money=True)
             return Verdict(ASK, f"use your Mac: {member.replace('_', ' ')}", scope=f"computer:{member}")
         return Verdict(ALLOW)
+
+    def _money(self, member: str, args: Dict[str, Any], state: Dict[str, Any]) -> str:
+        """Why this screen action looks like paying, or ""."""
+        title = " ".join(str(state.get("front_title") or "").split())
+        if MONEY_PAGE.search(title):
+            return f"the page is {title[:60]!r}"
+        if member == "type" and has_card_number(str(args.get("text") or "")):
+            return "typing a card number"
+        if member in CLICKS and args.get("coordinate") is not None:
+            try:
+                info = self.inspect_point(args.get("coordinate")) or {}
+            except Exception:
+                info = {}
+            label = " ".join(str(info.get(k) or "") for k in ("title", "description", "value", "help"))
+            label = " ".join(label.split())
+            if MONEY_BUTTON.search(label):
+                return f"pressing {label[:40]!r}"
+        return ""

@@ -8,7 +8,7 @@ import time
 from typing import Callable, Optional
 
 from .agent import Agent, Events
-from .approvals import ApprovalRequest, Approver
+from .approvals import ApprovalRequest, Approver, DenyAll
 from .audit import Audit
 from .store import Store
 from .voice import SentenceBuffer, Speaker
@@ -45,8 +45,9 @@ def spoken_error(error: str) -> str:
 
 
 class _VoiceEvents(Events):
-    def __init__(self, brain: "Brain", cancelled: threading.Event):
+    def __init__(self, brain: "Brain", cancelled: threading.Event, approver: Optional[Approver] = None):
         self.brain, self.cancelled = brain, cancelled
+        self.approver = approver or brain.approver
         self.buffer = SentenceBuffer()
         self.spoke = False
         self.started = time.monotonic()
@@ -70,20 +71,26 @@ class _VoiceEvents(Events):
 
     def approve(self, request: ApprovalRequest) -> str:
         self.flush()
-        self.say(request.spoken())
         if self.cancelled.is_set():
             return "deny"
-        return self.brain.approver.ask(request)
+        self.approver.prepare(request)          # picks the spoken code word, if a spoken answer is allowed
+        self.say(request.spoken())
+        if self.cancelled.is_set():
+            self.approver.withdraw(request)
+            return "deny"
+        return self.approver.ask(request)
 
 
 class Brain:
     def __init__(self, agent: Agent, speaker: Speaker, approver: Approver, audit: Audit, sessions: Sessions, *,
-                 on_reply_finished: Callable[[], None] = lambda: None, progress_after: float = 3.0):
+                 on_reply_finished: Callable[[], None] = lambda: None, progress_after: float = 3.0,
+                 guest_sessions: Optional[Sessions] = None):
         self.agent = agent
         self.speaker = speaker
         self.approver = approver
         self.audit = audit
         self.sessions = sessions
+        self.guest_sessions = guest_sessions or Sessions(sessions.store, "guest", "mac", 10.0)
         self.on_reply_finished = on_reply_finished
         self.progress_after = progress_after
         self._thread: Optional[threading.Thread] = None
@@ -95,14 +102,16 @@ class Brain:
     def busy(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def ask(self, text: str) -> None:
-        """Handle a request in the background (cancelling any request still running)."""
+    def ask(self, text: str, guest: bool = False) -> None:
+        """Handle a request in the background (cancelling any request still running).
+        guest=True: someone other than the owner, whom the owner allowed: no personal context, no Mac."""
         with self._lock:
             if self.busy:
                 self.cancel()                       # cancelling also cuts the old request's connection,
                 self._thread.join(timeout=3)        # so the old turn ends almost at once
             self._cancelled = flag = threading.Event()
-            self._thread = threading.Thread(target=self._handle, args=(text, flag), name="argus-brain", daemon=True)
+            self._thread = threading.Thread(target=self._handle, args=(text, flag, guest), name="argus-brain",
+                                            daemon=True)
             self._thread.start()
 
     def cancel(self) -> None:
@@ -120,10 +129,11 @@ class Brain:
         if thread is not None:
             thread.join(timeout)
 
-    def _handle(self, text: str, cancelled: threading.Event) -> None:
-        events = _VoiceEvents(self, cancelled)
+    def _handle(self, text: str, cancelled: threading.Event, guest: bool = False) -> None:
+        events = _VoiceEvents(self, cancelled, DenyAll() if guest else None)
+        sessions = self.guest_sessions if guest else self.sessions
         try:
-            turn = self.agent.run(session_id=self.sessions.current(), channel="voice", content=text,
+            turn = self.agent.run(session_id=sessions.current(), channel="guest" if guest else "voice", content=text,
                                   events=events, cancel=cancelled)
         except Exception as exc:  # never let one request take the voice loop down
             log.exception("request failed")

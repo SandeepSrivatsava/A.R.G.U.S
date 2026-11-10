@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -18,13 +19,22 @@ from .wake import Command, command_of, looks_like_echo
 log = logging.getLogger("argus.daemon")
 
 ACKNOWLEDGEMENTS = ("Yes?", "I'm listening.", "Go ahead.")
+GUEST_WAIT = 25.0      # how long Argus waits for you to say whether it may answer someone else
+
+_GUEST_NO = re.compile(r"\b(no|nope|don'?t|do not|not now|ignore (them|it|that)|never ?mind|leave it)\b")
+_GUEST_YES = re.compile(r"\b(yes|yeah|yep|sure|ok|okay|go ahead|answer|please do|of course|fine|go on)\b")
+_GUEST_ALL = re.compile(r"\b(everyone|everybody|anyone|all of them|them all|from now on|for (the next |an |a )?"
+                        r"(hour|while)|my friends|my guests|guests)\b")
+_YES_WORD = re.compile(r"\b(yes|yeah|yep|sure|ok|okay|allow|approve|go ahead|do it)\b")
 
 
 class Argus:
     def __init__(self, *, source, segmenter: Segmenter, transcriber: Transcriber, listener: Listener,
                  speaker: Speaker, brain: Brain, audit: Audit, voiceprint: Optional[VoicePrint] = None,
                  voice_lock: bool = False, greeting: str = "", min_utterance_seconds: float = 0.35,
-                 barge_in_interval: float = 0.8, on_change: Callable[[], None] = lambda: None, clap=None):
+                 barge_in_interval: float = 0.8, on_change: Callable[[], None] = lambda: None, clap=None,
+                 gate=None, voice_approval_threshold: float = 0.55, guests: str = "ask", guest_minutes: float = 60.0,
+                 owner_name: str = "", clock: Callable[[], float] = time.monotonic):
         self.source = source
         self.segmenter = segmenter
         self.transcriber = transcriber
@@ -49,7 +59,23 @@ class Argus:
         self._ack = 0
         self._held: List[str] = []      # reminders that came while you were away, spoken when you're back
         self._held_lock = threading.Lock()
+        self.gate = gate                # VoiceGate: a spoken approval Argus is waiting for (approvals.py)
+        self.voice_approval_threshold = voice_approval_threshold
+        self.guests = guests            # "ask": someone else talks to Argus -> ask the owner first; "never"
+        self.guest_minutes = guest_minutes
+        self.guests_until = 0.0         # "talk to everyone" lasts until then
+        self.owner_name = owner_name
+        self.clock = clock
+        self._guest_question: Optional[tuple] = None   # (what they asked, when Argus asked the owner)
         self.brain.on_reply_finished = self._reply_finished
+
+    @property
+    def voice_lock_active(self) -> bool:
+        return bool(self.voice_lock and self.voiceprint is not None and self.voiceprint.enrolled)
+
+    def voice_approvals_available(self) -> bool:
+        """A spoken yes only counts when Argus can tell it's the owner's voice."""
+        return self.gate is not None and self.voice_lock_active and self.mic_wanted and not self.locked
 
     # ---- state shown in the menu bar / `argusctl status` -------------------------------------------
     def status(self) -> Dict[str, Any]:
@@ -65,8 +91,15 @@ class Argus:
             mode = self.listener.mode()
         return {"ok": True, "mode": mode, "mic_open": bool(self.source.is_open), "conversation": self.listener.conversation,
                 "asleep": self.listener.sleeping, "screen_private": self.screen_private,
-                "voice_lock": self.voice_lock and bool(self.voiceprint and self.voiceprint.enrolled),
+                "voice_lock": self.voice_lock_active, "guests": self._guests_status(),
                 "ignored_sentences": self.ignored, "last_error": self.brain.last_error}
+
+    def _guests_status(self) -> str:
+        if not self.voice_lock_active:
+            return "everyone (voice lock is off)"
+        if self.clock() < self.guests_until:
+            return f"everyone for {max(1, int((self.guests_until - self.clock()) / 60))} more min"
+        return "only you" + (" (asks you about others)" if self.guests == "ask" else "")
 
     def guard_state(self) -> Dict[str, Any]:
         return {"screen_private": self.screen_private, "mic": self.status()["mode"]}
@@ -195,12 +228,18 @@ class Argus:
         if not heard.addressed and looks_like_echo(text, self.speaker.recently_spoken()):
             self.ignored += 1          # Argus hearing its own voice
             return
-        if self.voice_lock and self.voiceprint is not None and self.voiceprint.enrolled and (
-                heard.addressed or self.listener.in_followup() or self.listener.conversation_active()):
+        if self.gate is not None and self.gate.pending:
+            self._approval_answer(samples, text)      # waiting for "yes, <code word>": no name needed
+            return
+        if self.voice_lock_active and (heard.addressed or self.listener.in_followup()
+                                       or self.listener.conversation_active() or self._guest_pending()):
             score = self.voiceprint.score(samples)
             if score < self.voiceprint.threshold:
                 self.audit.log("voice_not_recognised", score=round(score, 3))
                 self.ignored += 1
+                self._someone_else(heard, text)
+                return
+            if self._guest_pending() and self._guest_answer(text):
                 return
         speaking = self.speaker.speaking or self.speaker.quiet_for() < 0.8   # don't answer our own voice
         decision = self.listener.decide(text, busy=self.brain.busy, speaking=speaking)
@@ -219,6 +258,73 @@ class Argus:
                 self.brain.cancel()
             self.brain.ask(text)
         self.on_change()
+
+    # ---- spoken approvals ----------------------------------------------------------------------------
+    def _approval_answer(self, samples: np.ndarray, text: str) -> None:
+        if not self.voice_lock_active:
+            return
+        score = self.voiceprint.score(samples)
+        if score < self.voice_approval_threshold:
+            self.audit.log("approval_voice_rejected", score=round(score, 3))
+            self.ignored += 1
+            return
+        if self.gate.offer(text) is None and _YES_WORD.search(text.lower()) and self.gate.code:
+            self.speaker.say(f"Please say yes and the word {self.gate.code}.")
+
+    # ---- other people ------------------------------------------------------------------------------
+    def _guest_pending(self) -> bool:
+        if self._guest_question is None:
+            return False
+        if self.clock() - self._guest_question[1] > GUEST_WAIT:
+            self._guest_question = None
+            return False
+        return True
+
+    def _someone_else(self, heard, text: str) -> None:
+        """Not the owner's voice. Answer only if the owner allowed it; otherwise ask the owner first."""
+        if self.guests == "never":
+            return
+        now = self.clock()
+        allowed = now < self.guests_until
+        if not (heard.addressed or (allowed and self.listener.in_followup())):
+            return
+        question = (heard.rest if heard.addressed else text).strip()
+        if not question:
+            return
+        if allowed:
+            self._answer_guest(question)
+            return
+        if self._guest_pending():
+            return                     # already asked; waiting for the owner
+        self._guest_question = (question, now)
+        self.audit.log("guest_waiting")
+        who = f"{self.owner_name}, someone" if self.owner_name else "Someone"
+        self.speaker.say(f"{who} else is asking me something. Should I answer them?")
+
+    def _guest_answer(self, text: str) -> bool:
+        """The owner's reply to "should I answer them?". False if it wasn't an answer."""
+        said = " ".join(re.findall(r"[a-z']+", text.lower()))
+        question = self._guest_question[0]
+        if _GUEST_NO.search(said):
+            self._guest_question = None
+            self.audit.log("guest_declined")
+            self.speaker.say("Okay, I won't.")
+            return True
+        if not _GUEST_YES.search(said):
+            return False
+        self._guest_question = None
+        if _GUEST_ALL.search(said):
+            self.guests_until = self.clock() + self.guest_minutes * 60
+            self.audit.log("guests_allowed", minutes=self.guest_minutes)
+        self._answer_guest(question)
+        return True
+
+    def _answer_guest(self, question: str) -> None:
+        if self.brain.busy:
+            self.speaker.say("I'm in the middle of something. Please ask me again in a moment.")
+            return
+        self.audit.log("guest_question")
+        self.brain.ask(question, guest=True)
 
     def _ack_done(self) -> None:
         self.speaker.wait_idle(timeout=10)
@@ -252,6 +358,21 @@ class Argus:
         elif command is Command.NEW_SESSION:
             self.brain.sessions.rotate()
             self.speaker.say("Fresh start.")
+        elif command is Command.GUESTS_ON:
+            if not self.voice_lock_active:
+                self.speaker.say("I can't tell voices apart yet, so I already answer everyone. Run argusctl enroll "
+                                 "to teach me your voice.")
+            else:
+                self.guests_until = self.clock() + self.guest_minutes * 60
+                self.audit.log("guests_allowed", minutes=self.guest_minutes)
+                minutes = int(self.guest_minutes)
+                span = "the next hour" if minutes == 60 else f"the next {minutes} minutes"
+                self.speaker.say(f"Okay, I'll answer everyone for {span}.")
+        elif command is Command.GUESTS_OFF:
+            self.guests_until = 0.0
+            self._guest_question = None
+            self.audit.log("guests_stopped")
+            self.speaker.say("Okay, just you.")
         self.on_change()
 
     # ---- control socket handlers -------------------------------------------------------------------

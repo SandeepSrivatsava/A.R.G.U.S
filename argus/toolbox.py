@@ -416,8 +416,28 @@ def forget(args: Dict[str, Any], ctx: Context) -> ToolOutput:
 
 
 def recall(args: Dict[str, Any], ctx: Context) -> ToolOutput:
-    facts = ctx.store.facts(str(args.get("query") or ""), 50)
-    return ToolOutput("\n".join(f"#{i}: {f}" for i, f in facts) if facts else "nothing remembered yet")
+    query = str(args.get("query") or "").strip().lower()
+    facts = ctx.store.facts(query, 50)
+    lessons = [(i, text) for i, text, _ in ctx.store.lessons(200) if not query or query in text.lower()][:30]
+    parts = []
+    if facts:
+        parts.append("\n".join(f"#{i}: {f}" for i, f in facts))
+    if lessons:
+        parts.append("Lessons:\n" + "\n".join(f"L{i}: {text}" for i, text in lessons))
+    return ToolOutput("\n\n".join(parts) if parts else "nothing remembered yet")
+
+
+def learn(args: Dict[str, Any], ctx: Context) -> ToolOutput:
+    from .lessons import save_lesson
+    lesson_id, outcome = save_lesson(ctx.store, str(args.get("lesson") or ""), "you")
+    if lesson_id is None:
+        return ToolOutput.error(f"not saved: {outcome}")
+    return ToolOutput(f"lesson L{lesson_id} {outcome}")
+
+
+def forget_lesson(args: Dict[str, Any], ctx: Context) -> ToolOutput:
+    ok = ctx.store.forget_lesson(_whole(args.get("id")))
+    return ToolOutput("lesson forgotten") if ok else ToolOutput.error("no such lesson")
 
 
 def parse_when(text: str, tz: Optional[str] = None) -> float:
@@ -525,13 +545,22 @@ def build_tools(*, mac: bool = True, glasses: bool = True) -> Dict[str, Tool]:
         Tool("search_files", "Search file names and text inside files under a folder (regular expression).",
              _obj({"pattern": {"type": "string"}, "path": {"type": "string"}}, ["pattern"]), search_files),
         Tool("fetch_page", "Read a web page (text) or image by URL.",
-             _obj({"url": {"type": "string"}, "max_chars": {"type": "integer"}}, ["url"]), fetch_page),
+             _obj({"url": {"type": "string"}, "max_chars": {"type": "integer"}}, ["url"]), fetch_page,
+             frozenset({"voice", "phone", "scheduler", "cli", "guest"})),
         Tool("get_news", "Today's top headlines (Google News, BBC, NPR, Reuters), optionally about a topic.",
-             _obj({"topic": {"type": "string"}, "count": {"type": "integer", "minimum": 1, "maximum": 20}}), get_news),
+             _obj({"topic": {"type": "string"}, "count": {"type": "integer", "minimum": 1, "maximum": 20}}), get_news,
+             frozenset({"voice", "phone", "scheduler", "cli", "guest"})),
         Tool("remember", "Save a lasting fact or preference about the user for future conversations.",
              _obj({"fact": {"type": "string"}}, ["fact"]), remember),
         Tool("forget", "Delete a remembered fact by its number.", _obj({"id": {"type": "integer"}}, ["id"]), forget),
-        Tool("recall", "Look up remembered facts.", _obj({"query": {"type": "string"}}), recall),
+        Tool("recall", "Look up remembered facts and learned lessons.", _obj({"query": {"type": "string"}}), recall),
+        Tool("learn", "Save a lesson: one short, general rule for doing things better next time. Use it when the user "
+             "corrects you or tells you how they want something done from now on (one-off facts go to remember).",
+             _obj({"lesson": {"type": "string", "description": "e.g. 'When Sandeep says the report, he means the "
+                                                              "latest PDF in ~/Documents/Work.'"}}, ["lesson"]),
+             learn, frozenset({"voice", "phone", "cli"})),
+        Tool("forget_lesson", "Delete a learned lesson by its L-number.", _obj({"id": {"type": "integer"}}, ["id"]),
+             forget_lesson, frozenset({"voice", "phone", "cli"})),
         Tool("schedule", "Create, list or cancel reminders and scheduled tasks. 'reminder' says/sends the text at the time; "
              "'task' has Argus do the text as a request at that time and send the result. Give either 'at' (ISO local "
              "date-time) or 'cron' (5-field repeat, e.g. '0 7 * * 1-5').",

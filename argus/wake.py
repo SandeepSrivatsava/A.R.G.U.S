@@ -185,9 +185,17 @@ class Command(str, Enum):
     CONVERSATION_ON = "conversation_on"    # no need to say the name for a while
     CONVERSATION_OFF = "conversation_off"
     NEW_SESSION = "new_session"            # forget the current conversation thread
+    GUESTS_ON = "guests_on"                # answer other people too, for a while
+    GUESTS_OFF = "guests_off"              # only the owner again
 
 
 _COMMANDS: Tuple[Tuple[Command, re.Pattern], ...] = tuple((c, re.compile(p)) for c, p in (
+    (Command.GUESTS_ON, r"(you can )?(talk|speak) to (everyone|everybody|anyone|my friends|my guests|them|others|"
+                        r"other people)( too| as well)?|answer (everyone|everybody|anyone|my friends|my guests|them|"
+                        r"others)( too| as well)?|guest mode( on)?"),
+    (Command.GUESTS_OFF, r"(only|just) (me|listen to me|answer me|my voice)( from now on| now)?|only listen to me|"
+                         r"only answer me|stop (talking to|answering) (everyone|everybody|them|others|guests|my friends)|"
+                         r"guest mode off"),
     (Command.STOP, r"(stop|cancel|never ?mind|nevermind|quiet|be quiet|shut up|enough|that'?s enough|hold on|"
                    r"stop talking|stop it|cancel that|cancel it|forget it|stop that)( now)?"),
     (Command.SLEEP, r"(go to sleep|sleep|stop listening|pause listening|take a break|don'?t listen|"
