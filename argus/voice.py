@@ -142,6 +142,18 @@ class SayVoice(_ProcessVoice):
     def speak(self, text: str) -> None:
         self._run(self.args, text)
 
+    def synthesize(self, text: str) -> Tuple[np.ndarray, int]:
+        """The sound as samples, for playing it somewhere else (into a phone call)."""
+        import wave
+        with tempfile.TemporaryDirectory(prefix="argus-say-") as tmp:
+            out = Path(tmp) / "speech.wav"
+            subprocess.run(self.args + ["-o", str(out), "--file-format=WAVE", "--data-format=LEI16@22050"],
+                           input=text.encode(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=60, check=True)
+            with wave.open(str(out)) as w:
+                data, rate = w.readframes(w.getnframes()), w.getframerate()
+        return np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0, rate
+
 
 class PiperVoice(_ProcessVoice):
     """On-device neural voice (Piper model through sherpa-onnx), played with afplay."""
@@ -200,6 +212,10 @@ class RecordingVoice(Voice):
         if self.delay:
             self._stop.wait(self.delay)
 
+    def synthesize(self, text: str) -> Tuple[np.ndarray, int]:
+        self.spoken.append(text)
+        return np.full(1600, 0.05, dtype=np.float32), 16000
+
     def stop(self) -> None:
         self._stop.set()
 
@@ -223,6 +239,7 @@ class Speaker:
         self.clock = clock
         self.echo_seconds = echo_seconds
         self._queue: "queue.Queue[Tuple[int, str]]" = queue.Queue()
+        self.muted = False
         self._generation = 0
         self._busy = threading.Event()
         self._idle = threading.Event()
@@ -239,7 +256,7 @@ class Speaker:
 
     def say(self, text: str) -> None:
         text = speakable(text)
-        if not text:
+        if not text or self.muted:      # muted during a phone call: the call would hear it
             return
         with self._lock:
             self._idle.clear()

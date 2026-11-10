@@ -36,7 +36,7 @@ _UNSAFE = re.compile(
     r"ignore (all|any|the|previous|prior|earlier|your|these|those|other)\b|system prompt|"
     r"without (asking|approval|confirmation|checking with)|"
     r"(don'?t|do not|never|no need to|stop) (ask|check|confirm)\w*)", re.I)
-_EXFIL = re.compile(r"\b(send|upload|post|forward|e-?mail|share|transfer|copy|leak)\w* (\S+ ){0,5}(to|with)\b", re.I)
+_EXFIL = re.compile(r"\b(send|upload|post|forward|e-?mail|share|transfer|leak)\w* (\S+ ){0,5}(to|with)\b", re.I)
 _STOP = frozenset(
     "a an the to of and or for in on at by with when if is are be it its this that these those i you my your me "
     "use using do does don't not first then than from into as so but".split())

@@ -608,4 +608,6 @@ def describe_call(name: str, args: Dict[str, Any]) -> str:
         return f"{name.replace('_', ' ')}: {args.get('url')}"
     if name == "open_app":
         return f"open {args.get('name')}"
+    if name == "phone_call":
+        return f"phone {args.get('business') or args.get('number')}: {str(args.get('goal'))[:120]}"
     return f"{name} {json.dumps(args, ensure_ascii=False)[:160]}"

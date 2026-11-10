@@ -58,8 +58,9 @@ def test_the_gate_takes_one_answer_then_closes():
 
 def test_spoken_prompts():
     req = ApprovalRequest(run_id="r", description="deleting files", code="tiger")
-    assert req.spoken() == "May I deleting files? To allow, say yes, tiger. Or use the screen." or \
-        "say yes, tiger" in req.spoken()
+    assert req.spoken() == "May I go ahead with deleting files? To allow, say yes, tiger. Or use the screen."
+    call = ApprovalRequest(run_id="r", description="call Nopa at 415 555 0123 from your number to book", code="owl")
+    assert call.spoken().startswith("May I call Nopa at 415 555 0123")
     screen = ApprovalRequest(run_id="r", pattern_key="computer:left_click", code="tiger")
     assert "use your screen for this task" in screen.spoken()
     money = ApprovalRequest(run_id="r", money=True, code="")
@@ -203,6 +204,7 @@ def make_policy(tmp_path, title="", label=None):
     ("Inbox", None, "type", {"text": "4111 1111 1111 1111"}, True),
     ("Inbox", None, "type", {"text": "Call me at 4155550100 tomorrow"}, False),
     ("Inbox", "Buy now", "scroll", {"coordinate": [5, 5]}, False),
+    ("Checkout - Example Shop", None, "scroll", {"coordinate": [5, 5]}, False),
 ])
 def test_paying_is_spotted(tmp_path, title, label, member, args, money):
     verdict = make_policy(tmp_path, title, label).check(member, args, "voice", "computer")
@@ -348,3 +350,15 @@ def test_guest_commands_need_an_enrolled_voice(tmp_path):
 def test_status_shows_who_argus_answers(tmp_path):
     argus, _, _ = guest_argus(tmp_path, [])
     assert argus.status()["guests"] == "only you (asks you about others)"
+
+
+def test_the_iphone_gets_its_own_ok(tmp_path):
+    s = make_settings(tmp_path)
+    state = {"locked": False, "front_bundle": "com.apple.ScreenContinuity", "front_name": "iPhone Mirroring",
+             "visible_apps": [], "front_title": "iPhone Mirroring"}
+    policy = Policy(s, workspace=s.workspace, desktop_state=lambda: dict(state))
+    verdict = policy.check("left_click", {"coordinate": [5, 5]}, "voice", "computer")
+    assert verdict.action == ASK and verdict.scope == "computer:iphone" and "iPhone Mirroring" in verdict.reason
+    assert "use your iPhone through iPhone Mirroring" in ApprovalRequest(
+        run_id="r", pattern_key="computer:iphone", code="tiger").spoken()
+    assert policy.check("screenshot", {}, "voice", "computer").action == "allow"

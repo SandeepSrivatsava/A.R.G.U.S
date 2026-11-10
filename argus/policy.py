@@ -117,6 +117,7 @@ MONEY_BUTTON = re.compile(
 MONEY_PAGE = re.compile(
     r"\b(check ?out|payment|billing|place (your )?order|order (review|summary)|purchase|buy now|subscribe|"
     r"subscription|donat\w+|wallet|top ?up|add funds)\b", re.I)
+IPHONE_MIRRORING = "com.apple.ScreenContinuity"
 CLICKS = frozenset({"left_click", "right_click", "middle_click", "double_click", "triple_click", "left_mouse_down",
                     "left_mouse_up"})
 
@@ -199,6 +200,16 @@ class Policy:
             if is_blocked_app(name, self.settings.blocked_apps):
                 return Verdict(BLOCK, f"{name} is on your never-touch list.")
             return Verdict(ALLOW)
+        if tool == "phone_call":
+            from .calls import normalize_number, spoken_number
+            number, why = normalize_number(str(args.get("number") or ""),
+                                           bool(getattr(self.settings, "call_international", False)))
+            if number is None:
+                return Verdict(BLOCK, why)
+            who = " ".join(str(args.get("business") or "").split())[:60]
+            goal = " ".join(str(args.get("goal") or "").split())[:120]
+            target = f"{who} at {spoken_number(number)}" if who else spoken_number(number)
+            return Verdict(ASK, f"call {target} from your number to {goal}", scope=f"call:{number}")
         if tool == "schedule" and args.get("action") == "create" and args.get("mode") == "task":
             return Verdict(ASK, f"schedule a task to run by itself: {str(args.get('text'))[:120]}", scope="schedule:task")
         if tool == "glasses_look" and channel not in ("voice", "phone"):
@@ -247,13 +258,17 @@ class Policy:
             money = self._money(member, args, state)
             if money:
                 return Verdict(ASK, f"pay or buy something ({money})", scope="money", money=True)
+            if state.get("front_bundle") == IPHONE_MIRRORING or state.get("front_name") == "iPhone Mirroring":
+                # Argus can't see which iPhone app is open in there, so the iPhone gets its own OK.
+                return Verdict(ASK, f"use your iPhone through iPhone Mirroring: {member.replace('_', ' ')}",
+                               scope="computer:iphone")
             return Verdict(ASK, f"use your Mac: {member.replace('_', ' ')}", scope=f"computer:{member}")
         return Verdict(ALLOW)
 
     def _money(self, member: str, args: Dict[str, Any], state: Dict[str, Any]) -> str:
         """Why this screen action looks like paying, or ""."""
         title = " ".join(str(state.get("front_title") or "").split())
-        if MONEY_PAGE.search(title):
+        if member in CLICKS | {"type", "key", "hold_key"} and MONEY_PAGE.search(title):
             return f"the page is {title[:60]!r}"
         if member == "type" and has_card_number(str(args.get("text") or "")):
             return "typing a card number"

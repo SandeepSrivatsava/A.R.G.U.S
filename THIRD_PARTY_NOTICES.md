@@ -13,6 +13,15 @@ allow this; the copyright notices are kept here.
 | [adewaskar/jarvis](https://github.com/adewaskar/jarvis), Copyright (c) 2026 Aditya Dewaskar | The clap detector (`clap.ts`): a clap is recognised by its shape (quiet before, a near-instant rise, a fast decay) against a running noise floor. Ported to Python in `argus/clap.py` and made stricter for an always-on microphone (double clap, millisecond attack and high-frequency checks, quiet after, noise between claps cancels, applause rejected). | MIT |
 | Sandeep's earlier `personal_assistant` project | The news headline fetcher (`news_updater.py`), fixed and extended in `argus/news.py`. | Sandeep's own code |
 
+Ideas only (no code copied), for phone calls and lessons:
+
+| Source | The idea | License |
+|---|---|---|
+| ["Building an AI Agent That Makes Phone Calls on a Mac"](https://desty.github.io/en/blog/23-phone-ai-agent/) (desty, 2026) | Placing a call through the iPhone with a `tel:` link and pressing the Call button found by its colour; capturing call audio with a Core Audio process tap because a virtual output device gets ducked; iPhone Mirroring dropping calls. | Blog post |
+| [MuhsinunC/phone-agent](https://github.com/MuhsinunC/phone-agent) | BlackHole as the call's microphone so the other side hears the agent. | See upstream |
+| [icoainc/phonebt](https://github.com/icoainc/phonebt), Copyright 2026 ICOA Inc. | A Claude agent on a real phone line with key presses for menus. | Apache-2.0 |
+| Reflexion (Shinn et al., 2023) | Agents writing short notes about their own mistakes and reading them next time (`argus/lessons.py`). | Research paper |
+
 The MIT license text for both projects above:
 
 > Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
@@ -46,6 +55,14 @@ Each keeps its own license.
 | [rumps](https://github.com/jaredks/rumps), [PyObjC](https://github.com/ronaldoussoren/pyobjc) | Menu bar, Touch ID, lock detection, screen control | BSD-3-Clause, MIT |
 | [truststore](https://github.com/sethmlarson/truststore), [certifi](https://github.com/certifi/python-certifi) | Checking HTTPS certificates with the Mac's trust store | MIT, MPL-2.0 |
 | [Tailscale](https://tailscale.com) (optional, installed by you) | Private network for the iPhone | BSD-3-Clause client; free personal plan |
+
+## Installed by scripts/setup_calls.sh (optional, for phone calls)
+
+| Component | Used for | License |
+|---|---|---|
+| [audiotee](https://github.com/makeusabrew/audiotee), Copyright (C) 2025 Nick Payne, commit `56ac954` | Hearing the other side of a call (a Core Audio process tap); built from source on your Mac | MIT |
+| [BlackHole](https://github.com/ExistentialAudio/BlackHole) 2ch (Homebrew) | The call's microphone during a call | GPL-3.0 (a separate driver; Argus only selects it as an audio device) |
+| [SwitchAudioSource](https://github.com/deweller/switchaudio-osx) (Homebrew) | Switching the microphone for the call and back | MIT |
 
 ## The iPhone app
 

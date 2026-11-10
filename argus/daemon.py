@@ -25,6 +25,9 @@ _GUEST_NO = re.compile(r"\b(no|nope|don'?t|do not|not now|ignore (them|it|that)|
 _GUEST_YES = re.compile(r"\b(yes|yeah|yep|sure|ok|okay|go ahead|answer|please do|of course|fine|go on)\b")
 _GUEST_ALL = re.compile(r"\b(everyone|everybody|anyone|all of them|them all|from now on|for (the next |an |a )?"
                         r"(hour|while)|my friends|my guests|guests)\b")
+_TAKE_OVER = re.compile(r"\b(let me (talk|speak|take (it|over))|i'?ll take (it|over|the call)|give me the "
+                        r"(call|phone)|hand (it |the call )?over|take over|my turn)\b")
+_HANG_UP = re.compile(r"\b(hang up|end (the |this )?call|cut (it|the call)|that'?s enough|bye)\b")
 _YES_WORD = re.compile(r"\b(yes|yeah|yep|sure|ok|okay|allow|approve|go ahead|do it)\b")
 
 
@@ -34,7 +37,8 @@ class Argus:
                  voice_lock: bool = False, greeting: str = "", min_utterance_seconds: float = 0.35,
                  barge_in_interval: float = 0.8, on_change: Callable[[], None] = lambda: None, clap=None,
                  gate=None, voice_approval_threshold: float = 0.55, guests: str = "ask", guest_minutes: float = 60.0,
-                 owner_name: str = "", clock: Callable[[], float] = time.monotonic):
+                 owner_name: str = "", clock: Callable[[], float] = time.monotonic, calls=None,
+                 notify: Callable[[str], None] = lambda text: None):
         self.source = source
         self.segmenter = segmenter
         self.transcriber = transcriber
@@ -67,6 +71,8 @@ class Argus:
         self.owner_name = owner_name
         self.clock = clock
         self._guest_question: Optional[tuple] = None   # (what they asked, when Argus asked the owner)
+        self.calls = calls              # CallManager: phone calls from your number (calls.py)
+        self.notify = notify            # a quiet on-screen note (Argus can't speak while it's on a call)
         self.brain.on_reply_finished = self._reply_finished
 
     @property
@@ -114,7 +120,8 @@ class Argus:
         text = " ".join(str(text).split())
         if not text:
             return
-        if self.present():
+        on_call = self.calls is not None and self.calls.active
+        if self.present() and not on_call:
             self.speaker.say(text)
             return
         with self._held_lock:
@@ -122,7 +129,7 @@ class Argus:
         self.audit.log("announcement_held", count=len(self._held))
 
     def _speak_held(self) -> None:
-        if not self.present():
+        if not self.present() or (self.calls is not None and self.calls.active):
             return
         with self._held_lock:
             held, self._held = self._held, []
@@ -231,6 +238,9 @@ class Argus:
         if self.gate is not None and self.gate.pending:
             self._approval_answer(samples, text)      # waiting for "yes, <code word>": no name needed
             return
+        if self.calls is not None and self.calls.active:
+            self._during_call(samples, heard)
+            return
         if self.voice_lock_active and (heard.addressed or self.listener.in_followup()
                                        or self.listener.conversation_active() or self._guest_pending()):
             score = self.voiceprint.score(samples)
@@ -270,6 +280,26 @@ class Argus:
             return
         if self.gate.offer(text) is None and _YES_WORD.search(text.lower()) and self.gate.code:
             self.speaker.say(f"Please say yes and the word {self.gate.code}.")
+
+    # ---- on a phone call ---------------------------------------------------------------------------
+    def _during_call(self, samples: np.ndarray, heard) -> None:
+        """While Argus is on a call, only the owner's "hang up" / "let me talk" count (the speakers are
+        playing the other side, so everything else is ignored)."""
+        if not heard.addressed:
+            return
+        if self.voice_lock_active and self.voiceprint.score(samples) < self.voiceprint.threshold:
+            return
+        rest = heard.rest
+        if _TAKE_OVER.search(rest):
+            self.audit.log("call_take_over")
+            self.calls.take_over()
+            self.notify("Your microphone is on the call now.")
+        elif _HANG_UP.search(rest) or command_of(rest) is Command.STOP:
+            self.audit.log("call_hang_up_asked")
+            self.calls.hang_up()
+            self.notify("Hanging up.")
+        else:
+            self.notify("I'm on a call. Say \"Argus, hang up\" or \"Argus, let me talk\".")
 
     # ---- other people ------------------------------------------------------------------------------
     def _guest_pending(self) -> bool:
@@ -332,6 +362,8 @@ class Argus:
 
     def _reply_finished(self) -> None:
         self.listener.reply_finished()
+        if self._held:
+            self._speak_held()          # reminders that came in during a phone call
         self.on_change()
 
     def run_command(self, command: Optional[Command], spoken: str = "") -> None:

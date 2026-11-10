@@ -101,8 +101,13 @@ def cmd_enroll(args) -> int:
         vp.enroll([c for _, c in clips])
         scores = [vp.score(c) for _, c in clips]
         print(f"Voiceprint saved (self-match {min(scores):.2f}-{max(scores):.2f}; threshold "
-              f"{settings.voice_lock_threshold}). Turn on voice lock in ~/.argus/config.toml:"
-              f"  [listening] voice_lock = true")
+              f"{settings.voice_lock_threshold}).")
+        if settings.voice_lock:
+            print("Voice lock is on: Argus will answer only you (and ask you about anyone else), and you can "
+                  "approve things by voice.")
+        else:
+            print("Voice lock is off. To answer only your voice, set voice_lock = true under [listening] "
+                  "in ~/.argus/config.toml.")
     print("Restart Argus to use this: argusctl restart")
     return 0
 
@@ -173,6 +178,10 @@ def cmd_doctor(args) -> int:
             line(True, what)
         except Exception as exc:
             line(False, f"{what} ({exc.__class__.__name__})")
+    if settings.calls_enabled:
+        from .calls import MacCallLine
+        problems = MacCallLine(input_device=settings.call_input_device, tap=settings.call_tap).check()
+        line(not problems, "phone calls ready" if not problems else "phone calls: " + "; ".join(problems))
     try:
         status = _send_quiet("status")
         line(True, f"Argus running: {status.get('mode')}")

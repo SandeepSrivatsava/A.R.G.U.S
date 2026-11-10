@@ -70,6 +70,18 @@ def format_headlines() -> str:
     return "\n".join(lines)
 
 
+def notify(text: str) -> None:
+    """A quiet notification on the Mac (used while Argus is on a phone call and can't speak)."""
+    if not IS_MAC:
+        return
+    try:
+        subprocess.Popen(["osascript", "-e", "on run argv", "-e",
+                          'display notification (item 1 of argv) with title "Argus"', "-e", "end run", text[:200]],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
 class App:
     """All of Argus, wired together. `voice=False` builds everything except the microphone (tests, CLI)."""
 
@@ -142,13 +154,32 @@ class App:
         voiceprint = None
         if s.voice_lock and s.voiceprint_path.exists():
             voiceprint = VoicePrint(paths["speaker"], str(s.voiceprint_path), s.voice_lock_threshold)
+        transcriber = transcriber or SherpaTranscriber(paths["asr"])
+        calls = self._build_calls(transcriber, speaker, paths) if s.calls_enabled else None
         return Argus(source=source or Microphone(s.mic_device or None),
                      segmenter=Segmenter(paths["vad"], threshold=s.vad_threshold, min_silence=s.end_of_speech_seconds),
-                     transcriber=transcriber or SherpaTranscriber(paths["asr"]), listener=listener, speaker=speaker,
+                     transcriber=transcriber, listener=listener, speaker=speaker,
                      brain=brain, audit=self.audit, voiceprint=voiceprint, voice_lock=s.voice_lock,
                      greeting=s.greeting, clap=ClapDetector(s.clap) if s.clap != "off" else None,
                      gate=gate, voice_approval_threshold=s.voice_approval_threshold, guests=s.guests,
-                     guest_minutes=s.guest_minutes, owner_name=s.user_name)
+                     guest_minutes=s.guest_minutes, owner_name=s.user_name, calls=calls, notify=notify)
+
+    def _build_calls(self, transcriber, speaker, paths, line_factory=None):
+        """Phone calls from your own number (calls.py): the tool Argus uses, and the switch for "hang up"."""
+        from .calls import CALL_TOOL_DESCRIPTION, CALL_TOOL_SCHEMA, CallManager, MacCallLine
+        from .toolbox import Tool
+        s = self.settings
+        if not hasattr(speaker.voice, "synthesize"):
+            log.warning("phone calls need a voice that can render speech; calls are off")
+            return None
+        manager = CallManager(
+            s, line_factory or (lambda: MacCallLine(input_device=s.call_input_device, tap=s.call_tap,
+                                                    monitor=s.call_monitor)),
+            self.llm, transcriber, speaker.voice, audit=self.audit, speaker=speaker, cost=request_cost,
+            segmenter_factory=lambda: Segmenter(paths["vad"], threshold=s.vad_threshold, min_silence=0.8))
+        self.agent.tools["phone_call"] = Tool("phone_call", CALL_TOOL_DESCRIPTION, CALL_TOOL_SCHEMA, manager.tool,
+                                              frozenset({"voice"}))
+        return manager
 
     def deliver(self, text: str) -> None:
         """A reminder or scheduled result, spoken at the Mac. If the Mac is locked or the microphone is off,

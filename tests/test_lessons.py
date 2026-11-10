@@ -21,6 +21,10 @@ def make_store(tmp_path):
 
 
 # ---- what a lesson may say -----------------------------------------------------------------------------
+def test_local_file_lessons_are_fine():
+    assert L.clean_lesson("Copy reports to the Work folder before renaming them.")[0] is not None
+
+
 def test_a_short_general_rule_is_kept_and_tidied():
     lesson, why = L.clean_lesson("  - use python3,   not python, in shell commands on this Mac.  ")
     assert lesson == GOOD and why == ""

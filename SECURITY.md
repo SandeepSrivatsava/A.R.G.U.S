@@ -14,7 +14,8 @@ This page lists every protection, where in the code it is enforced, and what it 
 | A double clap only opens listening (or wakes Argus from sleep); it can't approve or run anything. Single claps, applause, knocks and speech are rejected. | `argus/clap.py` |
 | The microphone closes while the Mac is locked (macOS's orange dot goes away). | `argus/guard.py` |
 | "Argus, go to sleep": nothing is sent until "Argus, wake up" or a double clap. "Argus, turn off the microphone" or the menu closes the mic until you turn it back on. | `argus/wake.py` |
-| Optional voice lock: requests from voices that don't match your voiceprint are ignored. | `argus/hearing.py` (`VoicePrint`) |
+| Voice lock (on once you've run `argusctl enroll`): requests from voices that don't match your voiceprint aren't acted on. If someone else says "Argus", it asks you first ("Should I answer them?"); only your voice can say yes, and "talk to everyone" lasts an hour unless you say "only me". | `argus/hearing.py` (`VoicePrint`), `argus/daemon.py` |
+| Guests (other voices you allowed) get a separate conversation with nothing about you in it (no memories, lessons or history), only the web and news tools, and no approvals at all. | `argus/agent.py`, `argus/brain.py`, `argus/prompts.py` |
 
 ## 2. What Argus may do: the rules
 
@@ -62,11 +63,14 @@ reading files, working inside the workspace folder, opening apps and links, and 
 
 | Protection | Where |
 |---|---|
-| Approvals are never by voice. A spoken or typed "yes" is never an approval, and Claude is told never to ask for one. | `argus/prompts.py`, `argus/agent.py` |
+| Argus collects approvals itself. A "yes" inside the conversation never counts, and Claude is told never to ask for one. | `argus/prompts.py`, `argus/agent.py` |
 | At the Mac, a dialog shows exactly what will happen; "Allow" then needs Touch ID or your Mac password, so a TV, a call, a recording, or the AI itself clicking the dialog can't approve. | `argus/approvals.py` |
+| You can also answer out loud: Argus reads out a random code word, and only your enrolled voice (a stricter match than voice lock) saying "yes" and that word counts. The fresh word stops a TV or a recording; the voice match stops other people. "No" needs no word. Without an enrolled voice, there are no spoken approvals. Whichever answers first, voice or dialog, wins and the other is withdrawn. | `argus/approvals.py`, `argus/daemon.py` |
+| Paying is Touch ID only. A click on a button labelled Buy, Pay, Place order, Subscribe and the like (read through the Mac's accessibility interface), any input on a page titled checkout, payment or billing, and typing anything that passes the card-number checksum need Touch ID, even when you allowed screen use by voice. Labels can be missing, so Claude is also told to stop before paying. | `argus/policy.py` |
+| Your iPhone (through iPhone Mirroring) gets its own approval: allowing the Mac's screen doesn't extend to the phone, because Argus can't tell which iPhone app is open. | `argus/policy.py` |
 | Answers are *once* or *for this task* (the same kind of action, until the task ends), never "always". | `argus/agent.py`, `argus/approvals.py` |
 | No answer within 2 minutes = denied. | `argus/approvals.py` |
-| Scheduled tasks and the iPhone can't approve anything: risky steps are refused and you're told. | `argus/app.py`, `argus/agent.py` |
+| Scheduled tasks, the iPhone and guests can't approve anything: risky steps are refused and you're told. | `argus/app.py`, `argus/agent.py`, `argus/brain.py` |
 | A dialog that crashes, hangs or can't open counts as "no", and so does any answer other than *once* or *for this task*. | `argus/agent.py`, `argus/approvals.py` |
 | After a failed screen action, the rest of that batch is not carried out. | `argus/agent.py` |
 
@@ -74,7 +78,8 @@ reading files, working inside the workspace folder, opening apps and links, and 
 
 | Channel | Screen | Approvals |
 |---|---|---|
-| Voice at the Mac | look and use (each use asks) | dialog + Touch ID |
+| Voice at the Mac | look and use (each use asks) | dialog + Touch ID, or your voice + code word (paying: Touch ID only) |
+| Guests at the Mac (voices you allowed) | none | none: nothing risky, nothing personal |
 | iPhone (Siri, Argus Eye app) | screenshots only | none: risky steps are refused |
 | Scheduled tasks | none | none: risky steps are refused |
 
@@ -127,6 +132,9 @@ There is no text chat (Telegram was removed): you talk to Argus by voice, at the
   macOS asks about the microphone, Screen Recording and Accessibility for *Argus*, not for Terminal or
   Python.
 * The iPhone app pulls Meta's toolkit at an exact version (1.0.1) through Swift Package Manager.
+* Phone calls (optional, `scripts/setup_calls.sh`): BlackHole and SwitchAudioSource come from Homebrew;
+  the audiotee call recorder is built on your Mac from a pinned commit of its source (git checks the
+  content against the commit hash), and it has no other dependencies.
 * The tests check every macOS function name Argus calls through PyObjC against the real PyObjC 13
   packages, so a typo in Mac-only code can't hide until it runs on your Mac.
 
@@ -143,11 +151,38 @@ and a short preview), every approval and its answer, every block, estimated cost
 and lock changes, claps, reminders held while you were away, phone-gateway requests and bad tokens. It never records audio
 or speech that wasn't for Argus. It rotates at 5 MB.
 
-## 11. What this does *not* protect against
+## 11. Lessons
 
-* **Anyone in the room can talk to Argus** unless voice lock is on, and voice lock is a convenience
-  filter, not strong authentication (a recording of your voice could pass). Approvals still need your
-  finger or your password.
+| Protection | Where |
+|---|---|
+| Lessons are notes the model reads, kept in Argus's private database on the Mac. They can't change the rules above: those are code. | `argus/lessons.py`, `argus/policy.py` |
+| A web page, email or file could try to plant a "lesson", so lessons that mention approvals, permissions or safety, contain links, email addresses, long numbers, passwords or keys, or tell Argus to send something somewhere are refused, whether you or Argus wrote them. | `argus/lessons.py` |
+| Argus's own lessons are written by a small model that sees only a log of which steps failed (tool names, short arguments and error messages), never page contents, and is told the log isn't instructions. | `argus/lessons.py` |
+| `argusctl lessons` shows every lesson and where it came from; forget one, or all. | `argus/__main__.py` |
+
+## 12. Phone calls
+
+| Protection | Where |
+|---|---|
+| Off until you run `scripts/setup_calls.sh`. Each call needs your OK (voice + code word or Touch ID), showing the number and the reason. | `argus/policy.py`, `argus/calls.py` |
+| Argus always starts by saying it's your AI assistant and that the call is transcribed, before the model says anything. | `argus/calls.py` |
+| Never called: emergency numbers (911, 112, 999, 988…), service numbers (N11), pay-per-call numbers (900, 976), invalid numbers, and anything outside the US and Canada unless you switch that on. At most 6 calls an hour, the same number at most twice in 15 minutes, 6 minutes per call. | `argus/calls.py` |
+| The call model is told never to give card, bank, account or ID numbers or addresses and never to agree to costs; anything that passes the card-number checksum is also kept out of what's spoken. | `argus/calls.py` |
+| Nothing opens to the internet: the call goes through your own iPhone. The Mac's microphone setting is switched to a virtual cable only for the call and always put back (also on errors, and at once when you say "let me talk"). Argus's own voice is muted during a call so the other side never hears Argus talking to you. | `argus/calls.py` |
+| To place and end the call, Argus clicks the green Call and red End buttons that appear on screen; it only clicks a button that wasn't there before it dialled. These two clicks are part of the call you approved, not general screen use. | `argus/calls.py` |
+| The call recorder (audiotee, MIT) is built on your Mac from a pinned commit of its source, and needs macOS's "System Audio Recording" permission; no audio is saved, only the transcript in Argus's history. | `scripts/setup_calls.sh` |
+
+## 13. What this does *not* protect against
+
+* **Voice is not strong authentication.** Voice lock and spoken approvals rely on a voiceprint, and a
+  good imitation or clone of your voice could pass (the code word stops replays of old recordings, not a
+  live imitation). That's why paying always needs Touch ID. If that's a concern, set
+  `voice_approvals = false` under `[security]`.
+* **Spotting payments is best effort.** A buy button with no readable label on a page with an ordinary
+  title wouldn't be recognised; Claude is told to stop before paying, but read what you approve.
+* **Phone calls carry what Argus says.** The call model could misunderstand or say something you
+  wouldn't; it only knows the goal and details you gave it, and the transcript tells you what was said.
+  Rules on AI phone calls differ by place; keep it to businesses you'd call yourself.
 * **What Argus sees, Claude sees.** When you ask it to look at the screen or through your glasses, the
   picture goes to Anthropic's API (as with any cloud AI). Keep private things out of view, or block the app.
 * **A stolen, unlocked Mac** or a compromised user account gives the same access you have.
@@ -156,7 +191,7 @@ or speech that wasn't for Argus. It rotates at 5 MB.
   before allowing, and keep important files backed up (Time Machine).
 * **The model can be wrong** or be misled by content it reads.
 
-## 12. Kill switches
+## 14. Kill switches
 
 * Menu bar ◉ → Microphone (off) or Quit Argus; or say "Argus, turn off the microphone".
 * `argusctl quit` stops everything (voice, phone gateway, schedules).

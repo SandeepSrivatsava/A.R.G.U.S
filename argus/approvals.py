@@ -35,6 +35,8 @@ CODE_WORDS = (
     "garnet", "ginger", "glacier", "kettle", "koala", "lobster", "magnet", "meteor", "noodle", "parrot", "pebble",
     "puzzle", "robin", "saffron", "squirrel", "tornado", "trumpet", "turtle", "waffle", "volcano", "penguin")
 
+_VERBS = frozenset({"call", "use", "write", "open", "schedule", "pay", "run", "send", "install", "delete", "change",
+                    "move", "copy", "book", "buy", "post", "do"})
 _YES = re.compile(r"\b(yes|yeah|yep|yup|sure|ok|okay|allow|allowed|approve|approved|go ahead|do it|confirm|confirmed)\b")
 _NO = re.compile(r"\b(no|nope|don'?t|do not|deny|denied|cancel|stop|never ?mind|not now|wait)\b")
 
@@ -58,10 +60,14 @@ class ApprovalRequest:
         return self.command or self.description or "an action"
 
     def spoken_action(self) -> str:
+        """What Argus asks to do, worded to follow "May I ..."."""
+        if self.pattern_key == "computer:iphone":
+            return "use your iPhone through iPhone Mirroring for this task"
         if self.pattern_key.startswith("computer:"):
             return "use your screen for this task"
-        text = " ".join((self.description or self.command or "do that").split())
-        return text[:140]
+        text = " ".join((self.description or self.command or "do that").split())[:140]
+        first = text.split(" ", 1)[0].lower()
+        return text if first in _VERBS else f"go ahead with {text}"
 
     def spoken(self) -> str:
         if self.money:

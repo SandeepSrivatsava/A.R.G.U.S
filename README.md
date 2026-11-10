@@ -3,8 +3,9 @@
 A speaking, always-listening assistant for your Mac, iPhone and Meta glasses, named after Argus
 Panoptes, the hundred-eyed watchman of Greek myth who never slept. Say "Argus" anywhere in a sentence,
 or clap twice, and it answers out loud. It can look at your screen when you ask, use your apps, run
-commands, search the web, read the news, remember what you tell it, remind you of things, and see
-through your Meta glasses.
+commands, search the web, read the news, remember what you tell it, remind you of things, see
+through your Meta glasses, phone a restaurant from your own number, and learn from your corrections and
+its own mistakes.
 
 Argus is its own code, written from scratch for this project. The brain talks straight to the Claude
 API (no agent framework in between), and listening, speech recognition and the voice all run on your Mac.
@@ -16,10 +17,10 @@ could stand for (and other names): [docs/NAMES.md](docs/NAMES.md).
 microphone ─► voice detection ─► speech-to-text ─► "for Argus?" ─► brain ◄──► Claude API (Sonnet 5.5)
 double clap ────────────────────────────────────────►    │ no: dropped,  │
                                                           never stored    ▼ every tool call
-                                                               policy: allow · ask you (dialog + Touch ID) · block
+                                                policy: allow · ask you (Touch ID, or your voice + a code word) · block
                                                                           ▼
 speakers ◄─ on-device voice ◄─ reply, sentence by sentence    tools: shell, files, web, news, memory,
-                                                               reminders, apps, screen, glasses camera
+                                                               reminders, apps, screen, glasses, phone calls
 Siri shortcuts and the Argus Eye iPhone app (Meta glasses) talk to the same brain. Everything is by voice.
 ```
 
@@ -27,12 +28,12 @@ Siri shortcuts and the Argus Eye iPhone app (Meta glasses) talk to the same brai
 
 | Part | What it does | Code |
 |---|---|---|
-| Brain | Streams replies from Claude, runs tools in a loop, caches the prompt to keep costs down, keeps conversations and memories in a private SQLite database, summarises long chats, tracks spend | `argus/llm.py`, `agent.py`, `prompts.py`, `store.py` |
+| Brain | Streams replies from Claude, runs tools in a loop, caches the prompt to keep costs down, keeps conversations, memories and lessons in a private SQLite database, summarises long chats, tracks spend | `argus/llm.py`, `agent.py`, `prompts.py`, `store.py`, `lessons.py` |
 | Hands | Shell commands, files, web pages, news, reminders, memory, opening apps and links, and the screen (Claude's computer-use tools, carried out with macOS Quartz events) | `argus/toolbox.py`, `computer.py` |
 | Rules | Checks every tool call first: allowed, needs your OK, or blocked | `argus/policy.py`, `guard.py`, `approvals.py` |
 | Ears | Microphone, voice detection, speech recognition, name spotting, double-clap detection, voice lock | `argus/hearing.py`, `wake.py`, `listener.py`, `clap.py` |
 | Voice | On-device Piper voice (or any macOS voice); you can interrupt it | `argus/voice.py`, `brain.py` |
-| Reach | iPhone gateway, Meta glasses bridge, reminders and scheduled jobs | `argus/phone.py`, `glasses.py`, `scheduler.py`, `cron.py` |
+| Reach | iPhone gateway, Meta glasses bridge, reminders and scheduled jobs, phone calls from your number | `argus/phone.py`, `glasses.py`, `scheduler.py`, `cron.py`, `calls.py` |
 | Mac app | Menu bar, Touch ID, lock detection, starts at login | `argus/app.py`, `daemon.py`, `macos/` |
 | iPhone app | Argus Eye: Meta glasses camera, push-to-talk | `ios/` |
 
@@ -44,7 +45,11 @@ Siri shortcuts and the Argus Eye iPhone app (Meta glasses) talk to the same brai
 | *clap clap*, then "what time is my flight?" | Two sharp claps (less than a second apart) open listening without the name. Single claps, applause and speech are ignored. |
 | (right after a reply) "And tomorrow?" | Follow-ups within 8 seconds don't need the name. |
 | "Argus, let's chat" … "that's all" | Conversation mode: no name needed until you say "that's all" (or 2 minutes of quiet). |
-| "Argus, open Safari and find flights to Delhi for Friday" | Uses your apps. Each kind of action asks for your OK on screen first. |
+| "Argus, open Safari and find flights to Delhi for Friday" | Uses your apps. Each kind of action asks for your OK first: say "yes" and the code word Argus reads out, or use Touch ID. Paying always needs Touch ID. |
+| "Argus, call Luigi's and book a table for two at seven tomorrow" | Phones them from your own number (through your iPhone), says it's your AI assistant, books it and tells you how it went. "Argus, hang up" / "Argus, let me talk" at any point. |
+| "No, when I say the report I mean the PDF in Work" | Saves that as a lesson and follows it from then on. It also writes its own lessons when something fails and it finds the fix. "What have you learned?" |
+| Someone else: "Argus, what's the capital of France?" | Once it knows your voice, it asks you first: "Someone else is asking me something. Should I answer them?" "Argus, talk to everyone" / "Argus, only me". |
+| "Argus, find the address Ravi sent me on WhatsApp" | Searches WhatsApp on the Mac, or your iPhone's apps through iPhone Mirroring (slow, but it can see everything there). |
 | "Argus, what am I looking at?" | Looks through your Meta glasses if they're connected (Argus Eye app), otherwise at the screen. Only when asked. |
 | "Argus, remember that my sister's birthday is 12 March" | Remembers across conversations. "What do you remember?" / "Forget number 3." |
 | "Argus, remind me at 6 to call Mom" / "every weekday at 8, check the weather" | Reminders and scheduled tasks, spoken at the Mac. If you're away (Mac locked or microphone off), Argus keeps them and tells you when you're back. |
@@ -71,8 +76,15 @@ The full list is in [SECURITY.md](SECURITY.md). The short version:
 
 * **Your voice stays on the Mac.** Audio is processed locally and never recorded. Speech that isn't for
   Argus is thrown away (not stored, not sent). The microphone closes while the Mac is locked.
-* **Nothing risky happens by voice alone.** Deleting, installing, sending, clicking and typing need a
-  click on an on-screen dialog *and* Touch ID. A TV or a video call can't approve anything. Approvals cover one action or one task, never "always".
+* **Risky actions need your OK, your way.** Deleting, installing, sending, calling, clicking and typing
+  ask first. Answer with Touch ID on the screen, or out loud: only your enrolled voice saying "yes" plus a
+  random code word Argus reads out counts, so a TV, a recording or someone else in the room can't approve.
+  Anything that pays or buys (a Buy or Pay button, a checkout page, a card number) needs Touch ID.
+  Approvals cover one action or one task, never "always".
+* **It answers only you.** Once it knows your voice, Argus asks you before answering anyone else, and a
+  guest gets general answers only: nothing about you, no access to the Mac.
+* **Lessons can't change the rules.** What Argus learns is notes for the model, filtered so a web page or
+  file can't plant one; the safety rules are code.
 * **Hard limits.** `sudo`, wiping disks, reading your keys or Argus's own secrets, password managers,
   Keychain Access, System Settings and the banking sites you list are blocked outright, before anything runs.
   On the Mac, every command Argus runs is also boxed in by a macOS sandbox that can't touch your keys,
@@ -99,6 +111,52 @@ The full list is in [SECURITY.md](SECURITY.md). The short version:
   than keeping you waiting.
 * **"Argus, stop" is instant**, even when a request is still waiting on the network.
 
+## It learns
+
+The model itself never changes; nobody trains it on your requests. What Argus learns is a short list of
+lessons it reads before every request, kept in its database on your Mac (no server or cloud needed):
+
+* **From you:** correct it ("no, when I say the report I mean the PDF in Work", "book on OpenTable first")
+  and it saves the correction as a rule.
+* **From itself:** when a request ran into errors and it then found a way that worked, a small, cheap
+  model looks at what happened and writes one rule, so the same mistake doesn't happen twice (about a
+  hundredth of a cent each time).
+* `argusctl lessons` lists them; "Argus, forget lesson 3" or `argusctl lessons forget L3` removes one.
+  Lessons that mention approvals or safety, links, addresses, long numbers or keys, or tell Argus to send
+  something somewhere, are refused.
+
+## Phone calls from your own number
+
+Argus can phone a business for you (book a table, ask about opening hours) from your own number:
+
+1. You ask: "Argus, call Luigi's and book a table for two at seven tomorrow; anything from 6:30 to 8 is fine."
+2. It looks the number up, says who it's calling and why, and waits for your OK (yes + the code word,
+   or Touch ID).
+3. Your Mac places the call through your iPhone ("Calls from iPhone"), so they see your number. Argus
+   starts with "Hi, this is (your name)'s AI assistant calling. This call is transcribed for (your name).", then
+   talks: one thing at a time, confirms the details back, and says goodbye.
+4. You hear the call on the Mac's speakers. Say "Argus, let me talk" to take over with your own
+   microphone, or "Argus, hang up". Afterwards it tells you how it went.
+
+It never gives card, bank or account numbers, never agrees to deposits or fees (it says you'll call back),
+never leaves voicemails, never calls emergency, service (N11) or pay-per-call numbers, and makes at most
+6 calls an hour. Calls are off until you run `scripts/setup_calls.sh` (it installs BlackHole, a virtual
+audio cable, SwitchAudioSource, and builds the audiotee call recorder; macOS 14.2 or newer). Tested here
+with a simulated phone line; the first real call on your Mac is the real test. Rules on AI phone calls
+differ by place (the US treats AI voices as "artificial voices"), so keep it to businesses you'd call
+yourself; this isn't legal advice.
+
+## Your iPhone
+
+Apple doesn't let any app read other apps' data on the iPhone, and a developer account doesn't change
+that; jailbreaking would, but it isn't available for current iPhones and would undo the phone's security.
+The legitimate ways in, from the Mac:
+
+* **iPhone Mirroring** (macOS 15 and iOS 18 or newer): your iPhone's screen in a window on the Mac. Argus
+  can use it like any app ("find what Ravi sent me on WhatsApp"), slowly, and it asks separately before
+  touching your iPhone. Close it before calls: it drops them.
+* **Mac copies:** Messages (if your texts sync to the Mac), Mail, and WhatsApp for Mac.
+
 ## What you need
 
 * An Apple Silicon Mac on macOS 13 or newer (an 8 GB MacBook Air is fine) with Apple's Command Line
@@ -124,9 +182,9 @@ models (checksums verified), builds Argus.app, and starts it at login. Then:
 1. **Click Allow** when macOS asks whether Argus may use the microphone.
 2. **Switch on Argus** in System Settings → Privacy & Security → **Screen Recording** and
    **Accessibility**, then run `argusctl restart`. This is what lets Argus see and use apps for you.
-3. **Teach it your voice** (recommended): `argusctl enroll`. You read five short sentences; Argus learns
-   how you say its name and makes a voiceprint. To make it ignore other voices, set `voice_lock = true`
-   in `~/.argus/config.toml` and run `argusctl restart`.
+3. **Teach it your voice**: `argusctl enroll`. You read five short sentences; Argus learns how you say
+   its name and makes a voiceprint. From then on it answers only you (it asks you about anyone else),
+   and you can approve things by voice. Without it, everyone counts as you and approvals are Touch ID only.
 4. **iPhone and glasses**: follow [docs/IPHONE.md](docs/IPHONE.md).
 
 Then say: "Argus, what's the news today?"
@@ -141,6 +199,7 @@ argusctl ask "any news?"   # type a request instead of saying it (Argus answers 
 argusctl say "Hello"       # speak something
 argusctl mic off|on        # microphone
 argusctl screen block|allow
+argusctl lessons           # what Argus has learned (forget L3 / clear)
 argusctl doctor            # check models, keys, Claude, the app and its permissions
 argusctl restart           # after editing ~/.argus/config.toml
 argusctl quit              # stop Argus
@@ -158,7 +217,11 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 * **It doesn't react to its name.** Check the menu bar icon (◌ means the microphone is off or the Mac is
   locked). Run `argusctl enroll` so it learns how you say "Argus". Or clap twice and talk.
-* **It answers the TV.** Turn on voice lock (above), or put it to sleep while watching.
+* **It answers the TV.** Run `argusctl enroll` so it knows your voice (voice lock), or put it to sleep.
+* **It won't take my spoken "yes".** Say "yes" and the code word it read out, in your normal voice. If it
+  keeps refusing, enroll again, or use Touch ID.
+* **On a call, they can't hear Argus.** In FaceTime's Video menu, check the microphone isn't fixed to
+  one particular mic. `argusctl doctor` checks the call setup.
 * **Claps don't work.** Clap sharply twice, less than a second apart, in a quiet moment. Soft claps or
   claps far from the Mac's microphone may not register. `clap = "off"` under `[listening]` turns it off.
 * **"I can't reach Claude right now."** Run `argusctl doctor`: it checks the internet, the key and
@@ -170,8 +233,13 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **440 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
-  keys), the tool loop, approvals (once / this task / deny), the policy rules, screen control (scaling,
+* **597 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+  keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
+  whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
+  (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed
+  for a while, refused), phone calls on a simulated line (booking from hello to goodbye, no answer,
+  hang-ups, phone menus, the time limit, losing Claude mid-call, "hang up" and "let me talk", numbers it
+  must never call), the policy rules, screen control (scaling,
   stopping after a failed action, locked Mac, password apps), web-fetch safety, cost estimates, memory,
   reminders and cron schedules, the iPhone gateway
   (tokens, lockout, image checks), the glasses bridge, clap detection (double clap yes; single claps,
@@ -185,8 +253,8 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
   can't start or flood the output; and sounds that look like claps (a "p" before a voice, a door slam,
   claps right after music). Every request Argus sends to the stand-in Claude is checked against the rules
   the real API enforces.
-* **Coverage**: the tests reach 96% of Argus's code (lines and branches), 97% with the end-to-end run;
-  before this round of failure tests it was 70%. What's left is mostly Mac-only (the menu bar, a few
+* **Coverage**: the tests reach 95% of Argus's code (lines and branches), 96% with the end-to-end run.
+  What's left is mostly Mac-only (the menu bar, the screen and audio pieces of phone calls, a few
   fallbacks for older macOS). Run `scripts/coverage.sh` (add `--e2e` for the full run) to see it yourself.
 * **Real speech**: sentences spoken by the real voice go through the real voice-detection and
   speech-recognition models into the listening loop.
@@ -197,7 +265,8 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
   locked is spoken once you're back), and the iPhone gateway answers only with the right token.
 * **Not testable off a Mac, so check on first run:** the microphone prompt, the menu bar, the approval
   dialog with Touch ID, lock detection, real screen control, the live Claude API with the computer
-  tools, and the iPhone app (not yet compiled).
+  tools, spotting Buy buttons through the Mac's accessibility interface, a real phone call (placing it,
+  pressing the Call button, hearing the other side, being heard), and the iPhone app (not yet compiled).
 
 ## Uninstall
 

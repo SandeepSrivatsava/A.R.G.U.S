@@ -310,14 +310,17 @@ small_model = "claude-haiku-5-5" # summarising long conversations
 web_search = true               # Claude's web search (\$10 per 1,000 searches)
 workspace = $(toml_str "$WORKSPACE")
 max_turn_tokens = 400000        # stop a single request before it gets expensive
+self_learning = true            # after a request that hit errors, Argus writes itself a lesson (argusctl lessons)
 
 [listening]
 followup_seconds = 8            # after a reply, you can answer without saying "Argus"
 conversation_idle_seconds = 120 # conversation mode ends after this much quiet
 clap = "double"                 # "double", "single" or "off": clapping wakes Argus
 end_of_speech_seconds = 0.6     # how long a pause ends what you're saying (lower = snappier, 0.3 to 2)
-voice_lock = false              # true = only answer your voice (record it first: argusctl enroll)
+voice_lock = true               # only answer your voice, once you've run: argusctl enroll
 voice_lock_threshold = 0.45
+guests = "ask"                  # someone else talks to Argus: "ask" you first, or "never" answer them
+guest_minutes = 60              # how long "Argus, talk to everyone" lasts
 mic_device = ""                 # "" = the Mac's current microphone
 
 [voice]
@@ -329,6 +332,8 @@ greeting = "Online and listening."
 
 [security]
 approval_needs_touch_id = true  # "Allow" buttons also need Touch ID or your Mac password
+voice_approvals = true          # your voice + the code word Argus reads out can approve (never paying)
+voice_approval_threshold = 0.55 # how closely it must match your voiceprint (stricter than voice lock)
 pause_when_locked = true        # microphone closes while the Mac is locked
 screen_control = true           # let Argus see and use the screen (each action needs your OK)
 blocked_sites = [$SITES_TOML]
@@ -342,6 +347,13 @@ port = 8765
 
 [glasses]
 enabled = true                  # Meta glasses camera through the Argus iPhone app
+
+[calls]
+enabled = false                 # phone calls from your number: run scripts/setup_calls.sh to switch on
+max_minutes = 6
+per_hour = 6
+monitor = true                  # hear both sides on the Mac's speakers
+international = false           # only US and Canadian numbers
 
 [schedule]
 morning_headlines = "0 7 * * *" # free headlines, spoken at the Mac (when you're back, if away; "" = off)
