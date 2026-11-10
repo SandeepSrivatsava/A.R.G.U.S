@@ -149,7 +149,8 @@ yourself; this isn't legal advice.
 ## Your iPhone
 
 Apple doesn't let any app read other apps' data on the iPhone, and a developer account doesn't change
-that; jailbreaking would, but it isn't available for current iPhones and would undo the phone's security.
+that; jailbreaking would, but it's rarely possible on current iOS versions and would undo the phone's
+security.
 The legitimate ways in, from the Mac:
 
 * **iPhone Mirroring** (macOS 15 and iOS 18 or newer): your iPhone's screen in a window on the Mac. Argus
