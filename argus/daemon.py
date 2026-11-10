@@ -14,6 +14,7 @@ from .brain import Brain
 from .hearing import SAMPLE_RATE, Segmenter, Transcriber, VoicePrint
 from .listener import ACK, ASK, COMMAND, IGNORE, Listener
 from .voice import Speaker
+from .approvals import close_word
 from .wake import Command, command_of, looks_like_echo
 
 log = logging.getLogger("argus.daemon")
@@ -231,12 +232,17 @@ class Argus:
             return
         text = self.transcriber.transcribe(samples)
         heard = self.listener.matcher.hear(text)
+        if self.gate is not None and self.gate.pending:
+            # Waiting for "yes, <code word>": no name needed. The answer repeats words from Argus's own
+            # question, so the echo check looks at the rest of what was said.
+            if looks_like_echo(self._without_answer_words(text), self.speaker.recently_spoken()):
+                self.ignored += 1
+            else:
+                self._approval_answer(samples, text)
+            return
         # Checks that must happen before the listener changes state (follow-up window, sleep, ...):
         if not heard.addressed and looks_like_echo(text, self.speaker.recently_spoken()):
             self.ignored += 1          # Argus hearing its own voice
-            return
-        if self.gate is not None and self.gate.pending:
-            self._approval_answer(samples, text)      # waiting for "yes, <code word>": no name needed
             return
         if self.calls is not None and self.calls.active:
             self._during_call(samples, heard)
@@ -270,6 +276,11 @@ class Argus:
         self.on_change()
 
     # ---- spoken approvals ----------------------------------------------------------------------------
+    def _without_answer_words(self, text: str) -> str:
+        code = self.gate.code
+        return " ".join(w for w in re.findall(r"[a-z']+", text.lower())
+                        if not _YES_WORD.fullmatch(w) and not (code and close_word(w, code)))
+
     def _approval_answer(self, samples: np.ndarray, text: str) -> None:
         if not self.voice_lock_active:
             return

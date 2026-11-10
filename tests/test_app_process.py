@@ -52,7 +52,7 @@ def test_argus_starts_answers_refuses_a_second_copy_and_stops_cleanly(argus_home
         assert wait_for(lambda: send(sock, "status").get("mode") == "listening", timeout=30)
         assert send(sock, "ask", text="Argus, hello")["ok"]
         audit = argus_home / "logs" / "audit.jsonl"
-        assert wait_for(lambda: '"turn"' in audit.read_text(), timeout=30)
+        assert wait_for(lambda: audit.exists() and '"turn"' in audit.read_text(), timeout=30)
         second = start(argus_home)
         out, _ = second.communicate(timeout=60)
         assert second.returncode == 0 and "already running" in out

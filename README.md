@@ -233,7 +233,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **597 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **598 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed

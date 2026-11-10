@@ -362,3 +362,19 @@ def test_the_iphone_gets_its_own_ok(tmp_path):
     assert "use your iPhone through iPhone Mirroring" in ApprovalRequest(
         run_id="r", pattern_key="computer:iphone", code="tiger").spoken()
     assert policy.check("screenshot", {}, "voice", "computer").action == "allow"
+
+
+def test_an_answer_that_repeats_the_question_s_words_still_counts_but_argus_s_own_echo_doesnt(tmp_path):
+    (tmp_path / "workspace").mkdir(exist_ok=True)
+    (tmp_path / "workspace" / "old.txt").write_text("x")
+    script = Script(call("run_command", {"command": "rm old.txt"}), say("Deleted."))
+    echo = "May I go ahead with deleting files? To allow, say yes, maple. Or use the screen."
+    argus, voice, gate, dialog = voice_argus(tmp_path, ["Argus, delete old.txt", echo, "yes maple please"], script,
+                                             FakeVoicePrint(0.9, 0.99, 0.9))
+    argus.handle_utterance(SPEECH)
+    assert wait_for(lambda: gate.pending and any("say yes, maple" in s for s in voice.spoken))
+    argus.handle_utterance(SPEECH)                     # the microphone hearing Argus's own question
+    assert gate.pending
+    argus.handle_utterance(SPEECH)                     # "yes maple please": shares words with the question
+    argus.brain.wait(5)
+    assert not (tmp_path / "workspace" / "old.txt").exists()

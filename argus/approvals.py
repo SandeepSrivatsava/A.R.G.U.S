@@ -79,7 +79,7 @@ class ApprovalRequest:
         return "I need your OK for that. Please check the screen."
 
 
-def _close(a: str, b: str) -> bool:
+def close_word(a: str, b: str) -> bool:
     """Same word, allowing one letter of speech-recognition slop for longer words."""
     if a == b:
         return True
@@ -102,7 +102,7 @@ def parse_voice_answer(text: str, code: str) -> Optional[str]:
     Yes needs the code word; no doesn't (saying no can never do harm)."""
     said = " ".join(re.findall(r"[a-z']+", str(text).lower()))
     words = said.split()
-    has_code = bool(code) and any(_close(w, code) for w in words)
+    has_code = bool(code) and any(close_word(w, code) for w in words)
     if _YES.search(said) and has_code and not re.search(r"\b(no|don'?t|do not|deny|cancel)\b", said):
         return ONCE if re.search(r"\b(once|just this|only this)\b", said) else TASK
     if _NO.search(said):
