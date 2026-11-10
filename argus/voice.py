@@ -55,11 +55,15 @@ def _boundary(buf: str) -> int:
 
 
 class SentenceBuffer:
-    """Collects streamed text deltas and releases whole sentences, so speech can start early."""
+    """Collects streamed text deltas and releases whole sentences, so speech can start early. The very
+    first piece may be a clause ("The top story today, ...") so a long opening sentence doesn't hold up
+    the first word."""
 
-    def __init__(self, max_chars: int = 260):
+    def __init__(self, max_chars: int = 260, first_clause_chars: int = 60):
         self.buf = ""
         self.max_chars = max_chars
+        self.first_clause_chars = first_clause_chars
+        self.started = False
 
     def feed(self, delta: str) -> List[str]:
         self.buf += delta
@@ -70,12 +74,19 @@ class SentenceBuffer:
                 break
             out.append(self.buf[:cut])
             self.buf = self.buf[cut:]
+        if not out and not self.started and len(self.buf) >= self.first_clause_chars:
+            cut = max(self.buf.rfind(mark, 0, self.max_chars) for mark in (", ", "; ", ": ", " - "))
+            if cut >= 25:
+                out.append(self.buf[:cut + 1])
+                self.buf = self.buf[cut + 1:]
         if len(self.buf) > self.max_chars:  # a very long sentence: break at a comma or space
             cut = max(self.buf.rfind(", ", 0, self.max_chars), self.buf.rfind(" ", 0, self.max_chars))
             if cut > 40:
                 out.append(self.buf[:cut + 1])
                 self.buf = self.buf[cut + 1:]
-        return [s for s in (speakable(x) for x in out) if s]
+        spoken = [s for s in (speakable(x) for x in out) if s]
+        self.started = self.started or bool(spoken)
+        return spoken
 
     def flush(self) -> List[str]:
         rest, self.buf = self.buf, ""

@@ -165,9 +165,6 @@ def cmd_doctor(args) -> int:
             line(True, f"Claude API answers ({settings.model} for conversations)")
         except LLMError as exc:
             line(False, f"Claude API: {exc}")
-    if settings.telegram_enabled:
-        line(bool(secrets.get("TELEGRAM_BOT_TOKEN")) and bool(settings.telegram_user_id),
-             "Telegram bot token and your user ID are set")
     for module, what in (("sounddevice", "microphone library"), ("rumps", "menu bar library"),
                          ("LocalAuthentication", "Touch ID library"), ("Quartz", "screen and lock detection"),
                          ("ApplicationServices", "accessibility check"), ("truststore", "TLS trust store")):
@@ -244,8 +241,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     s = sub.add_parser("doctor", help="check that everything Argus needs is in place")
     s.add_argument("--offline", action="store_true", help="skip the check that calls the Claude API")
     sub.add_parser("usage", help="estimated Claude API spend today and this month")
-    s = sub.add_parser("telegram", help="send a message to your phone")
-    s.add_argument("text", nargs="+")
     sub.add_parser("phone-token", help="show the token for the iPhone shortcuts and app")
     s = sub.add_parser("run", help="run Argus in the foreground")
     s.add_argument("--headless", action="store_true", help="no menu bar")
@@ -285,7 +280,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         "screen": lambda: _send("screen", allow=args.state == "allow"),
         "stop": lambda: _send("stop"),
         "new": lambda: _send("new"),
-        "telegram": lambda: _send("telegram", text=" ".join(args.text)),
     }
     print(json.dumps(simple[args.cmd](), indent=2))
     return 0

@@ -2,13 +2,12 @@
 
 Builds the real Argus app from the installed settings, secrets and speech models, with three stand-ins:
 the microphone plays synthesised speech (and a double clap), the speakers record what would be said,
-and Claude / Telegram are local mock servers. Then it talks to Argus every way Sandeep would.
+and Claude is a local mock server. Then it talks to Argus every way Sandeep would.
 
 Usage: python e2e_voice.py DANGER_DIR WORK_DIR
 """
 import http.client
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -16,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
-from fakes import FakeTelegram, wait_for  # noqa: E402
+from fakes import wait_for  # noqa: E402
 
 from argus import config as config_mod  # noqa: E402
 from argus.app import App  # noqa: E402
@@ -36,8 +35,6 @@ def check(desc, ok):
 
 settings = config_mod.load()
 paths = model_paths(settings.models_dir)
-tg = FakeTelegram(token=config_mod.read_secrets(settings.secrets_path)["TELEGRAM_BOT_TOKEN"])
-os.environ["ARGUS_TELEGRAM_API"] = tg.url
 
 # ---- what the microphone will hear --------------------------------------------------------------------
 tts = PiperVoice(paths["tts"], deterministic=True)
@@ -104,18 +101,18 @@ check("activity log: requests, approval, block, clap, costs", all(k in audit for
     '"event": "approval"', '"event": "tool_blocked"', '"event": "clap"', '"cost_usd"')))
 check("activity log never has the unaddressed speech", "kitchen" not in audit)
 
-# ---- Telegram --------------------------------------------------------------------------------------------
-tg.message("What are the top headlines today?", user=settings.telegram_user_id)
-tg.message("hello", user=4242)                                   # a stranger
-check("Telegram: the owner gets an answer", wait_for(lambda: any(
-    m["text"] == "Top story: Storm closes Bay Area highways" for m in tg.sent), 20))
-check("Telegram: strangers get nothing", all(m["chat_id"] == settings.telegram_user_id for m in tg.sent))
-
-# ---- a reminder ------------------------------------------------------------------------------------------
+# ---- reminders -----------------------------------------------------------------------------------------
 app.store.add_task("stretch your legs", "reminder", due=time.time() - 1)
 app.scheduler.tick()
-check("reminder spoken at the Mac and sent to the phone",
-      "Reminder: stretch your legs" in voice.spoken and any(m["text"] == "Reminder: stretch your legs" for m in tg.sent))
+check("reminder spoken at the Mac", wait_for(lambda: "Reminder: stretch your legs" in voice.spoken, 10))
+app.argus.set_locked(True)                                       # you walked away and the Mac locked
+app.store.add_task("call home", "reminder", due=time.time() - 1)
+app.scheduler.tick()
+time.sleep(0.5)
+kept_quiet = "Reminder: call home" not in voice.spoken
+app.argus.set_locked(False)                                      # ...and you're back
+check("a reminder due while the Mac was locked is spoken when you're back",
+      kept_quiet and wait_for(lambda: "Reminder: call home" in voice.spoken, 10) and "While you were away:" in voice.spoken)
 
 # ---- iPhone gateway --------------------------------------------------------------------------------------
 token = (settings.phone_token_path).read_text().strip()
@@ -135,5 +132,4 @@ check("iPhone: Siri-style question answered",
 check("iPhone: phone token file is private", oct(settings.phone_token_path.stat().st_mode & 0o777) == "0o600")
 
 app.stop()
-tg.shutdown()
 sys.exit(1 if failed else 0)

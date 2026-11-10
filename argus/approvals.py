@@ -61,7 +61,7 @@ class Approver:
 
 
 class DenyAll(Approver):
-    """For requests from the phone: nothing risky without being at the Mac (or using Telegram)."""
+    """For requests from the phone: nothing risky without being at the Mac."""
 
     def decide(self, request: ApprovalRequest) -> str:
         return DENY

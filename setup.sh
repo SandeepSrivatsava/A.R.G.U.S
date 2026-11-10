@@ -1,5 +1,5 @@
 #!/bin/bash
-# Argus setup: installs Argus (our own assistant: brain, ears, voice, Telegram, iPhone gateway) on
+# Argus setup: installs Argus (our own voice assistant: brain, ears, voice, iPhone gateway) on
 # your Mac and starts it at login. Safe to run again; it keeps what already works.
 #
 #   ./setup.sh             normal setup (asks a few questions)
@@ -46,7 +46,7 @@ Options:
   --dry-run        print the steps without changing anything
   --yes            accept the default answer for yes/no questions
   --no-service     configure only; do not start anything in the background
-  --change-keys    ask for the Claude key, bot token and Telegram ID again
+  --change-keys    ask for the Claude key again
   -h, --help       show this help
 EOF
 }
@@ -120,12 +120,6 @@ secret_set() {  # usage: printf '%s' "$value" | secret_set KEY
 }
 
 # ---------- live checks (keys are fed to curl on stdin, not argv) ----------
-telegram_bot_name() {
-  local resp
-  resp="$(printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "$1" | curl -fsS -m 15 -K - 2>/dev/null)" || return 1
-  printf '%s' "$resp" | grep -q '"ok":true' || return 1
-  printf '%s' "$resp" | sed -n 's/.*"username":"\([^"]*\)".*/\1/p'
-}
 anthropic_check() {
   local code out
   out="$(mktemp)"
@@ -170,35 +164,19 @@ if [ "${ARGUS_SKIP_VALIDATION:-0}" != 1 ]; then
   fi
 fi
 if pgrep -fil openclaw > /dev/null 2>&1; then
-  warn "OpenClaw is running. Older versions had serious security holes, and two assistants on one bot will fight."
+  warn "OpenClaw is running. Older versions had serious security holes; consider removing it."
   confirm "Continue anyway?" n || exit 1
 fi
 
 # =====================================================================
 step "2/9  Your details (keys stay on this Mac, in $SECRETS)"
 ANTHROPIC_KEY="${ARGUS_ANTHROPIC_API_KEY:-}"
-TG_TOKEN="${ARGUS_TELEGRAM_BOT_TOKEN:-}"
-TG_USER="${ARGUS_TELEGRAM_USER_ID:-}"
 if [ "$CHANGE_KEYS" = 0 ]; then
   ANTHROPIC_KEY="${ANTHROPIC_KEY:-$(secret_get ANTHROPIC_API_KEY)}"
-  TG_TOKEN="${TG_TOKEN:-$(secret_get TELEGRAM_BOT_TOKEN)}"
-  [ -n "$TG_USER" ] || TG_USER="$(sed -n 's/^user_id = //p' "$CONFIG" 2>/dev/null | head -1)"
 fi
 [ -n "$ANTHROPIC_KEY" ] && ok "Claude API key: found (ending ...$(printf '%s' "$ANTHROPIC_KEY" | tail -c 4))"
 ask_secret ANTHROPIC_KEY "Claude API key (from platform.claude.com, starts with sk-ant-)"
 case "$ANTHROPIC_KEY" in sk-ant-*) ;; *) die "That doesn't look like a Claude API key (it should start with sk-ant-)." ;; esac
-
-[ -n "$TG_TOKEN" ] && ok "Telegram bot token: found"
-ask_secret TG_TOKEN "Telegram bot token from @BotFather (Enter to skip Telegram)" optional
-if [ -n "$TG_TOKEN" ]; then
-  printf '%s' "$TG_TOKEN" | grep -Eq '^[0-9]{5,15}:[A-Za-z0-9_-]{30,}$' \
-    || die "That doesn't look like a Telegram bot token (numbers, a colon, then a long code)."
-  ask TG_USER "Your numeric Telegram user ID (from @userinfobot)"
-  printf '%s' "$TG_USER" | grep -Eq '^[0-9]{5,15}$' || die "The Telegram user ID should be digits only."
-else
-  TG_USER="${TG_USER:-0}"
-  warn "No Telegram: Argus will work at the Mac and through the iPhone only."
-fi
 
 default_name="$( { id -F 2>/dev/null || getent passwd "$ME" 2>/dev/null | cut -d: -f5 | cut -d, -f1; } | awk '{print $1}' || true)"
 NAME="${ARGUS_NAME:-}"
@@ -224,9 +202,6 @@ SITES_TOML="$(printf '%s' "$SITES" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//'
 if [ "${ARGUS_SKIP_VALIDATION:-0}" = 1 ]; then
   warn "Skipping live key checks (ARGUS_SKIP_VALIDATION=1)"
 else
-  if [ -n "$TG_TOKEN" ]; then
-    if bot="$(telegram_bot_name "$TG_TOKEN")"; then ok "Telegram bot works: @$bot"; else die "Telegram rejected that bot token."; fi
-  fi
   if anthropic_check "$ANTHROPIC_KEY"; then
     ok "Claude API key works"
     printf '%s' "$ANTHROPIC_MODELS" | grep -q "\"$MAIN_MODEL\"" || warn "Model $MAIN_MODEL wasn't in your account's list; set model in $CONFIG"
@@ -306,7 +281,7 @@ done <<< "$MODELS"
 # =====================================================================
 step "5/9  Saving keys and settings"
 printf '%s' "$ANTHROPIC_KEY" | secret_set ANTHROPIC_API_KEY
-printf '%s' "$TG_TOKEN" | secret_set TELEGRAM_BOT_TOKEN
+printf '' | secret_set TELEGRAM_BOT_TOKEN        # Telegram was removed: drop any token an older setup saved
 ok "Keys saved to $SECRETS (owner-only)"
 PHONE_IP=""
 if PHONE_IP="$(find_tailscale_ip)"; then PHONE_ENABLED=true; else PHONE_ENABLED=false; fi
@@ -340,6 +315,7 @@ max_turn_tokens = 400000        # stop a single request before it gets expensive
 followup_seconds = 8            # after a reply, you can answer without saying "Argus"
 conversation_idle_seconds = 120 # conversation mode ends after this much quiet
 clap = "double"                 # "double", "single" or "off": clapping wakes Argus
+end_of_speech_seconds = 0.6     # how long a pause ends what you're saying (lower = snappier, 0.3 to 2)
 voice_lock = false              # true = only answer your voice (record it first: argusctl enroll)
 voice_lock_threshold = 0.45
 mic_device = ""                 # "" = the Mac's current microphone
@@ -355,15 +331,10 @@ greeting = "Online and listening."
 approval_needs_touch_id = true  # "Allow" buttons also need Touch ID or your Mac password
 pause_when_locked = true        # microphone closes while the Mac is locked
 screen_control = true           # let Argus see and use the screen (each action needs your OK)
-telegram_desktop = false        # never let Telegram messages use the screen
 blocked_sites = [$SITES_TOML]
 # blocked_apps defaults to password managers, Keychain Access and System Settings.
 # To change it, uncomment and list every app (names or bundle IDs):
 # blocked_apps = ["1Password", "Bitwarden", "Passwords", "Keychain Access", "System Settings"]
-
-[telegram]
-enabled = $( [ -n "$TG_TOKEN" ] && echo true || echo false )
-user_id = ${TG_USER:-0}
 
 [phone]
 enabled = $PHONE_ENABLED                 # iPhone shortcuts and the Argus iPhone app, over Tailscale only
@@ -373,7 +344,7 @@ port = 8765
 enabled = true                  # Meta glasses camera through the Argus iPhone app
 
 [schedule]
-morning_headlines = "0 7 * * *" # free headlines to your phone ("" = off)
+morning_headlines = "0 7 * * *" # free headlines, spoken at the Mac (when you're back, if away; "" = off)
 morning_briefing = "$BRIEF_CRON"  # AI briefing ("" = off)
 EOF
   umask 022
@@ -448,13 +419,15 @@ fi
 
 # =====================================================================
 step "9/9  Saying hello"
-if [ "$DRY_RUN" = 1 ] || [ "${ARGUS_SEND_HELLO:-yes}" = no ] || [ -z "$TG_TOKEN" ]; then
+if [ "$DRY_RUN" = 1 ] || [ "$NO_SERVICE" = 1 ] || [ "${ARGUS_SEND_HELLO:-yes}" = no ]; then
   ok "Skipped"
-elif printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TG_TOKEN" | curl -fsS -m 15 -K - \
-      --data-urlencode "chat_id=$TG_USER" --data-urlencode "text=Good day, $NAME. Argus is online: say \"Argus\" near your Mac, use Siri, or message me here." > /dev/null 2>&1; then
-  ok "Sent you a hello on Telegram"
 else
-  warn "Couldn't message you on Telegram. Open your bot in Telegram and tap Start; Argus will answer after that."
+  for _ in $(seq 1 30); do "$BIN_DIR/argusctl" status > /dev/null 2>&1 && break; sleep 1; done
+  if "$BIN_DIR/argusctl" say "Good day, $NAME. I'm ready. Say my name, or clap twice." > /dev/null 2>&1; then
+    ok "Argus said hello out loud"
+  else
+    warn "Argus isn't answering yet. Give it a minute, or run: argusctl restart"
+  fi
 fi
 
 cat <<EOF

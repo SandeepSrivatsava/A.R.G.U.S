@@ -260,7 +260,7 @@ def test_unknown_and_unavailable_tools_are_refused(tmp_path):
                                               say("no")))
     run(agent, "x")
     assert "isn't available" in results_sent(mock)[0]["content"]
-    run(agent, "y", channel="telegram")                       # opening apps is for the Mac's own voice only
+    run(agent, "y", channel="phone")                          # opening apps is for the Mac's own voice only
     assert "isn't available" in results_sent(mock)[0]["content"]
     run(agent, "z")                                           # no screen control on this computer
     result = results_sent(mock)[0]

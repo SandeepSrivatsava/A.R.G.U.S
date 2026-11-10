@@ -3,6 +3,7 @@ a Python function. The policy (policy.py) decides before every call whether it m
 from __future__ import annotations
 
 import base64
+import http.client
 import ipaddress
 import json
 import os
@@ -47,7 +48,6 @@ class Context:
     workspace: Path
     store: Any
     cancel: threading.Event = field(default_factory=threading.Event)
-    notify: Callable[[str], bool] = lambda text: False          # send a message to your phone (Telegram)
     glasses: Any = None                                        # bridge to the iPhone app (glasses camera)
     timezone: Optional[str] = None
 
@@ -58,7 +58,7 @@ class Tool:
     description: str
     schema: Dict[str, Any]
     run: Callable[[Dict[str, Any], Context], ToolOutput]
-    channels: frozenset = frozenset({"voice", "telegram", "phone", "scheduler", "cli"})
+    channels: frozenset = frozenset({"voice", "phone", "scheduler", "cli"})
 
     def spec(self) -> Dict[str, Any]:
         return {"name": self.name, "description": self.description, "input_schema": self.schema}
@@ -287,12 +287,19 @@ def html_to_text(raw: str) -> str:
     return (f"# {title}\n\n" if title else "") + text.strip()
 
 
+class TransientFetchError(OSError):
+    """A failure worth one more try: a timeout, a dropped connection, a name that didn't resolve, or a busy
+    site (HTTP 429 or 5xx)."""
+
+
 def public_ip(host: str) -> Optional[str]:
     """The address to connect to, but only if every address the name resolves to is on the public internet."""
     try:
         infos = socket.getaddrinfo(host, None)
-    except (socket.gaierror, UnicodeError):
+    except UnicodeError:
         return None
+    except OSError as exc:      # gaierror and friends: no such name, or no DNS right now
+        raise TransientFetchError(f"couldn't find {host} (the name doesn't resolve)") from exc
     ips = []
     for info in infos:
         ip = ipaddress.ip_address(str(info[4][0]).split("%")[0])
@@ -323,20 +330,26 @@ def fetch_url(url: str, max_bytes: int = 3_000_000, timeout: float = 20.0, redir
         path = parts.path or "/"
         if parts.query:
             path += "?" + parts.query
-        conn.request("GET", path, headers={"User-Agent": "Mozilla/5.0 (Macintosh) Argus/1.0",
-                                           "Accept": "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5"})
-        resp = conn.getresponse()
-        if resp.status in (301, 302, 303, 307, 308) and resp.getheader("location"):
-            url = urljoin(url, resp.getheader("location"))
+        try:
+            conn.request("GET", path, headers={"User-Agent": "Mozilla/5.0 (Macintosh) Argus/1.0",
+                                               "Accept": "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5"})
+            resp = conn.getresponse()
+            if resp.status in (301, 302, 303, 307, 308) and resp.getheader("location"):
+                url = urljoin(url, resp.getheader("location"))
+                continue
+            if resp.status == 429 or resp.status >= 500:
+                raise TransientFetchError(f"the site answered HTTP {resp.status}")
+            if resp.status >= 400:
+                raise ValueError(f"the site answered HTTP {resp.status}")
+            data = resp.read(max_bytes + 1)
+            ctype = (resp.getheader("content-type") or "").split(";")[0].strip().lower()
+            return url, ctype, data[:max_bytes]
+        except (TransientFetchError, ValueError):
+            raise
+        except (OSError, http.client.HTTPException) as exc:
+            raise TransientFetchError(str(exc) or type(exc).__name__) from exc
+        finally:
             conn.close()
-            continue
-        if resp.status >= 400:
-            conn.close()
-            raise ValueError(f"the site answered HTTP {resp.status}")
-        data = resp.read(max_bytes + 1)
-        ctype = (resp.getheader("content-type") or "").split(";")[0].strip().lower()
-        conn.close()
-        return url, ctype, data[:max_bytes]
     raise ValueError("too many redirects")
 
 
@@ -346,10 +359,16 @@ def fetch_page(args: Dict[str, Any], ctx: Context) -> ToolOutput:
         limit = int(_number(args.get("max_chars"), 20_000, 1000, 100_000))
     except ValueError as exc:
         return ToolOutput.error(f"max_chars: {exc}")
-    try:
-        final, ctype, data = fetch_url(url)
-    except (ValueError, OSError) as exc:
-        return ToolOutput.error(f"couldn't fetch {url}: {exc}")
+    for attempt in (1, 2):
+        try:
+            final, ctype, data = fetch_url(url)
+            break
+        except TransientFetchError as exc:          # a timeout or a hiccup: one quick second try
+            if attempt == 2 or ctx.cancel.is_set():
+                return ToolOutput.error(f"couldn't fetch {url}: {exc}")
+            time.sleep(0.4)
+        except (ValueError, OSError) as exc:
+            return ToolOutput.error(f"couldn't fetch {url}: {exc}")
     if ctype.startswith("image/") and len(data) < 5_000_000 and ctype in IMAGE_TYPES.values():
         return ToolOutput([{"type": "text", "text": f"Image from {final}"},
                            {"type": "image", "source": {"type": "base64", "media_type": ctype,
@@ -454,14 +473,6 @@ def schedule(args: Dict[str, Any], ctx: Context) -> ToolOutput:
     return ToolOutput(f"scheduled #{tid} for {datetime.fromtimestamp(due).strftime('%a %d %b %H:%M')}")
 
 
-def send_to_phone(args: Dict[str, Any], ctx: Context) -> ToolOutput:
-    text = str(args.get("text") or "").strip()
-    if not text:
-        return ToolOutput.error("nothing to send")
-    return ToolOutput("sent to your phone") if ctx.notify(text[:3900]) else ToolOutput.error(
-        "couldn't send it: Telegram isn't set up or isn't reachable")
-
-
 def open_app(args: Dict[str, Any], ctx: Context) -> ToolOutput:
     name = str(args.get("name") or "").strip()
     if not re.fullmatch(r"[\w .&'+-]{1,60}", name):
@@ -527,8 +538,6 @@ def build_tools(*, mac: bool = True, glasses: bool = True) -> Dict[str, Tool]:
              _obj({"action": {"type": "string", "enum": ["create", "list", "cancel"]}, "text": {"type": "string"},
                    "mode": {"type": "string", "enum": ["reminder", "task"]}, "at": {"type": "string"},
                    "cron": {"type": "string"}, "id": {"type": "integer"}}, ["action"]), schedule),
-        Tool("send_to_phone", "Send a text message to the user's phone (Telegram), e.g. a link or a list to keep.",
-             _obj({"text": {"type": "string"}}, ["text"]), send_to_phone),
     ]
     if mac:
         tools += [
@@ -540,7 +549,7 @@ def build_tools(*, mac: bool = True, glasses: bool = True) -> Dict[str, Tool]:
     if glasses:
         tools.append(Tool("glasses_look", "Take a photo with the user's Meta glasses camera (what they're looking at) "
                           "and look at it. Only when the user asks about what they see.",
-                          _obj({}), glasses_look, frozenset({"voice", "phone", "telegram", "cli"})))
+                          _obj({}), glasses_look, frozenset({"voice", "phone", "cli"})))
     return {t.name: t for t in tools}
 
 

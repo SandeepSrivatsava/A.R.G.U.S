@@ -28,7 +28,7 @@ def argus_home(tmp_path):
     mock = ClaudeMock(rules).start()
     (home / "config.toml").write_text(
         f'user_name = "Test"\n[brain]\napi_base = "{mock.url}"\nworkspace = "{tmp_path / "ws"}"\n'
-        '[telegram]\nenabled = false\n[schedule]\nmorning_headlines = ""\n')
+        '[schedule]\nmorning_headlines = ""\n')
     secrets = home / "secrets.env"
     secrets.write_text("ANTHROPIC_API_KEY=sk-ant-test\n")
     secrets.chmod(0o600)
@@ -72,7 +72,7 @@ def test_argus_explains_why_it_cant_start(argus_home):
     out, _ = proc.communicate(timeout=60)
     assert proc.returncode == 2 and "Argus could not start" in out and "chmod 600" in out
     (argus_home / "secrets.env").chmod(0o600)
-    (argus_home / "config.toml").write_text('[security]\ntelegram_desktop = "yes"\n')
+    (argus_home / "config.toml").write_text('[security]\nscreen_control = "yes"\n')
     proc = start(argus_home)
     out, _ = proc.communicate(timeout=60)
     assert proc.returncode == 2 and "problem in Argus's settings" in out and "true or false" in out

@@ -4,7 +4,7 @@
 * Every request needs the secret token from ~/.argus/phone_token (compared in constant time).
 * Repeated bad tokens lock that address out for 15 minutes; requests are size-limited.
 * From the phone Argus can look and answer, but anything that needs approval is refused
-  (approve risky things at the Mac with Touch ID, or in Telegram).
+  (approve risky things at the Mac with Touch ID).
 
 POST /ask   {"text": "..."}                                   -> {"reply": "..."}
 POST /look  {"text": "...", "image": "<base64 png/jpeg>"}     -> {"reply": "..."}   (phone screen or glasses photo)

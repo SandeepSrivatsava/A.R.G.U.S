@@ -278,8 +278,11 @@ def test_fetch_successes_are_bounded(ctx, site):
     assert "characters cut" in huge and len(huge) < 6000
 
 
-def test_unknown_host_is_refused(ctx):
-    assert "private or local network" in toolbox.fetch_page({"url": "http://no-such-host.invalid/"}, ctx).content
+def test_a_site_that_doesnt_exist_says_so(ctx, monkeypatch):
+    slept = []
+    monkeypatch.setattr(toolbox.time, "sleep", slept.append)
+    out = toolbox.fetch_page({"url": "http://no-such-host.invalid/"}, ctx)
+    assert out.is_error and "doesn't resolve" in out.content and slept == [0.4]     # one quick second try
 
 
 def test_long_web_addresses_need_approval(policy):
@@ -292,12 +295,10 @@ def test_long_web_addresses_need_approval(policy):
 
 
 # ---- other tools -----------------------------------------------------------------------------------------
-def test_memory_and_phone_tool_errors(ctx):
+def test_memory_tool_errors(ctx):
     assert toolbox.remember({"fact": "   "}, ctx).is_error
     assert toolbox.forget({"id": "first"}, ctx).is_error
     assert toolbox.forget({"id": 999}, ctx).is_error
-    assert toolbox.send_to_phone({"text": ""}, ctx).is_error
-    assert "Telegram isn't set up" in toolbox.send_to_phone({"text": "hi"}, ctx).content
 
 
 def test_schedule_tool_errors(ctx):

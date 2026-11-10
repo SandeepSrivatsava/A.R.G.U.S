@@ -1,10 +1,7 @@
-"""Shared test helpers: a scripted Claude, a fake Telegram, and a quick way to build Argus's brain."""
+"""Shared test helpers: a scripted Claude and a quick way to build Argus's brain and listening loop."""
 from __future__ import annotations
 
-import json
-import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -59,7 +56,7 @@ def make_settings(tmp_path: Path, **overrides):
     return s
 
 
-def make_agent(tmp_path: Path, responder, *, settings=None, computer=None, desktop=None, notify=None, glasses=None):
+def make_agent(tmp_path: Path, responder, *, settings=None, computer=None, desktop=None, glasses=None):
     from argus.agent import Agent
     from argus.audit import Audit
     from argus.llm import Claude
@@ -72,112 +69,8 @@ def make_agent(tmp_path: Path, responder, *, settings=None, computer=None, deskt
                                                  "front_name": "Safari", "visible_apps": []}
     agent = Agent(Claude("sk-ant-test", base_url=mock.url, max_retries=1), Store(tmp_path / "argus.db"),
                   Policy(s, workspace=s.workspace, desktop_state=lambda: dict(state)), build_tools(),
-                  settings=s, audit=Audit(tmp_path / "audit.jsonl"), computer=computer,
-                  notify=notify or (lambda t: False), glasses=glasses)
+                  settings=s, audit=Audit(tmp_path / "audit.jsonl"), computer=computer, glasses=glasses)
     return agent, mock
-
-
-class FakeTelegram(ThreadingHTTPServer):
-    """Enough of the Telegram Bot API for Argus: updates, messages, buttons, files."""
-
-    daemon_threads = True
-
-    def __init__(self, token: str = "123:abc"):
-        super().__init__(("127.0.0.1", 0), _TgHandler)
-        self.token = token
-        self.updates: List[Dict[str, Any]] = []
-        self.sent: List[Dict[str, Any]] = []
-        self.calls: List[Tuple[str, Dict[str, Any]]] = []
-        self.files: Dict[str, bytes] = {}
-        self.fail_methods: set = set()      # Bot API methods that answer {"ok": false} (error tests)
-        self._next = 1
-        self._lock = threading.Lock()
-        threading.Thread(target=self.serve_forever, daemon=True).start()
-
-    @property
-    def url(self) -> str:
-        return f"http://127.0.0.1:{self.server_port}"
-
-    def handle_error(self, request, client_address):
-        pass
-
-    def push(self, update: Dict[str, Any]) -> None:
-        with self._lock:
-            update = dict(update, update_id=self._next)
-            self._next += 1
-            self.updates.append(update)
-
-    def message(self, text: str, user: int = 987654321, **extra) -> None:
-        self.push({"message": dict({"message_id": self._next, "from": {"id": user}, "chat": {"id": user, "type": "private"},
-                                    "text": text}, **extra)})
-
-    def press(self, data: str, user: int = 987654321) -> None:
-        self.push({"callback_query": {"id": f"cb{self._next}", "from": {"id": user}, "data": data,
-                                      "message": {"chat": {"id": user, "type": "private"}}}})
-
-
-class _TgHandler(BaseHTTPRequestHandler):
-    server: FakeTelegram
-
-    def log_message(self, *a):
-        pass
-
-    def _ok(self, result: Any) -> None:
-        data = json.dumps({"ok": True, "result": result}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def do_GET(self):
-        prefix = f"/file/bot{self.server.token}/"
-        if self.path.startswith(prefix) and self.path[len(prefix):] in self.server.files:
-            data = self.server.files[self.path[len(prefix):]]
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
-        prefix = f"/bot{self.server.token}/"
-        if not self.path.startswith(prefix):
-            self.send_response(401)
-            self.end_headers()
-            return
-        method = self.path[len(prefix):]
-        self.server.calls.append((method, body))
-        if method in self.server.fail_methods:
-            data = json.dumps({"ok": False, "error_code": 400, "description": "Bad Request: refused in this test"}).encode()
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return
-        if method == "getUpdates":
-            deadline = time.time() + min(float(body.get("timeout") or 0), 1.0)
-            while time.time() < deadline:
-                with self.server._lock:
-                    pending = [u for u in self.server.updates if u["update_id"] >= int(body.get("offset") or 0)]
-                if pending:
-                    break
-                time.sleep(0.02)
-            with self.server._lock:
-                pending = [u for u in self.server.updates if u["update_id"] >= int(body.get("offset") or 0)]
-            return self._ok(pending)
-        if method == "sendMessage":
-            self.server.sent.append(body)
-            return self._ok({"message_id": 1000 + len(self.server.sent)})
-        if method == "getFile":
-            return self._ok({"file_path": f"photos/{body.get('file_id')}.jpg"})
-        if method == "getMe":
-            return self._ok({"username": "argus_test_bot"})
-        return self._ok(True)
 
 
 # ---- the listening loop with scripted transcripts and a fake microphone ---------------------------------

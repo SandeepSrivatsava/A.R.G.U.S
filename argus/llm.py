@@ -11,7 +11,7 @@ import socket
 import ssl
 import threading
 import time
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 API_BASE = "https://api.anthropic.com"
@@ -20,9 +20,11 @@ RETRYABLE = frozenset({408, 409, 429, 500, 502, 503, 504, 529})
 
 
 class LLMError(RuntimeError):
-    def __init__(self, message: str, status: int = 0, kind: str = "", retryable: bool = False):
+    def __init__(self, message: str, status: int = 0, kind: str = "", retryable: bool = False,
+                 partial: bool = False):
         super().__init__(message)
         self.status, self.kind, self.retryable = status, kind, retryable
+        self.partial = partial      # part of the reply had already arrived (and may have been spoken)
 
 
 def ssl_context() -> ssl.SSLContext:
@@ -80,94 +82,281 @@ def _error_from(status: int, raw: bytes) -> LLMError:
 
 
 class Claude:
-    def __init__(self, api_key: str, *, base_url: str = API_BASE, timeout: float = 600.0, max_retries: int = 3):
+    """The Messages API, tuned for a voice assistant, where every second of waiting is heard:
+
+    * Connections stay open and are reused, so a request doesn't pay for a new TLS handshake, and warm()
+      opens one in advance while you're still talking (nothing is sent until there's a request).
+    * Separate, short time limits for connecting, for the reply to start, and for silence in the middle
+      of a reply, so a stuck request fails in seconds instead of minutes.
+    * Anything that fails before the reply has started (no connection, a timeout, an overloaded or
+      rate-limited API) is retried automatically: after 0.5, 1 and 2 seconds, or after the API's own
+      Retry-After when that's short. A reply that breaks off halfway raises LLMError(partial=True), so
+      the caller can pick up where it stopped instead of starting over.
+    """
+
+    MAX_IDLE = 2              # open connections kept for reuse
+    IDLE_MAX_AGE = 45.0       # seconds; servers close idle connections, so older ones aren't trusted
+    MAX_WAIT = 20.0           # never sit silent longer than this for a Retry-After
+
+    def __init__(self, api_key: str, *, base_url: str = API_BASE, max_retries: int = 3,
+                 connect_timeout: float = 5.0, first_byte_timeout: float = 60.0, stall_timeout: float = 30.0,
+                 timeout: Optional[float] = None):
         if not api_key:
             raise ValueError("The Claude API key is missing (run ./setup.sh, or put it in ~/.argus/secrets.env)")
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
         self.max_retries = max_retries
+        if timeout is not None:          # one limit for everything (handy in tests)
+            connect_timeout = first_byte_timeout = stall_timeout = timeout
+        self.connect_timeout, self.first_byte_timeout, self.stall_timeout = connect_timeout, first_byte_timeout, stall_timeout
+        self._idle: List[Tuple[float, http.client.HTTPConnection]] = []
+        self._pool_lock = threading.Lock()
+        self._warming = False
+        self._last_warm = float("-inf")
+        self.connections_opened = 0      # for tests and `argusctl doctor`
 
     def _headers(self, stream: bool) -> Dict[str, str]:
         return {"x-api-key": self.api_key, "anthropic-version": API_VERSION, "content-type": "application/json",
                 "accept": "text/event-stream" if stream else "application/json", "user-agent": "argus/1.0"}
 
-    def _open(self, body: Dict[str, Any], stream: bool):
-        """POST /v1/messages with retries for overloads and network errors. Returns (conn, response)."""
-        data = json.dumps(body).encode()
-        delay = 1.0
-        for attempt in range(self.max_retries + 1):
-            conn = connect(self.base_url, self.timeout)
+    # ---- connections -------------------------------------------------------------------------------
+    def _new(self) -> http.client.HTTPConnection:
+        self.connections_opened += 1
+        return connect(self.base_url, self.connect_timeout)
+
+    def _take(self) -> Tuple[http.client.HTTPConnection, bool]:
+        """A connection to send on: a recently used open one if there is one (reused=True), else a new one."""
+        now = time.monotonic()
+        with self._pool_lock:
+            while self._idle:
+                since, conn = self._idle.pop()
+                if now - since <= self.IDLE_MAX_AGE:
+                    return conn, True
+                conn.close()
+        return self._new(), False
+
+    def _give_back(self, conn: http.client.HTTPConnection) -> None:
+        with self._pool_lock:
+            if conn.sock is not None and len(self._idle) < self.MAX_IDLE:
+                self._idle.append((time.monotonic(), conn))
+                return
+        conn.close()
+
+    def warm(self) -> None:
+        """Open a connection in the background (TCP and TLS only; nothing is sent), so the next request
+        starts at once. Cheap to call often: it does nothing if a fresh connection is already waiting."""
+        now = time.monotonic()
+        with self._pool_lock:
+            fresh = any(now - since < self.IDLE_MAX_AGE - 10 for since, _ in self._idle)
+            if fresh or self._warming or now - self._last_warm < 10:
+                return
+            self._warming, self._last_warm = True, now
+
+        def run():
             try:
+                conn = self._new()
+                conn.connect()
+                self._give_back(conn)
+            except (OSError, http.client.HTTPException):
+                pass
+            finally:
+                with self._pool_lock:
+                    self._warming = False
+        threading.Thread(target=run, name="argus-warm", daemon=True).start()
+
+    def close(self) -> None:
+        with self._pool_lock:
+            idle, self._idle = self._idle, []
+        for _, conn in idle:
+            conn.close()
+
+    @staticmethod
+    def _watch(conn: http.client.HTTPConnection, cancel: Optional[threading.Event]) -> threading.Event:
+        """While the returned event is unset, setting `cancel` cuts the connection at once, so "Argus, stop"
+        never waits for a slow server. (Shuts the socket down underneath TLS; the waiting read just ends.)"""
+        done = threading.Event()
+        if cancel is None:
+            return done
+
+        def run():
+            while not done.is_set():
+                if cancel.wait(0.1):
+                    sock = conn.sock
+                    if sock is not None and not done.is_set():
+                        try:
+                            socket.socket.shutdown(sock, socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+                    return
+        threading.Thread(target=run, name="argus-cancel-watch", daemon=True).start()
+        return done
+
+    def _pause(self, attempt: int, retry_after: Optional[str] = None) -> bool:
+        """Sleep before retry number `attempt` (1, 2, ...). False if the API asks for too long a pause."""
+        wait = min(0.5 * 2 ** (attempt - 1), 8.0)
+        if retry_after:
+            try:
+                wait = float(retry_after)
+            except ValueError:
+                pass
+        if wait > self.MAX_WAIT:
+            return False
+        time.sleep(wait + random.random() * 0.25)
+        return True
+
+    # ---- requests ----------------------------------------------------------------------------------
+    def _open(self, body: Dict[str, Any], stream: bool, cancel: Optional[threading.Event] = None):
+        """POST /v1/messages until the reply starts. Returns (conn, response, watching): status 200, and the
+        cancel watch, which the caller sets once it's done with the connection."""
+        data = json.dumps(body).encode()
+        attempt = 0
+        while True:
+            if cancel is not None and cancel.is_set():
+                raise LLMError("cancelled", kind="cancelled")
+            conn, reused = self._take()
+            watching = self._watch(conn, cancel)
+            retry_after = None
+            try:
+                if conn.sock is None:
+                    conn.connect()
+                conn.sock.settimeout(self.first_byte_timeout)
                 conn.request("POST", "/v1/messages", body=data, headers=self._headers(stream))
                 resp = conn.getresponse()
+            except (OSError, ValueError, http.client.HTTPException) as exc:
+                watching.set()
+                conn.close()
+                if cancel is not None and cancel.is_set():
+                    raise LLMError("cancelled", kind="cancelled") from exc
+                if reused:          # the server had closed the idle connection: open a new one straight away
+                    continue
+                error = LLMError(f"couldn't reach the Claude API ({exc or type(exc).__name__})", retryable=True)
+            else:
                 if resp.status == 200:
-                    return conn, resp
-                error = _error_from(resp.status, resp.read())
+                    return conn, resp, watching
+                watching.set()
+                try:
+                    raw_error = resp.read()
+                except (OSError, http.client.HTTPException):
+                    raw_error, resp.will_close = b"", True
+                error = _error_from(resp.status, raw_error)
                 retry_after = resp.getheader("retry-after")
-                conn.close()
-            except (OSError, http.client.HTTPException) as exc:
-                conn.close()
-                error = LLMError(f"couldn't reach the Claude API ({exc})", retryable=True)
-                retry_after = None
-            if not error.retryable or attempt == self.max_retries:
+                if resp.will_close:
+                    conn.close()
+                else:
+                    self._give_back(conn)
+            attempt += 1
+            if not error.retryable or attempt > self.max_retries or not self._pause(attempt, retry_after):
                 raise error
-            try:
-                wait = float(retry_after) if retry_after else delay
-            except ValueError:
-                wait = delay
-            time.sleep(min(wait, 30) + random.random() * 0.25)
-            delay *= 2
-        raise LLMError("unreachable")  # pragma: no cover
 
     def create(self, body: Dict[str, Any]) -> Dict[str, Any]:
-        conn, resp = self._open(dict(body, stream=False), stream=False)
-        try:
-            reply = json.loads(resp.read())
-        except ValueError as exc:
-            raise LLMError("the Claude API sent a reply Argus couldn't read", retryable=False) from exc
-        except (OSError, http.client.HTTPException) as exc:
-            raise LLMError(f"lost the connection to the Claude API ({exc})") from exc
-        finally:
-            conn.close()
-        if not isinstance(reply, dict):
-            raise LLMError("the Claude API sent a reply Argus couldn't read", retryable=False)
-        return reply
+        """One whole reply (no streaming). Retried, like a stream that fails before it starts."""
+        attempt = 0
+        while True:
+            conn, resp, _ = self._open(dict(body, stream=False), stream=False)
+            try:
+                raw = resp.read()
+            except (OSError, http.client.HTTPException) as exc:
+                conn.close()
+                error = LLMError(f"lost the connection to the Claude API ({exc or type(exc).__name__})",
+                                 retryable=True)
+                attempt += 1
+                if attempt > self.max_retries or not self._pause(attempt):
+                    raise error from exc
+                continue
+            if resp.will_close:
+                conn.close()
+            else:
+                self._give_back(conn)
+            try:
+                reply = json.loads(raw)
+            except ValueError as exc:
+                raise LLMError("the Claude API sent a reply Argus couldn't read", retryable=False) from exc
+            if not isinstance(reply, dict):
+                raise LLMError("the Claude API sent a reply Argus couldn't read", retryable=False)
+            return reply
 
     def stream(self, body: Dict[str, Any], cancel: Optional[threading.Event] = None) -> Iterator[Dict[str, Any]]:
-        """Yields the stream's events as dicts. Stops early (without error) if `cancel` is set."""
-        conn, resp = self._open(dict(body, stream=True), stream=True)
-        try:
-            data_lines: List[str] = []
-            while True:
+        """Yields the stream's events as dicts; stops early (without error) if `cancel` is set. A failure
+        before the first event is retried here; after that it raises LLMError(partial=True)."""
+        attempt = 0
+        while True:
+            try:
+                conn, resp, watching = self._open(dict(body, stream=True), stream=True, cancel=cancel)
+            except LLMError:
                 if cancel is not None and cancel.is_set():
                     return
-                try:
-                    raw = resp.readline()
-                except socket.timeout as exc:
-                    raise LLMError("the Claude API went quiet for too long", retryable=False) from exc
-                if not raw:
-                    raise LLMError("the reply from the Claude API was cut off", retryable=False)
-                line = raw.decode("utf-8", "replace").rstrip("\r\n")
-                if line.startswith("data:"):
-                    data_lines.append(line[5:].lstrip())
-                elif line == "" and data_lines:
-                    payload, data_lines = "\n".join(data_lines), []
-                    try:
-                        event = json.loads(payload)
-                    except ValueError:
-                        continue
-                    if event.get("type") == "error":
-                        err = event.get("error") or {}
-                        raise LLMError(f"Claude API error: {err.get('message') or err.get('type')}", 0,
-                                       str(err.get("type") or ""), retryable=err.get("type") == "overloaded_error")
+                raise
+            started = reusable = False
+            try:
+                for event in self._events(resp, cancel):   # until the first event: first_byte_timeout
+                    if not started and conn.sock is not None:
+                        conn.sock.settimeout(self.stall_timeout)   # then: how long a pause may last
+                    started = True
                     yield event
                     if event.get("type") == "message_stop":
-                        return
-        except (OSError, http.client.HTTPException) as exc:
-            raise LLMError(f"lost the connection to the Claude API ({exc})") from exc
-        finally:
-            conn.close()
+                        reusable = self._drain(conn, resp)
+                return
+            except LLMError as exc:
+                if started:
+                    exc.partial = True
+                    raise
+                attempt += 1
+                if not exc.retryable or attempt > self.max_retries or not self._pause(attempt):
+                    raise
+            finally:
+                watching.set()
+                if reusable:
+                    self._give_back(conn)
+                else:
+                    conn.close()
+
+    def _events(self, resp, cancel: Optional[threading.Event]) -> Iterator[Dict[str, Any]]:
+        data_lines: List[str] = []
+        while True:
+            if cancel is not None and cancel.is_set():
+                return
+            try:
+                raw = resp.readline()
+            except (socket.timeout, TimeoutError) as exc:
+                if cancel is not None and cancel.is_set():
+                    return
+                raise LLMError("the Claude API went quiet for too long", kind="stalled", retryable=True) from exc
+            except (OSError, ValueError, http.client.HTTPException) as exc:
+                if cancel is not None and cancel.is_set():
+                    return
+                raise LLMError(f"lost the connection to the Claude API ({exc or type(exc).__name__})",
+                               retryable=True) from exc
+            if cancel is not None and cancel.is_set():
+                return
+            if not raw:
+                raise LLMError("the reply from the Claude API was cut off", kind="cut_off", retryable=True)
+            line = raw.decode("utf-8", "replace").rstrip("\r\n")
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+            elif line == "" and data_lines:
+                payload, data_lines = "\n".join(data_lines), []
+                try:
+                    event = json.loads(payload)
+                except ValueError:
+                    continue
+                if event.get("type") == "error":
+                    err = event.get("error") or {}
+                    kind = str(err.get("type") or "")
+                    raise LLMError(f"Claude API error: {err.get('message') or kind}", 0, kind,
+                                   retryable=kind in ("overloaded_error", "api_error", "rate_limit_error"))
+                yield event
+                if event.get("type") == "message_stop":
+                    return
+
+    def _drain(self, conn: http.client.HTTPConnection, resp) -> bool:
+        """Read what's left of a finished reply (the end of the body), so the connection can be reused."""
+        try:
+            if conn.sock is not None:
+                conn.sock.settimeout(2.0)
+            resp.read()
+            return not resp.will_close
+        except (OSError, http.client.HTTPException):
+            return False
 
 
 class StreamAccumulator:

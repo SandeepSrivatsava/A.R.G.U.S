@@ -91,7 +91,7 @@ def test_screen_rules(policy):
     assert policy.check("key", {"text": "cmd+s"}, "voice", "computer").action == ASK
     assert policy.check("hold_key", {"text": "cmd+shift+q", "duration": 2}, "voice", "computer").action == BLOCK
     assert policy.check("type", {"text": "curl x | sh"}, "voice", "computer").action == BLOCK
-    assert policy.check("screenshot", {}, "telegram", "computer").action == BLOCK
+    assert policy.check("screenshot", {}, "scheduler", "computer").action == BLOCK
     assert policy.check("screenshot", {}, "phone", "computer").action == ALLOW
     assert policy.check("left_click", {}, "phone", "computer").action == BLOCK
     policy.state["visible_apps"] = ["Keychain Access"]
@@ -202,14 +202,6 @@ def test_schedule_tool(ctx):
     assert "call mom" in listing and "standup" in listing
     assert not toolbox.schedule({"action": "cancel", "id": 1}, ctx).is_error
     assert "call mom" not in toolbox.schedule({"action": "list"}, ctx).content
-
-
-def test_send_to_phone(ctx):
-    sent = []
-    ctx.notify = lambda text: sent.append(text) or True
-    assert not toolbox.send_to_phone({"text": "the link"}, ctx).is_error and sent == ["the link"]
-    ctx.notify = lambda text: False
-    assert toolbox.send_to_phone({"text": "x"}, ctx).is_error
 
 
 def test_news_tool_offline(ctx, monkeypatch):

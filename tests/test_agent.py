@@ -206,10 +206,10 @@ def test_screen_is_off_limits_when_locked_or_password_app_visible(tmp_path):
     assert result["is_error"] and "1Password" in result["content"]
 
 
-def test_telegram_and_phone_get_no_or_read_only_screen(tmp_path):
+def test_scheduled_tasks_and_the_phone_get_no_or_read_only_screen(tmp_path):
     script = Script(say("hi"), say("hi"))
     agent, _ = make_agent(tmp_path, script, computer=Computer(FakeBackend()))
-    run(agent, "hello", channel="telegram")
+    run(agent, "hello", channel="scheduler")
     run(agent, "hello", channel="phone")
     assert not any(t.get("type", "").startswith("computer") for t in script.bodies[0]["tools"])
     phone_toolset = [t for t in script.bodies[1]["tools"] if t.get("type", "").startswith("computer")][0]

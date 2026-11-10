@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
@@ -47,6 +47,8 @@ class Argus:
         self._stop = threading.Event()
         self._last_barge_check = 0.0
         self._ack = 0
+        self._held: List[str] = []      # reminders that came while you were away, spoken when you're back
+        self._held_lock = threading.Lock()
         self.brain.on_reply_finished = self._reply_finished
 
     # ---- state shown in the menu bar / `argusctl status` -------------------------------------------
@@ -69,6 +71,33 @@ class Argus:
     def guard_state(self) -> Dict[str, Any]:
         return {"screen_private": self.screen_private, "mic": self.status()["mode"]}
 
+    # ---- reminders and scheduled results -------------------------------------------------------------
+    def present(self) -> bool:
+        """Is someone at the Mac to hear it? Not while it's locked or the microphone is switched off."""
+        return self.mic_wanted and not self.locked
+
+    def announce(self, text: str) -> None:
+        """Say a reminder or a scheduled result now, or keep it until you're back at the Mac."""
+        text = " ".join(str(text).split())
+        if not text:
+            return
+        if self.present():
+            self.speaker.say(text)
+            return
+        with self._held_lock:
+            self._held = (self._held + [text])[-20:]
+        self.audit.log("announcement_held", count=len(self._held))
+
+    def _speak_held(self) -> None:
+        if not self.present():
+            return
+        with self._held_lock:
+            held, self._held = self._held, []
+        if held:
+            self.speaker.say("While you were away:")
+            for text in held:
+                self.speaker.say(text)
+
     # ---- microphone control ------------------------------------------------------------------------
     def _sync_mic(self) -> None:
         want_open = self.mic_wanted and not self.locked
@@ -85,6 +114,7 @@ class Argus:
             self.brain.cancel()
         self.audit.log("microphone", on=on)
         self._sync_mic()
+        self._speak_held()
 
     def set_locked(self, locked: bool) -> None:
         self.locked = locked
@@ -93,6 +123,7 @@ class Argus:
             self.listener.set_conversation(False)
         self.audit.log("screen_lock", locked=locked)
         self._sync_mic()
+        self._speak_held()
 
     def set_screen_private(self, on: bool) -> None:
         self.screen_private = on
@@ -122,6 +153,8 @@ class Argus:
                 self.on_clap()
             for utterance in self.segmenter.feed(chunk):
                 self.handle_utterance(utterance)
+            if self.segmenter.speech_active and not self.listener.sleeping:
+                self.brain.warm()       # someone is talking: have a connection to Claude ready (sends nothing)
             self._maybe_barge_in()
 
     def on_clap(self) -> None:

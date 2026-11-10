@@ -1,6 +1,6 @@
 """More negative and error cases. Each one covers a failure path that the coverage report showed no test
-reached: odd conversations, broken connections, refusals from Telegram, crashing helpers, and sounds that
-look like claps but aren't."""
+reached: odd conversations, broken connections, crashing helpers, and sounds that look like claps but
+aren't."""
 import base64
 import os
 import socket
@@ -29,16 +29,14 @@ from argus.llm import Claude, LLMError, StreamAccumulator
 from argus.policy import ALLOW, ASK, BLOCK, Policy
 from argus.scheduler import Scheduler
 from argus.store import Store
-from argus.telegram import TelegramAPI, TelegramBot, TelegramError
 from argus.toolbox import Context
 from argus.voice import RecordingVoice, SentenceBuffer, Speaker
 from argus.wake import NameMatcher
 
-from fakes import SPEECH, FakeTelegram, Script, call, make_agent, make_argus, make_settings, say, wait_for
+from fakes import SPEECH, Script, make_agent, make_argus, make_settings, say, wait_for
 from mock_claude import ClaudeMock, rules, validate
 
 MODELS = Path(os.environ.get("ARGUS_TEST_MODELS", "/nonexistent"))
-USER = 987654321
 
 
 def serve(handler_class):
@@ -46,16 +44,6 @@ def serve(handler_class):
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
-
-
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def message(text):
-    return {"message": {"from": {"id": USER}, "chat": {"id": USER, "type": "private"}, "text": text}}
 
 
 # ---- the brain ----------------------------------------------------------------------------------------------
@@ -144,7 +132,7 @@ class Replies(BaseHTTPRequestHandler):
 
 def test_a_retry_after_that_isnt_a_number_still_retries(monkeypatch):
     waits = []
-    monkeypatch.setattr(llm, "time", SimpleNamespace(sleep=waits.append))
+    monkeypatch.setattr(llm, "time", SimpleNamespace(sleep=waits.append, monotonic=time.monotonic))
     Replies.script = [(429, {"Retry-After": "soon"}, b'{"error": {"type": "rate_limit_error", "message": "slow down"}}')]
     server = serve(Replies)
     try:
@@ -152,7 +140,7 @@ def test_a_retry_after_that_isnt_a_number_still_retries(monkeypatch):
             {"model": "m", "max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]})
     finally:
         server.shutdown()
-    assert reply["stop_reason"] == "end_turn" and len(waits) == 1 and 1.0 <= waits[0] <= 1.25
+    assert reply["stop_reason"] == "end_turn" and len(waits) == 1 and 0.5 <= waits[0] <= 0.75   # the quick first retry
 
 
 @pytest.mark.parametrize("status, headers, body, why", [
@@ -184,23 +172,38 @@ def test_summarising_with_an_unreadable_reply_keeps_the_conversation(tmp_path):
         server.shutdown()
 
 
-def test_a_connection_reset_mid_reply_is_reported(monkeypatch):
-    closed = []
+def test_a_dropped_connection_is_retried_before_the_reply_starts_and_reported_after(monkeypatch):
+    closed, waits = [], []
+    monkeypatch.setattr(llm, "time", SimpleNamespace(sleep=waits.append, monotonic=time.monotonic))
 
     class Resp:
+        def __init__(self, lines):
+            self.lines = list(lines)
+
         def readline(self):
-            raise ConnectionResetError("reset by peer")
+            item = self.lines.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
 
     class Conn:
+        sock = None
+
         def close(self):
             closed.append(True)
 
-    client = Claude("k", base_url="http://127.0.0.1:9")
-    monkeypatch.setattr(client, "_open", lambda body, stream: (Conn(), Resp()))
-    with pytest.raises(LLMError, match="lost the connection"):
-        list(client.stream({"model": "m", "messages": []}))
-    assert closed == [True]
-
+    start = b'data: {"type": "message_start", "message": {"id": "m", "usage": {}}}\n'
+    replies = iter([Resp([ConnectionResetError("reset by peer")]),                  # before anything arrived
+                    Resp([start, b"\n", ConnectionResetError("reset again")])])    # halfway through
+    client = Claude("k", base_url="http://127.0.0.1:9", max_retries=2)
+    monkeypatch.setattr(client, "_open", lambda body, stream, cancel=None: (Conn(), next(replies), threading.Event()))
+    events = []
+    with pytest.raises(LLMError, match="lost the connection") as info:
+        for event in client.stream({"model": "m", "messages": []}):
+            events.append(event)
+    assert [e["type"] for e in events] == ["message_start"]
+    assert info.value.partial and info.value.retryable                # the caller picks up from there
+    assert len(waits) == 1 and closed == [True, True]                  # one quick retry, both connections closed
 
 def test_accumulator_keeps_citations_thinking_and_signatures():
     acc = StreamAccumulator()
@@ -356,67 +359,6 @@ def test_cron_start_and_step():
         t = cron.next_after(t)
         minutes.append(datetime.fromtimestamp(t, timezone.utc).minute)
     assert minutes == [5, 20, 35, 50, 5]
-
-
-# ---- Telegram ---------------------------------------------------------------------------------------------------
-@pytest.fixture
-def tg():
-    server = FakeTelegram()
-    yield server
-    server.shutdown()
-
-
-def test_stop_cancels_the_answer_in_progress(tmp_path, tg):
-    gate = threading.Event()
-
-    def slow(body):
-        gate.wait(5)
-        return say("Here's your week.")
-    agent, _ = make_agent(tmp_path, slow)
-    bot = TelegramBot(TelegramAPI(tg.token, tg.url), USER, agent, agent.store, Audit(tmp_path / "tg.jsonl"))
-    try:
-        bot.handle_update(message("plan my week"))
-        assert wait_for(lambda: bot._worker is not None and bot._worker.is_alive())
-        bot.handle_update(message("/stop"))
-        assert any(m["text"] == "Stopping." for m in tg.sent)
-    finally:
-        gate.set()
-    assert wait_for(lambda: any(m["text"] == "Stopped." for m in tg.sent))
-    assert not any(m["text"] == "Here's your week." for m in tg.sent)
-
-
-def test_problems_are_explained_in_the_telegram_reply(tmp_path, tg):
-    agent, mock = make_agent(tmp_path, Script(say("unused")))
-    agent.llm.max_retries = 0
-    mock.fail_next = [529]
-    bot = TelegramBot(TelegramAPI(tg.token, tg.url), USER, agent, agent.store, Audit(tmp_path / "tg.jsonl"))
-    bot.handle_update(message("hello"))
-    assert wait_for(lambda: any("(Problem: Claude API error 529" in m["text"] for m in tg.sent))
-
-
-def test_approvals_still_work_when_telegram_refuses_the_follow_up_edits(tmp_path, tg):
-    target = tmp_path / "old.txt"
-    target.write_text("x")
-    agent, _ = make_agent(tmp_path, Script(call("run_command", {"command": f"rm {target}"}), say("Deleted.")))
-    bot = TelegramBot(TelegramAPI(tg.token, tg.url), USER, agent, agent.store, Audit(tmp_path / "tg.jsonl"),
-                      approval_timeout=10)
-    tg.fail_methods = {"editMessageText", "answerCallbackQuery"}
-    bot.handle_update(message("delete old.txt"))
-    assert wait_for(lambda: any("reply_markup" in m for m in tg.sent))
-    buttons = next(m for m in tg.sent if "reply_markup" in m)["reply_markup"]["inline_keyboard"][0]
-    once = next(b["callback_data"] for b in buttons if b["callback_data"].endswith(":once"))
-    bot.handle_update({"callback_query": {"id": "c1", "from": {"id": USER}, "data": once,
-                                          "message": {"chat": {"id": USER, "type": "private"}}}})
-    assert wait_for(lambda: any(m["text"] == "Deleted." for m in tg.sent))
-    assert not target.exists()
-    methods = [m for m, _ in tg.calls]
-    assert "editMessageText" in methods and "answerCallbackQuery" in methods
-
-
-def test_a_photo_download_that_cant_connect_is_a_telegram_error():
-    api = TelegramAPI("123:abc", f"http://127.0.0.1:{free_port()}")
-    with pytest.raises(TelegramError, match="download failed"):
-        api.download("photos/x.jpg")
 
 
 # ---- the iPhone gateway and the control socket -------------------------------------------------------------

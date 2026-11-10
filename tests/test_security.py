@@ -31,12 +31,20 @@ def test_config_loads_sections(home):
     (home / "config.toml").write_text(
         'name = "Argus"\nuser_name = "Sandeep"\ncity = "Portland, OR"\n[voice]\nengine = "say"\nrate = 200\n'
         '[security]\nblocked_sites = ["mybank.com"]\n[phone]\nenabled = true\nport = 9999\n'
-        '[telegram]\nuser_id = 987654321\n[brain]\nworkspace = "~/ws"\n[listening]\nclap = "single"\n')
+        '[brain]\nworkspace = "~/ws"\n[listening]\nclap = "single"\n')
     s = config_mod.load()
     assert (s.user_name, s.voice_engine, s.rate, s.blocked_sites, s.phone_enabled, s.phone_port) == \
         ("Sandeep", "say", 200, ["mybank.com"], True, 9999)
-    assert s.telegram_user_id == 987654321 and s.clap == "single" and str(s.workspace).endswith("/ws")
+    assert s.clap == "single" and str(s.workspace).endswith("/ws")
     assert "com.1password.1password" in s.blocked_apps
+
+
+def test_settings_left_over_from_telegram_are_ignored(home):
+    home.mkdir(parents=True)
+    (home / "config.toml").write_text('[security]\ntelegram_desktop = false\nscreen_control = false\n'
+                                      '[telegram]\nenabled = true\nuser_id = 987654321\n')
+    s = config_mod.load()                              # an old config.toml still loads
+    assert s.screen_control is False and not hasattr(s, "telegram_user_id")
 
 
 def test_config_typos_are_errors(home):

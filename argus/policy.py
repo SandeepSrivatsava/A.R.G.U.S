@@ -163,7 +163,7 @@ class Policy:
             return Verdict(ALLOW)
         if tool == "schedule" and args.get("action") == "create" and args.get("mode") == "task":
             return Verdict(ASK, f"schedule a task to run by itself: {str(args.get('text'))[:120]}", scope="schedule:task")
-        if tool == "glasses_look" and channel not in ("voice", "phone", "telegram"):
+        if tool == "glasses_look" and channel not in ("voice", "phone"):
             return Verdict(BLOCK, "the glasses camera is only used when you ask.")
         return Verdict(ALLOW)
 
@@ -181,7 +181,7 @@ class Policy:
         return Verdict(ALLOW)
 
     def _computer(self, member: str, args: Dict[str, Any], channel: str) -> Verdict:
-        if channel not in CHANNELS_WITH_DESKTOP and not (channel == "telegram" and self.settings.telegram_desktop):
+        if channel not in CHANNELS_WITH_DESKTOP:
             if not (channel == "phone" and member == "screenshot"):
                 return Verdict(BLOCK, "the screen can only be used from your voice at the Mac.")
         state = self.desktop_state() or {}

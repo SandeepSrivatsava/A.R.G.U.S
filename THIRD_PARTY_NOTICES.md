@@ -57,6 +57,5 @@ Each keeps its own license.
 
 * The **Claude API** (Anthropic) does the thinking; it's used with your own API key under Anthropic's
   terms.
-* **Telegram** (optional) carries messages between you and Argus.
 * The news tool reads public RSS feeds (Google News, BBC, NPR); headlines and summaries belong to their
   publishers.

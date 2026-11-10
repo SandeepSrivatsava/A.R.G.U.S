@@ -32,6 +32,9 @@ PRICES = {
     "claude-haiku-5-5": (0.10, 0.125, 0.01, 0.50),
     "claude-opus-5-5": (4.00, 5.00, 0.20, 20.00),
 }
+MAX_RESUMES = 2       # how often a reply that broke off halfway is picked up again
+RESUME_NOTE = ("(Your reply above was cut off by a network problem. Continue exactly where it stopped: don't repeat "
+               "anything you already said and don't mention the interruption.)")
 LONG_PROMPT = 100_000                                         # Haiku 5.5 costs more above this prompt size
 LONG_PROMPT_PRICES = {"claude-haiku-5-5": (0.50, 0.625, 0.05, 2.50)}
 WEB_SEARCH_USD = 10.0 / 1000                                  # $10 per 1,000 searches
@@ -44,7 +47,7 @@ SCREEN_MEMBERS = ("screenshot", "zoom", "left_click", "right_click", "middle_cli
 
 
 class Events:
-    """How a channel (voice, Telegram, phone, scheduler) hears about a turn as it happens."""
+    """How a channel (voice, phone, scheduler) hears about a turn as it happens."""
 
     def text(self, delta: str) -> None: ...
     def tool_started(self, name: str, description: str) -> None: ...
@@ -153,7 +156,7 @@ def prune_images(messages: List[Dict[str, Any]], keep: int = KEEP_IMAGES) -> Lis
 
 class Agent:
     def __init__(self, llm: Claude, store: Store, policy: Policy, tools: Dict[str, Tool], *, settings,
-                 audit: Audit, computer: Optional[Computer] = None, notify: Callable[[str], bool] = lambda t: False,
+                 audit: Audit, computer: Optional[Computer] = None,
                  glasses=None, glasses_status: Callable[[], Optional[str]] = lambda: None,
                  secrets: Sequence[str] = ()):
         self.llm = llm
@@ -163,7 +166,6 @@ class Agent:
         self.settings = settings
         self.audit = audit
         self.computer = computer
-        self.notify = notify
         self.glasses = glasses
         self.glasses_status = glasses_status
         # Argus's own keys and tokens: never shown to Claude, never sent anywhere by a tool.
@@ -195,7 +197,7 @@ class Agent:
         specs = [t.spec() for t in self.tools.values() if channel in t.channels]
         if self.settings.web_search:
             specs.append(web_search_spec(self.settings.blocked_sites, self.settings.city, self.settings.timezone))
-        desktop = channel == "voice" or (channel == "telegram" and self.settings.telegram_desktop)
+        desktop = channel == "voice"
         if self.computer is not None and (desktop or channel == "phone"):
             toolset = dict(TOOLSET)
             if not desktop:   # from the phone: look, never touch
@@ -329,9 +331,10 @@ class Agent:
                                workspace=str(self.settings.workspace), channel=channel,
                                facts=self.store.facts(limit=40), glasses=self.glasses_status())
         ctx = Context(channel=channel, workspace=self.settings.workspace, store=self.store, cancel=cancel,
-                      notify=self.notify, glasses=self.glasses, timezone=self.settings.timezone or None)
+                      glasses=self.glasses, timezone=self.settings.timezone or None)
         grants: Set[str] = set()
         spent = 0
+        resumes, said_before = 0, ""
         for _ in range(self.settings.max_steps):
             if cancel.is_set():
                 turn.stopped = True
@@ -347,8 +350,25 @@ class Agent:
                             (event.get("content_block") or {}).get("type") == "server_tool_use":
                         events.tool_started(str(event["content_block"].get("name")), "search the web")
             except LLMError as exc:
+                self.audit.log("llm_error", channel=channel, error=str(exc)[:300], partial=exc.partial or None)
+                if exc.partial and exc.retryable and resumes < MAX_RESUMES and not cancel.is_set():
+                    # The reply broke off halfway (a dropped connection or a stall). Ask Claude to carry on
+                    # from where it stopped, so what was already said isn't said twice.
+                    resumes += 1
+                    for key, value in acc.usage.items():          # the broken request still cost something
+                        turn.usage[key] = turn.usage.get(key, 0) + value
+                    turn.cost += request_cost(self.settings.model, acc.usage)
+                    spent += budget_tokens(acc.usage)
+                    said = "".join(b.get("text", "") for b in acc.content if b.get("type") == "text").strip()
+                    if said:
+                        for role, text in (("assistant", said), ("user", RESUME_NOTE)):
+                            block = [{"type": "text", "text": text}]
+                            messages.append({"role": role, "content": block})
+                            self.store.append(session_id, role, block)
+                        said_before = (said_before + " " + said).strip()
+                    self.audit.log("reply_resumed", channel=channel, after_chars=len(said))
+                    continue
                 turn.error = str(exc)
-                self.audit.log("llm_error", channel=channel, error=str(exc)[:300])
                 break
             for key, value in acc.usage.items():
                 turn.usage[key] = turn.usage.get(key, 0) + value
@@ -365,7 +385,10 @@ class Agent:
                 break
             messages.append({"role": "assistant", "content": blocks})
             self.store.append(session_id, "assistant", blocks)
-            turn.text = acc.text or turn.text
+            if acc.text:
+                glue = "" if not said_before or acc.text[:1].isspace() or acc.text[:1] in ".,;:!?" else " "
+                turn.text = (said_before + glue + acc.text).strip() if said_before else acc.text
+                said_before = ""
             if acc.stop_reason == "pause_turn":
                 continue
             uses = acc.tool_uses()

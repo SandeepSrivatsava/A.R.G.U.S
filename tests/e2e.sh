@@ -3,7 +3,7 @@
 #   1. runs setup.sh non-interactively into a throwaway home and checks every setting, the private
 #      key file and the checksum-verified speech models; then again, to prove re-running is safe;
 #   2. starts a mock Claude API, then runs the real Argus app (tests/e2e_voice.py): synthesised speech
-#      through the installed models, real tools, approvals, privacy rules, Telegram, a reminder and
+#      through the installed models, real tools, approvals, privacy rules, reminders and
 #      the iPhone gateway.
 # Usage: ARGUS_VENV=/path/to/venv ARGUS_MODEL_MIRROR=/dir tests/e2e.sh
 #        (ARGUS_COVERAGE=/path/.coverage.e2e also measures which code the run exercised; needs coverage.py)
@@ -28,8 +28,8 @@ check() {  # check "description" command...
 perm() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 
 run_setup() {
-  ARGUS_ANTHROPIC_API_KEY="sk-ant-test" ARGUS_TELEGRAM_BOT_TOKEN="123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" \
-  ARGUS_TELEGRAM_USER_ID="987654321" ARGUS_NAME="Sandeep" ARGUS_CITY="Portland, OR" ARGUS_TIMEZONE="America/Los_Angeles" \
+  ARGUS_ANTHROPIC_API_KEY="sk-ant-test" \
+  ARGUS_NAME="Sandeep" ARGUS_CITY="Portland, OR" ARGUS_TIMEZONE="America/Los_Angeles" \
   ARGUS_BLOCKED_SITES="MyBank.com, https://www.paypal.com/in/, not a site" ARGUS_AI_BRIEFING=yes \
   ARGUS_SKIP_VALIDATION=1 ARGUS_SEND_HELLO=no ARGUS_ALLOW_LINUX=1 ARGUS_SKIP_DEPS=1 ARGUS_VENV="$VENV" \
   ARGUS_BIN_DIR="$WORK/bin" ARGUS_WORKSPACE="$WORK/workspace" \
@@ -42,14 +42,13 @@ S="$ARGUS_HOME/secrets.env"; C="$ARGUS_HOME/config.toml"
 check "Argus home is private (700)" test "$(perm "$ARGUS_HOME")" = 700
 check "keys file is private (600)" test "$(perm "$S")" = 600
 check "Claude key saved" grep -qx 'ANTHROPIC_API_KEY=sk-ant-test' "$S"
-check "Telegram token saved" grep -q '^TELEGRAM_BOT_TOKEN=123456789:' "$S"
+check "no Telegram token kept" sh -c "! grep -q '^TELEGRAM' '$S'"
 check "settings are private (600)" test "$(perm "$C")" = 600
-check "no secret in the settings file" sh -c "! grep -q 'sk-ant\|AAAAAAAA' '$C'"
-check "only the owner's Telegram ID is allowed" grep -qx 'user_id = 987654321' "$C"
+check "no secret in the settings file" sh -c "! grep -q 'sk-ant' '$C'"
+check "no Telegram settings" sh -c "! grep -qi 'telegram' '$C'"
 check "blocked sites cleaned up and saved" grep -qx 'blocked_sites = \["mybank.com", "www.paypal.com"\]' "$C"
-check "Telegram can't use the screen" grep -qx 'telegram_desktop = false        # never let Telegram messages use the screen' "$C"
 check "AI briefing scheduled for weekdays" grep -q 'morning_briefing = "30 7 \* \* 1-5"' "$C"
-check "settings load cleanly" "$VENV/bin/python3" -I -c "from argus import config; s = config.load(); assert s.city == 'Portland, OR' and s.telegram_user_id == 987654321"
+check "settings load cleanly" "$VENV/bin/python3" -I -c "from argus import config; s = config.load(); assert s.city == 'Portland, OR'"
 check "speech models installed with verified checksums" sh -c \
   "test -f '$ARGUS_HOME/models/silero_vad.onnx' && test -f '$ARGUS_HOME/models/asr/tokens.txt' && test -d '$ARGUS_HOME/models/tts/espeak-ng-data' && test -f '$ARGUS_HOME/models/speaker.onnx.sha256'"
 check "Argus runs from this folder" sh -c "'$VENV/bin/python3' -I -c 'import argus, sys; sys.exit(not argus.__file__.startswith(\"$REPO\"))'"
@@ -61,7 +60,7 @@ check "models not downloaded twice" test "$(grep -c 'model already in place' "$W
 check "settings kept" grep -q 'Kept your settings' "$WORK/setup2.log"
 check "no duplicate keys" test "$(grep -c '^ANTHROPIC_API_KEY=' "$S")" = 1
 
-echo "== 3. talking to Argus (installed models, real brain and tools, mock Claude and Telegram)"
+echo "== 3. talking to Argus (installed models, real brain and tools, mock Claude)"
 mkdir -p "$DANGER_DIR" && echo "do not delete" > "$DANGER_DIR/keep.txt"
 MOCK_KEY="sk-ant-test" python3 "$REPO/tests/mock_claude.py" "$MOCK_PORT" "$WORK/mock.log" > "$WORK/mock.out" 2>&1 &
 PIDS="$PIDS $!"

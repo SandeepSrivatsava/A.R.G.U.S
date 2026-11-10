@@ -8,7 +8,7 @@ Three ways, from simplest to fullest:
 | **Glasses photo shortcut** | "Hey Meta, take a photo", then "Hey Siri, Argus look" → Argus describes it | One more Shortcut |
 | **Argus Eye app** | Live link to the glasses: knows when you wear them, Look button, push-to-talk through the glasses, and "Argus, what am I looking at?" at the Mac | Build it in Xcode ([ios/README.md](../ios/README.md)) |
 
-What the phone can't do: approve risky actions (do those at the Mac with Touch ID, or in Telegram). It
+What the phone can't do: approve risky actions (do those at the Mac with Touch ID). It
 also can't listen all the time: Apple doesn't let any app listen in the background or watch the screen.
 
 ## 1. Connect the Mac and the iPhone with Tailscale (free)
@@ -71,7 +71,7 @@ Once it's running and linked to your glasses:
 
 ## Good to know
 
-* Long jobs can take longer than Shortcuts likes to wait. Use Telegram for those.
+* Long jobs can take longer than Shortcuts likes to wait. Ask for those at the Mac.
 * "Your Mac couldn't answer right now" usually means the Mac is asleep. Run `./scripts/stay-awake.sh on`
   to keep it awake while it's plugged in.
 * Five wrong tokens lock the phone out for 15 minutes. If the token leaks: delete `~/.argus/phone_token`,

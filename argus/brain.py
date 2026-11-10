@@ -99,8 +99,8 @@ class Brain:
         """Handle a request in the background (cancelling any request still running)."""
         with self._lock:
             if self.busy:
-                self.cancel()
-                self._thread.join(timeout=10)
+                self.cancel()                       # cancelling also cuts the old request's connection,
+                self._thread.join(timeout=3)        # so the old turn ends almost at once
             self._cancelled = flag = threading.Event()
             self._thread = threading.Thread(target=self._handle, args=(text, flag), name="argus-brain", daemon=True)
             self._thread.start()
@@ -108,6 +108,12 @@ class Brain:
     def cancel(self) -> None:
         self._cancelled.set()
         self.speaker.stop()
+
+    def warm(self) -> None:
+        """Get a connection to Claude ready before it's needed, so the answer starts sooner."""
+        warm = getattr(self.agent.llm, "warm", None)
+        if warm is not None:
+            warm()
 
     def wait(self, timeout: Optional[float] = None) -> None:
         thread = self._thread

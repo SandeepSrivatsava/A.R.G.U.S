@@ -10,7 +10,7 @@ Ported from the original personal_assistant/news_updater.py, with these fixes:
 Standard library only, so it runs under any Python 3.8+ and can also be used on its own from a terminal.
 
 Examples:
-  news.py                              top 8 headlines as text (good for Telegram)
+  news.py                              top 8 headlines as plain text
   news.py --top 5 --format json        machine-readable, for the agent
   news.py --topic "electric cars"      headlines about one topic
   news.py --offline saved_feed.xml     parse a saved feed instead of fetching (tests)
@@ -21,11 +21,14 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import html
+import http.client
 import json
 import os
 import re
 import ssl
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -43,7 +46,8 @@ DEFAULT_FEEDS: List[Tuple[str, str]] = [
 TOPIC_FEED = "https://news.google.com/rss/search?q={query}+when:2d&hl=en-US&gl=US&ceid=US:en"
 USER_AGENT = "argus-news/2.0"
 MAX_FEED_BYTES = 5 * 1024 * 1024
-TIMEOUT_SECONDS = 10
+TIMEOUT_SECONDS = 6          # per try; a slow feed gets one more quick try
+OVERALL_SECONDS = 9          # never keep a spoken answer waiting longer than this for slow feeds
 
 
 @dataclass
@@ -71,13 +75,27 @@ def ssl_context() -> ssl.SSLContext:
         return ssl.create_default_context()
 
 
-def fetch(url: str, timeout: float = TIMEOUT_SECONDS) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=timeout, context=ssl_context()) as response:
-        data = response.read(MAX_FEED_BYTES + 1)
-    if len(data) > MAX_FEED_BYTES:
-        raise ValueError("feed is larger than 5 MB")
-    return data
+def fetch(url: str, timeout: float = TIMEOUT_SECONDS, retries: int = 1) -> bytes:
+    """GET a feed. A timeout, dropped connection or busy server (429/5xx) gets `retries` more quick tries."""
+    for attempt in range(retries + 1):
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout, context=ssl_context()) as response:
+                data = response.read(MAX_FEED_BYTES + 1)
+        except urllib.error.HTTPError as exc:
+            if attempt < retries and (exc.code == 429 or exc.code >= 500):
+                time.sleep(0.4)
+                continue
+            raise
+        except (OSError, http.client.HTTPException) as exc:
+            if attempt < retries:
+                time.sleep(0.4)
+                continue
+            raise OSError(str(exc) or type(exc).__name__) from exc
+        if len(data) > MAX_FEED_BYTES:
+            raise ValueError("feed is larger than 5 MB")
+        return data
+    raise OSError("unreachable")  # pragma: no cover
 
 
 def clean_text(text: Optional[str]) -> str:
@@ -185,7 +203,8 @@ def feeds_from_env() -> Optional[List[Tuple[str, str]]]:
     return feeds or None
 
 
-def collect(feeds: Iterable[Tuple[str, str]], top: int) -> Tuple[List[Article], List[str]]:
+def collect(feeds: Iterable[Tuple[str, str]], top: int,
+            overall: float = OVERALL_SECONDS) -> Tuple[List[Article], List[str]]:
     feeds = list(feeds)
     results: List[List[Article]] = [[] for _ in feeds]
     errors: List[str] = []
@@ -194,14 +213,19 @@ def collect(feeds: Iterable[Tuple[str, str]], top: int) -> Tuple[List[Article], 
         index, (name, url) = index_and_feed
         return index, name, parse_feed(fetch(url), name)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(feeds))) as pool:
-        futures = [pool.submit(load, pair) for pair in enumerate(feeds)]
-        for future, (name, _url) in zip(futures, feeds):
-            try:
-                index, _, articles = future.result()
-                results[index] = articles
-            except Exception as exc:  # one broken feed must not sink the briefing
-                errors.append(f"{name}: {exc}")
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(feeds)))
+    futures = [pool.submit(load, pair) for pair in enumerate(feeds)]
+    concurrent.futures.wait(futures, timeout=overall)
+    for future, (name, _url) in zip(futures, feeds):
+        if not future.done():           # still going: answer with the feeds that came back in time
+            errors.append(f"{name}: too slow, skipped")
+            continue
+        try:
+            index, _, articles = future.result()
+            results[index] = articles
+        except Exception as exc:  # one broken feed must not sink the briefing
+            errors.append(f"{name}: {exc}")
+    pool.shutdown(wait=False)
     return merge(results, top), errors
 
 

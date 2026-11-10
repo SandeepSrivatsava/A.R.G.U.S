@@ -43,7 +43,7 @@ approval that overrides it, and Claude is told not to look for a way around it.
   app in front can't be identified. Key combinations that log out, lock, force-quit or empty the trash.
   Typing `sudo`, recursive deletes or `curl | sh` into an app.
 
-**Needs your OK** (dialog on the Mac + Touch ID, or buttons in your Telegram chat):
+**Needs your OK** (a dialog on the Mac + Touch ID):
 * Shell commands that delete, move or overwrite files; change permissions; stop programs; change macOS
   settings; script other apps (`osascript`); install or remove software; push or reset git; send data to
   the internet; connect to other computers; send email; schedule commands; run inline scripts or nested
@@ -64,9 +64,8 @@ reading files, working inside the workspace folder, opening apps and links, and 
 |---|---|
 | Approvals are never by voice. A spoken or typed "yes" is never an approval, and Claude is told never to ask for one. | `argus/prompts.py`, `argus/agent.py` |
 | At the Mac, a dialog shows exactly what will happen; "Allow" then needs Touch ID or your Mac password, so a TV, a call, a recording, or the AI itself clicking the dialog can't approve. | `argus/approvals.py` |
-| From Telegram, approvals are buttons in your private chat with your bot; only your Telegram user ID can press them, and each request has its own random code. | `argus/telegram.py` |
 | Answers are *once* or *for this task* (the same kind of action, until the task ends), never "always". | `argus/agent.py`, `argus/approvals.py` |
-| No answer within 2 minutes = denied. | `argus/approvals.py`, `argus/telegram.py` |
+| No answer within 2 minutes = denied. | `argus/approvals.py` |
 | Scheduled tasks and the iPhone can't approve anything: risky steps are refused and you're told. | `argus/app.py`, `argus/agent.py` |
 | A dialog that crashes, hangs or can't open counts as "no", and so does any answer other than *once* or *for this task*. | `argus/agent.py`, `argus/approvals.py` |
 | After a failed screen action, the rest of that batch is not carried out. | `argus/agent.py` |
@@ -76,12 +75,11 @@ reading files, working inside the workspace folder, opening apps and links, and 
 | Channel | Screen | Approvals |
 |---|---|---|
 | Voice at the Mac | look and use (each use asks) | dialog + Touch ID |
-| Telegram | none, unless you set `telegram_desktop = true` | buttons in your chat |
 | iPhone (Siri, Argus Eye app) | screenshots only | none: risky steps are refused |
 | Scheduled tasks | none | none: risky steps are refused |
 
-The glasses camera is used only from the Mac, the phone or Telegram when you ask, never by a scheduled
-task.
+The glasses camera is used only from the Mac or the phone when you ask, never by a scheduled task.
+There is no text chat (Telegram was removed): you talk to Argus by voice, at the Mac or on the iPhone.
 
 ## 5. The web and prompt injection
 
@@ -100,8 +98,6 @@ task.
   and refuses to start on any other interface. Every request needs a 256-bit token (constant-time
   comparison); 5 bad tokens lock that device out for 15 minutes; bodies are capped at 16 MB; slow clients
   are cut off after 60 s; only PNG and JPEG images are accepted; at most 2 requests run at once.
-* Telegram uses outgoing long-polling (no open port) and only answers your numeric user ID, in a private
-  chat. Messages from anyone else are ignored and logged.
 * The control socket for `argusctl` is a file in `~/.argus` that only you can open.
 * Nothing opens a port on your router or your Wi-Fi.
 
@@ -112,7 +108,7 @@ task.
   repo or in `config.toml`. Argus refuses to start if the secrets file is readable by others.
 * Commands Argus runs get a minimal environment (path, home, language): your API keys and tokens never
   reach them.
-* Argus's own keys (the Claude key, the Telegram bot token, the phone token) are removed from anything a
+* Argus's own keys (the Claude key and the phone token) are removed from anything a
   tool returns before Claude sees it, and a tool call that contains one of them is blocked, so a web page
   can't talk Argus into sending a key anywhere.
 * Argus uses its own pay-per-use Claude API key. It never borrows your Claude Pro or Claude Code login.
@@ -144,19 +140,17 @@ setting to fix, instead of starting with a value you didn't mean (`argus/config.
 
 `~/.argus/logs/audit.jsonl` (`argusctl log`) records: requests you made (text), tools that ran (name
 and a short preview), every approval and its answer, every block, estimated cost per request, microphone
-and lock changes, claps, Telegram strangers, phone-gateway requests and bad tokens. It never records audio
+and lock changes, claps, reminders held while you were away, phone-gateway requests and bad tokens. It never records audio
 or speech that wasn't for Argus. It rotates at 5 MB.
 
 ## 11. What this does *not* protect against
 
 * **Anyone in the room can talk to Argus** unless voice lock is on, and voice lock is a convenience
   filter, not strong authentication (a recording of your voice could pass). Approvals still need your
-  finger, your password, or your Telegram account.
+  finger or your password.
 * **What Argus sees, Claude sees.** When you ask it to look at the screen or through your glasses, the
   picture goes to Anthropic's API (as with any cloud AI). Keep private things out of view, or block the app.
 * **A stolen, unlocked Mac** or a compromised user account gives the same access you have.
-* **Your Telegram account**: if someone takes it over, they can chat with Argus and press its approval
-  buttons. Turn on Telegram's two-step verification, or leave Telegram out during setup.
 * **Shell rules are patterns.** They catch the common dangerous commands, and the macOS sandbox guards
   your keys, but a cleverly disguised command might still reach something else. Read approval dialogs
   before allowing, and keep important files backed up (Time Machine).
@@ -165,8 +159,8 @@ or speech that wasn't for Argus. It rotates at 5 MB.
 ## 12. Kill switches
 
 * Menu bar ◉ → Microphone (off) or Quit Argus; or say "Argus, turn off the microphone".
-* `argusctl quit` stops everything (voice, Telegram, phone gateway, schedules).
-* Revoke the Claude key at platform.claude.com; revoke the bot with @BotFather (`/revoke`).
+* `argusctl quit` stops everything (voice, phone gateway, schedules).
+* Revoke the Claude key at platform.claude.com.
 * Delete `~/.argus/phone_token` and run `argusctl restart` to cut off the iPhone (then
   `argusctl phone-token` makes a new one).
 

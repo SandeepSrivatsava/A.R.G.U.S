@@ -568,7 +568,6 @@ def ctl(tmp_path, monkeypatch):
     config_mod.ensure_private_dirs(settings)
     argus, voice, script = make_argus(tmp_path, [], Script(say("Answer.")))
     handlers = argus.handlers()
-    handlers["telegram"] = lambda req: {"ok": False}
     handlers["permissions"] = lambda req: {"ok": True, "screen_recording": True, "accessibility": False}
     server = ControlServer(settings.socket_path, handlers)
     server.start()
@@ -595,7 +594,6 @@ def test_argusctl_commands_reach_the_running_app(ctl, capsys):
     assert json.loads(cli(capsys, "screen", "block")[1])["screen_private"] is True
     assert json.loads(cli(capsys, "stop")[1])["ok"] is True
     assert json.loads(cli(capsys, "new")[1]) == {"ok": True}
-    assert json.loads(cli(capsys, "telegram", "hi")[1]) == {"ok": False}
     assert json.loads(cli(capsys, "ask", "what's", "up")[1]) == {"ok": True}
     assert wait_for(lambda: "Answer." in ctl.voice.spoken)
     assert json.loads(cli(capsys, "say", "")[1]) == {"ok": True}

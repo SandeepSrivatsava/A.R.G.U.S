@@ -1,5 +1,5 @@
-"""Negative and error cases for the ways in: Telegram, the iPhone gateway, schedules, settings, the
-activity log and the control socket."""
+"""Negative and error cases for the ways in: the iPhone gateway, schedules, settings, the activity log and
+the control socket."""
 import base64
 import http.client
 import json
@@ -8,7 +8,6 @@ import socket
 import stat
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -21,174 +20,6 @@ from argus.glasses import GlassesBridge
 from argus.phone import Gatekeeper, PhoneServer, bind_address, load_or_create_token
 from argus.scheduler import BRIEFING_JOB, Scheduler, sync_default_jobs
 from argus.store import Store
-from argus.telegram import TelegramAPI, TelegramBot, TelegramError
-
-from fakes import FakeTelegram, Script, make_agent, say, wait_for
-
-USER = 987654321
-
-
-# ---- Telegram ------------------------------------------------------------------------------------------
-@pytest.fixture
-def tg():
-    server = FakeTelegram()
-    yield server
-    server.shutdown()
-
-
-def make_bot(tmp_path, tg, script):
-    agent, _ = make_agent(tmp_path, script)
-    bot = TelegramBot(TelegramAPI(tg.token, tg.url), USER, agent, agent.store, Audit(tmp_path / "tg-audit.jsonl"),
-                      approval_timeout=2)
-    return bot, agent
-
-
-class Truncating(ThreadingHTTPServer):
-    """Promises a long body, sends a few bytes and hangs up (an IncompleteRead), or sends junk JSON."""
-    daemon_threads = True
-
-    def __init__(self, mode):
-        super().__init__(("127.0.0.1", 0), _TruncatingHandler)
-        self.mode = mode
-        threading.Thread(target=self.serve_forever, daemon=True).start()
-
-    def handle_error(self, request, client_address):
-        pass
-
-
-class _TruncatingHandler(BaseHTTPRequestHandler):
-    def log_message(self, *a):
-        pass
-
-    def _reply(self):
-        self.rfile.read(int(self.headers.get("Content-Length") or 0))
-        self.send_response(200)
-        if self.server.mode == "junk":
-            self.send_header("Content-Length", "9")
-            self.end_headers()
-            self.wfile.write(b"not json!")
-        else:
-            self.send_header("Content-Length", "1000")
-            self.end_headers()
-            self.wfile.write(b'{"ok": tr')
-            self.wfile.flush()
-            self.connection.shutdown(socket.SHUT_RDWR)
-
-    do_POST = do_GET = _reply
-
-
-@pytest.mark.parametrize("mode", ["junk", "truncated"])
-def test_telegram_transport_errors_become_telegram_errors(mode):
-    server = Truncating(mode)
-    api = TelegramAPI("123:abc", f"http://127.0.0.1:{server.server_port}")
-    with pytest.raises(TelegramError):
-        api.call("getMe")
-    if mode == "truncated":                       # a half-downloaded photo is an error, not a broken picture
-        with pytest.raises(TelegramError, match="cut off"):
-            api.download("photos/x.jpg")
-    else:                                         # a file can hold any bytes at all
-        assert api.download("photos/x.jpg") == b"not json!"
-    server.shutdown()
-
-
-def test_telegram_rejections_and_unreachable_servers(tg):
-    with pytest.raises(TelegramError):
-        TelegramAPI("wrong-token", tg.url).call("getMe")           # 401 with no JSON body
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    with pytest.raises(TelegramError, match="failed"):
-        TelegramAPI("123:abc", f"http://127.0.0.1:{port}").call("getMe", timeout=2)
-    with pytest.raises(TelegramError, match="HTTP 404"):
-        TelegramAPI(tg.token, tg.url).download("photos/missing.jpg")
-
-
-def test_downloads_are_size_limited(tg):
-    tg.files["photos/big.jpg"] = b"x" * 2000
-    with pytest.raises(TelegramError, match="too big"):
-        TelegramAPI(tg.token, tg.url).download("photos/big.jpg", limit=1000)
-
-
-def test_polling_keeps_going_after_any_error(tmp_path, tg):
-    bot, _ = make_bot(tmp_path, tg, Script())
-    failures = [TelegramError("409 Conflict"), RuntimeError("weird"), KeyError("update_id")]
-    waits = []
-
-    def poll_once():
-        if failures:
-            raise failures.pop(0)
-        bot.stop()
-        return 0
-
-    bot.poll_once = poll_once
-    bot._stop.wait = lambda seconds: waits.append(seconds)
-    bot.run()
-    assert waits == [2.0, 4.0, 8.0]                                 # backs off, never dies
-
-
-def test_a_bad_update_is_skipped_and_never_seen_again(tmp_path, tg):
-    bot, _ = make_bot(tmp_path, tg, Script())
-    tg.push({"message": {"from": {"id": USER}, "chat": "not-a-dict"}})
-    tg.message("/help")
-    assert bot.poll_once(timeout=0) == 2
-    assert any("Argus here" in m["text"] for m in tg.sent)
-    assert bot.poll_once(timeout=0) == 0                            # the offset moved past both
-
-
-def test_unsupported_messages_get_a_short_answer(tmp_path, tg):
-    bot, _ = make_bot(tmp_path, tg, Script())
-    bot.handle_update({"message": {"from": {"id": USER}, "chat": {"id": USER, "type": "private"},
-                                   "sticker": {"file_id": "s1"}}})
-    assert tg.sent[-1]["text"] == "I can read text and photos for now."
-
-
-def test_photo_that_cant_be_downloaded(tmp_path, tg):
-    bot, _ = make_bot(tmp_path, tg, Script())
-    bot.handle_update({"message": {"from": {"id": USER}, "chat": {"id": USER, "type": "private"},
-                                   "photo": [{"file_id": "gone"}]}})
-    assert tg.sent[-1]["text"].startswith("I couldn't open that photo")
-
-
-def test_long_replies_are_split_and_failed_sends_dont_crash(tmp_path, tg):
-    bot, _ = make_bot(tmp_path, tg, Script())
-    bot.send("a" * 9000)
-    assert [len(m["text"]) for m in tg.sent] == [3900, 3900, 1200]
-    bot.api = TelegramAPI("wrong-token", tg.url)
-    assert bot.send("hello") is None and not bot.notify("hello")
-    assert bot.send("") is None
-
-
-def test_busy_bot_and_a_crashing_brain(tmp_path, tg):
-    gate = threading.Event()
-
-    def slow(body):
-        gate.wait(5)
-        return say("finally")
-
-    bot, agent = make_bot(tmp_path, tg, slow)
-    bot.handle_update({"message": {"from": {"id": USER}, "chat": {"id": USER, "type": "private"}, "text": "one"}})
-    bot.handle_update({"message": {"from": {"id": USER}, "chat": {"id": USER, "type": "private"}, "text": "two"}})
-    assert wait_for(lambda: any("Still working" in m["text"] for m in tg.sent))
-    gate.set()
-    assert wait_for(lambda: any(m["text"] == "finally" for m in tg.sent))
-    assert wait_for(lambda: not bot._worker.is_alive())
-
-    def crash(**kwargs):
-        raise RuntimeError("database is locked")
-    agent.run = crash
-    bot.handle_update({"message": {"from": {"id": USER}, "chat": {"id": USER, "type": "private"}, "text": "three"}})
-    assert wait_for(lambda: any("Sorry, that failed: database is locked" in m["text"] for m in tg.sent))
-
-
-def test_buttons_from_strangers_or_stale_approvals_do_nothing(tmp_path, tg):
-    bot, _ = make_bot(tmp_path, tg, Script())
-    bot.handle_update({"callback_query": {"id": "c1", "from": {"id": 1}, "data": "ap:x:once",
-                                          "message": {"chat": {"id": 1, "type": "private"}}}})
-    bot.handle_update({"callback_query": {"id": "c2", "from": {"id": USER}, "data": "ap:nonexistent:once",
-                                          "message": {"chat": {"id": USER, "type": "private"}}}})
-    bot.handle_update({"callback_query": {"id": "c3", "from": {"id": USER}, "data": "garbage",
-                                          "message": {"chat": {"id": USER, "type": "private"}}}})
-    assert "telegram_stranger" in (tmp_path / "tg-audit.jsonl").read_text()
 
 
 # ---- iPhone gateway ---------------------------------------------------------------------------------------
@@ -397,13 +228,13 @@ def home(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("toml,why", [
-    ('[security]\ntelegram_desktop = "false"\n', "true or false"),
+    ('[security]\nscreen_control = "false"\n', "true or false"),
     ('[security]\nblocked_sites = "mybank.com"\n', "list"),
     ('[security]\nblocked_apps = [1, 2]\n', "list"),
     ('[phone]\nport = "8765"\n', "number"),
     ('[phone]\nport = 87.5\n', "whole number"),
     ('[phone]\nport = 99999\n', "out of range"),
-    ('[telegram]\nuser_id = true\n', "number"),
+    ('[phone]\nport = true\n', "number"),
     ('[listening]\nclap = "loud"\n', "clap"),
     ('[listening]\nvoice_lock_threshold = 2\n', "out of range"),
     ('[voice]\nengine = "robot"\n', "engine"),

@@ -1,5 +1,5 @@
 """Builds Argus from ~/.argus/config.toml and runs everything in one process: the listening loop,
-the brain, Telegram, the scheduler, the iPhone gateway and the menu bar."""
+the brain, the scheduler, the iPhone gateway and the menu bar."""
 from __future__ import annotations
 
 import fcntl
@@ -31,7 +31,6 @@ from .phone import Gatekeeper, PhoneServer, bind_address, load_or_create_token
 from .policy import Policy
 from .scheduler import Scheduler, sync_default_jobs
 from .store import Store
-from .telegram import TelegramAPI, TelegramBot
 from .toolbox import build_tools
 from .voice import Speaker, make_voice
 from .wake import DEFAULT_SOFT_VARIANTS, DEFAULT_VARIANTS, NameMatcher
@@ -81,7 +80,6 @@ class App:
         self.store = Store(settings.db_path)
         self.llm = Claude(secrets.get("ANTHROPIC_API_KEY", ""), base_url=settings.api_base)
         self.glasses = GlassesBridge() if settings.glasses_enabled else None
-        self.bot: Optional[TelegramBot] = None
         self.argus: Optional[Argus] = None
         if computer is None and IS_MAC and settings.screen_control:
             try:
@@ -93,13 +91,8 @@ class App:
         self.policy = Policy(settings, workspace=settings.workspace, desktop_state=self._desktop_state)
         self.agent = Agent(self.llm, self.store, self.policy,
                            build_tools(mac=IS_MAC or computer is not None, glasses=settings.glasses_enabled),
-                           settings=settings, audit=self.audit, computer=computer, notify=self.notify,
-                           glasses=self.glasses, glasses_status=(self.glasses.describe if self.glasses else lambda: None),
+                           settings=settings, audit=self.audit, computer=computer, glasses=self.glasses, glasses_status=(self.glasses.describe if self.glasses else lambda: None),
                            secrets=self._secret_values(secrets))
-        token = secrets.get("TELEGRAM_BOT_TOKEN", "")
-        if settings.telegram_enabled and token and settings.telegram_user_id:
-            self.bot = TelegramBot(TelegramAPI(token, os.environ.get("ARGUS_TELEGRAM_API") or "https://api.telegram.org"),
-                                   settings.telegram_user_id, self.agent, self.store, self.audit)
         self.scheduler = Scheduler(self.store, deliver=self.deliver, run_task=self.run_task, headlines=format_headlines,
                                    tz=settings.timezone or None)
         self.phone: Optional[PhoneServer] = None
@@ -134,19 +127,16 @@ class App:
         if s.voice_lock and s.voiceprint_path.exists():
             voiceprint = VoicePrint(paths["speaker"], str(s.voiceprint_path), s.voice_lock_threshold)
         return Argus(source=source or Microphone(s.mic_device or None),
-                     segmenter=Segmenter(paths["vad"], threshold=s.vad_threshold),
+                     segmenter=Segmenter(paths["vad"], threshold=s.vad_threshold, min_silence=s.end_of_speech_seconds),
                      transcriber=transcriber or SherpaTranscriber(paths["asr"]), listener=listener, speaker=speaker,
                      brain=brain, audit=self.audit, voiceprint=voiceprint, voice_lock=s.voice_lock,
                      greeting=s.greeting, clap=ClapDetector(s.clap) if s.clap != "off" else None)
 
-    def notify(self, text: str) -> bool:
-        return bool(self.bot and self.bot.notify(text))
-
     def deliver(self, text: str) -> None:
-        """A reminder or scheduled result: spoken if you're at the Mac, and sent to your phone."""
-        if self.argus is not None and self.argus.mic_wanted and not self.argus.locked:
-            self.argus.speaker.say(text.replace("•", ""))
-        self.notify(text)
+        """A reminder or scheduled result, spoken at the Mac. If the Mac is locked or the microphone is off,
+        it waits and is spoken as soon as you're back."""
+        if self.argus is not None:
+            self.argus.announce(text.replace("•", ""))
 
     def run_task(self, text: str) -> str:
         session = self.store.session_for("scheduler", "tasks", 60)
@@ -163,8 +153,6 @@ class App:
         s = self.settings
         sync_default_jobs(self.store, s.morning_headlines, s.morning_briefing, s.timezone or None)
         self.scheduler.start()
-        if self.bot is not None:
-            self.bot.start()
         if s.phone_enabled:
             host = bind_address(s)
             if host:
@@ -180,8 +168,7 @@ class App:
 
     def stop(self) -> None:
         self.scheduler.stop()
-        if self.bot is not None:
-            self.bot.stop()
+        self.llm.close()
         if self.phone is not None:
             self.phone.shutdown()
         if self.argus is not None:
@@ -281,7 +268,6 @@ def main(headless: bool = False) -> int:
     argus = app.argus
     quit_event = threading.Event()
     handlers = argus.handlers()
-    handlers["telegram"] = lambda req: {"ok": app.notify(str(req.get("text") or ""))}
     if app.computer is not None:
         from .computer import check_permissions
         handlers["permissions"] = lambda req: {"ok": True, **check_permissions()}

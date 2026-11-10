@@ -48,4 +48,4 @@ Then in the app: **Settings** → enter your Mac's address (`http://100.x.y.z:87
 * Speech is turned into text on the iPhone. Photos go over Tailscale to your Mac, then to Claude to be
   described. Nothing is stored on the phone.
 * The token is kept in the iPhone's Keychain. Meta's toolkit analytics are switched off in `project.yml`.
-* Anything risky still needs your OK at the Mac (Touch ID) or in Telegram. The phone can't approve.
+* Anything risky still needs your OK at the Mac (Touch ID). The phone can't approve.

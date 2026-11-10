@@ -2,11 +2,14 @@
 ~/.argus/secrets.env (owner-only; never in the repo, never on a command line)."""
 from __future__ import annotations
 
+import logging
 import os
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, List
+
+log = logging.getLogger("argus.config")
 
 # Password managers, the keychain and System Settings: Argus may never look at or click in these.
 DEFAULT_BLOCKED_APPS = [
@@ -51,6 +54,7 @@ class Settings:
     voice_lock_threshold: float = 0.45
     mic_device: str = ""
     vad_threshold: float = 0.5
+    end_of_speech_seconds: float = 0.6   # how long a pause ends a sentence (shorter = snappier)
     clap: str = "double"            # "double", "single" or "off": clapping wakes Argus up
     # voice
     voice_engine: str = "piper"
@@ -62,12 +66,8 @@ class Settings:
     approval_needs_touch_id: bool = True
     pause_when_locked: bool = True
     screen_control: bool = True
-    telegram_desktop: bool = False
     blocked_apps: List[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_APPS))
     blocked_sites: List[str] = field(default_factory=list)
-    # telegram
-    telegram_enabled: bool = True
-    telegram_user_id: int = 0
     # phone + glasses
     phone_enabled: bool = False
     phone_host: str = ""
@@ -141,11 +141,11 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
               "max_turn_tokens": "max_turn_tokens", "context_tokens": "context_tokens",
               "history_messages": "history_messages", "workspace": "workspace_dir", "api_base": "api_base"},
     "listening": {k: k for k in ("followup_seconds", "conversation_idle_seconds", "extra_variants", "soft_variants",
-                                 "voice_lock", "voice_lock_threshold", "mic_device", "vad_threshold", "clap")},
+                                 "voice_lock", "voice_lock_threshold", "mic_device", "vad_threshold", "clap",
+                                 "end_of_speech_seconds")},
     "voice": {"engine": "voice_engine", "say_voice": "say_voice", "rate": "rate", "speed": "speed", "greeting": "greeting"},
-    "security": {k: k for k in ("approval_needs_touch_id", "pause_when_locked", "screen_control", "telegram_desktop",
+    "security": {k: k for k in ("approval_needs_touch_id", "pause_when_locked", "screen_control",
                                 "blocked_apps", "blocked_sites")},
-    "telegram": {"enabled": "telegram_enabled", "user_id": "telegram_user_id"},
     "phone": {"enabled": "phone_enabled", "host": "phone_host", "port": "phone_port"},
     "glasses": {"enabled": "glasses_enabled"},
     "schedule": {"morning_headlines": "morning_headlines", "morning_briefing": "morning_briefing"},
@@ -197,14 +197,32 @@ def _validate(s: "Settings") -> None:
               ("listening.conversation_idle_seconds", s.conversation_idle_seconds >= 0),
               ("listening.voice_lock_threshold", 0 <= s.voice_lock_threshold <= 1),
               ("listening.vad_threshold", 0 < s.vad_threshold < 1),
+              ("listening.end_of_speech_seconds", 0.3 <= s.end_of_speech_seconds <= 2.0),
               ("brain.max_steps", s.max_steps >= 1), ("brain.max_turn_tokens", s.max_turn_tokens >= 1000),
               ("brain.context_tokens", s.context_tokens >= 1000), ("brain.history_messages", s.history_messages >= 2),
               ("brain.session_idle_minutes", s.session_idle_minutes > 0),
               ("voice.rate", s.rate > 0), ("voice.speed", s.speed > 0),
-              ("phone.port", 1 <= s.phone_port <= 65535), ("telegram.user_id", s.telegram_user_id >= 0))
+              ("phone.port", 1 <= s.phone_port <= 65535))
     for name, ok in checks:
         if not ok:
             raise ValueError(f"{name} is out of range")
+
+
+# Settings from older versions of Argus that no longer do anything (Telegram was removed in November 2026):
+# skipped with a note in the log, so an old config.toml still works.
+_RETIRED_SECTIONS = ("telegram",)
+_RETIRED_KEYS = (("security", "telegram_desktop"),)
+
+
+def _drop_retired(data: Dict[str, Any], path: Path) -> None:
+    dropped = [f"[{name}]" for name in _RETIRED_SECTIONS if data.pop(name, None) is not None]
+    for section, key in _RETIRED_KEYS:
+        table = data.get(section)
+        if isinstance(table, dict) and key in table:
+            data[section] = {k: v for k, v in table.items() if k != key}
+            dropped.append(f"{section}.{key}")
+    if dropped:
+        log.info("ignoring retired setting(s) in %s: %s", path, ", ".join(dropped))
 
 
 def load(path: Path = None) -> Settings:
@@ -214,6 +232,7 @@ def load(path: Path = None) -> Settings:
         return settings
     with path.open("rb") as fh:
         data: Dict[str, Any] = tomllib.load(fh)
+    _drop_retired(data, path)
     unknown = [k for k in data if k not in _TOP and k not in _SECTIONS]
     if unknown:  # a typo in a security section must not be silently ignored
         raise ValueError(f"unknown setting(s) in {path}: {', '.join(unknown)}")
