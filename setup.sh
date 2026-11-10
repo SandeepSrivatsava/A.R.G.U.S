@@ -1,15 +1,25 @@
 #!/bin/bash
-# Argus setup: installs Argus (our own voice assistant: brain, ears, voice, iPhone gateway) on
-# your Mac and starts it at login. Safe to run again; it keeps what already works.
+# Argus setup: installs Argus (our own voice assistant: brain, ears, voice, phone gateway) on your
+# Mac and starts it at login. It asks first which phone you use (iPhone or Android) and sets
+# everything up for that phone. Safe to run again; it keeps what already works.
 #
-#   ./setup.sh             normal setup (asks a few questions)
-#   ./setup.sh --dry-run   show what would happen, change nothing
+#   ./setup.sh                   normal setup (asks a few questions)
+#   ./setup.sh --phone android   skip the phone question
+#   ./setup.sh --dry-run         show what would happen, change nothing
+#
+# Run in Termux on an Android phone, this same command installs Argus on the phone instead
+# (scripts/setup_android.sh). For an always-on Linux server: scripts/setup_server.sh.
 #
 # Keys go only into ~/.argus/secrets.env (readable by you alone). They never go into this repo,
 # and they are never passed on a command line where other programs could see them.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -n "${TERMUX_VERSION:-}" ] || [[ "${PREFIX:-}" == *com.termux* ]]; then
+  exec bash "$REPO_DIR/scripts/setup_android.sh" "$@"      # we're on an Android phone, in Termux
+fi
+# shellcheck source=scripts/lib.sh
+. "$REPO_DIR/scripts/lib.sh"
 ARGUS_HOME="${ARGUS_HOME:-$HOME/.argus}"
 SECRETS="$ARGUS_HOME/secrets.env"
 CONFIG="$ARGUS_HOME/config.toml"
@@ -38,86 +48,36 @@ DRY_RUN=0
 ASSUME_YES=0
 NO_SERVICE=0
 CHANGE_KEYS=0
+PHONE_FLAG=""
 
 usage() {
-  sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
 Options:
-  --dry-run        print the steps without changing anything
-  --yes            accept the default answer for yes/no questions
-  --no-service     configure only; do not start anything in the background
-  --change-keys    ask for the Claude key again
-  -h, --help       show this help
+  --phone iphone|android   which phone you use (otherwise setup asks)
+  --dry-run                print the steps without changing anything
+  --yes                    accept the default answer for yes/no questions
+  --no-service             configure only; do not start anything in the background
+  --change-keys            ask for the Claude key (and the Google Maps key) again
+  -h, --help               show this help
 EOF
 }
 
-for arg in "$@"; do
-  case "$arg" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --yes|-y) ASSUME_YES=1 ;;
     --no-service) NO_SERVICE=1 ;;
     --change-keys) CHANGE_KEYS=1 ;;
+    --phone) [ $# -ge 2 ] || { echo "--phone needs iphone or android" >&2; exit 2; }; PHONE_FLAG="$2"; shift ;;
+    --phone=*) PHONE_FLAG="${1#--phone=}" ;;
     -h|--help) usage; exit 0 ;;
-    *) echo "Unknown option: $arg (try --help)" >&2; exit 2 ;;
+    *) echo "Unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
+  shift
 done
 
-# ---------- output helpers ----------
-if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; N=$'\033[0m'; else B=; G=; Y=; R=; N=; fi
-step() { printf '\n%s%s%s\n' "$B" "$*" "$N"; }
-ok()   { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
-warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*" >&2; }
-die()  { printf '%sError:%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
-run()  { if [ "$DRY_RUN" = 1 ]; then printf '  [dry-run] %s\n' "$*"; else "$@"; fi; }
-is_tty() { [ -t 0 ]; }
-
-ask() {  # ask VAR "Question" "default": uses $VAR if already set (tests and re-runs skip prompts)
-  local var="$1" question="$2" default="${3:-}" answer
-  eval "answer=\${$var:-}"
-  if [ -z "$answer" ]; then
-    is_tty || die "$var is not set and there is no terminal to ask. Set $var and run again."
-    if [ -n "$default" ]; then read -r -p "  $question [$default]: " answer; else read -r -p "  $question: " answer; fi
-    answer="${answer:-$default}"
-  fi
-  eval "$var=\$answer"
-}
-
-ask_secret() {  # like ask, but typing is hidden; empty allowed when $3 = optional
-  local var="$1" question="$2" optional="${3:-}" answer
-  eval "answer=\${$var:-}"
-  if [ -z "$answer" ]; then
-    if is_tty; then read -r -s -p "  $question: " answer; echo
-    elif [ -z "$optional" ]; then die "$var is not set and there is no terminal to ask. Set $var and run again."; fi
-  fi
-  eval "$var=\$answer"
-}
-
-confirm() {  # confirm "Question" y|n : returns 0 for yes
-  local question="$1" default="$2" answer
-  if [ "$ASSUME_YES" = 1 ] || ! is_tty; then [ "$default" = y ]; return; fi
-  if [ "$default" = y ]; then read -r -p "  $question [Y/n]: " answer; else read -r -p "  $question [y/N]: " answer; fi
-  answer="${answer:-$default}"
-  case "$answer" in [Yy]*) return 0 ;; *) return 1 ;; esac
-}
-
-sha256() { if command -v shasum > /dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1; else sha256sum "$1" | cut -d' ' -f1; fi; }
-esc() { printf '%s' "$1" | sed -e 's/[\\|&]/\\&/g'; }
-toml_str() { printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"; }
-
-# ---------- secrets go into ~/.argus/secrets.env through stdin, never argv ----------
-secret_get() { if [ -f "$SECRETS" ]; then sed -n "s/^$1=//p" "$SECRETS" | tail -1; fi; }
-secret_set() {  # usage: printf '%s' "$value" | secret_set KEY
-  local key="$1" value tmp
-  IFS= read -r value || true
-  if [ "$DRY_RUN" = 1 ]; then printf '  [dry-run] save %s in %s\n' "$key" "$SECRETS"; return; fi
-  mkdir -p "$ARGUS_HOME" && chmod 700 "$ARGUS_HOME"
-  touch "$SECRETS" && chmod 600 "$SECRETS"
-  tmp="$(mktemp "$ARGUS_HOME/.secrets.XXXXXX")"
-  grep -v "^${key}=" "$SECRETS" > "$tmp" || true
-  [ -z "$value" ] || printf '%s=%s\n' "$key" "$value" >> "$tmp"
-  chmod 600 "$tmp"
-  mv "$tmp" "$SECRETS"
-}
+# Helpers (output, questions, the secrets file): scripts/lib.sh, sourced above.
 
 # ---------- live checks (keys are fed to curl on stdin, not argv) ----------
 anthropic_check() {
@@ -138,8 +98,49 @@ find_tailscale_ip() {
   return 1
 }
 
+case "$(uname -s)" in      # before any question: is this a Mac? (Android and servers have their own setup)
+  Darwin) ;;
+  Linux) [ "${ARGUS_ALLOW_LINUX:-0}" = 1 ] || die "This sets Argus up on a Mac. On an always-on Linux server, run: scripts/setup_server.sh" ;;
+  *) die "Unsupported system: $(uname -s)" ;;
+esac
+
 # =====================================================================
-step "1/9  Checking this Mac"
+step "1/10  Your phone"
+OLD_PHONE=""
+[ -f "$CONFIG" ] && OLD_PHONE="$(toml_get "$CONFIG" phone type)"
+GIVEN="${PHONE_FLAG:-${ARGUS_PHONE:-}}"
+PHONE="$(normalize_phone "$GIVEN")"
+[ -z "$GIVEN" ] || [ -n "$PHONE" ] || die "--phone must be iphone or android"
+if [ -z "$PHONE" ]; then
+  if is_tty; then
+    echo "  Which phone do you use with Argus?"
+    echo "    1) iPhone   Siri and Shortcuts, Apple Maps, calls from your own number through this Mac"
+    echo "    2) Android  Argus also runs on the phone itself: texts, WhatsApp, notifications, Google Maps"
+    default_choice=""
+    [ "$OLD_PHONE" = iphone ] && default_choice=1
+    [ "$OLD_PHONE" = android ] && default_choice=2
+    while [ -z "$PHONE" ]; do
+      read -r -p "  Type 1 or 2${default_choice:+ [$default_choice]}: " answer
+      PHONE="$(normalize_phone "${answer:-$default_choice}")"
+      [ -n "$PHONE" ] || echo "  Please type 1 for iPhone or 2 for Android."
+    done
+  else
+    PHONE="${OLD_PHONE:-iphone}"
+    warn "No terminal to ask on: setting up for $PHONE (choose with --phone iphone|android)"
+  fi
+fi
+PHONE_DOC=docs/IPHONE.md
+if [ "$PHONE" = android ]; then
+  PHONE_DOC=docs/ANDROID.md
+  MAPS_APP=google; GLASSES=false
+  ok "Android: Google Maps links, and Argus on the phone itself (texts, WhatsApp, notifications)"
+else
+  MAPS_APP=apple; GLASSES=true
+  ok "iPhone: Apple Maps, Siri Shortcuts, Meta glasses, calls from your number (optional)"
+fi
+
+# =====================================================================
+step "2/10  Checking this Mac"
 IS_MAC=0
 case "$(uname -s)" in
   Darwin)
@@ -150,7 +151,7 @@ case "$(uname -s)" in
     xcode-select -p > /dev/null 2>&1 || die "Apple's Command Line Tools are needed: run  xcode-select --install  then ./setup.sh again."
     ok "macOS $macos on Apple Silicon" ;;
   Linux)
-    [ "${ARGUS_ALLOW_LINUX:-0}" = 1 ] || die "Argus runs on macOS. (Tests set ARGUS_ALLOW_LINUX=1.)"
+    [ "${ARGUS_ALLOW_LINUX:-0}" = 1 ] || die "This sets Argus up on a Mac. On an always-on Linux server, run: scripts/setup_server.sh"
     NO_SERVICE=1
     warn "Linux test mode: the Mac app, permissions and login items are skipped" ;;
   *) die "Unsupported system: $(uname -s)" ;;
@@ -169,7 +170,7 @@ if pgrep -fil openclaw > /dev/null 2>&1; then
 fi
 
 # =====================================================================
-step "2/9  Your details (keys stay on this Mac, in $SECRETS)"
+step "3/10  Your details (keys stay on this Mac, in $SECRETS)"
 ANTHROPIC_KEY="${ARGUS_ANTHROPIC_API_KEY:-}"
 if [ "$CHANGE_KEYS" = 0 ]; then
   ANTHROPIC_KEY="${ANTHROPIC_KEY:-$(secret_get ANTHROPIC_API_KEY)}"
@@ -199,6 +200,26 @@ SITES_TOML="$(printf '%s' "$SITES" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//'
   | grep -E '^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' | tr '[:upper:]' '[:lower:]' | sed 's/.*/"&"/' | paste -sd, - | sed 's/,/, /g' || true)"
 [ -n "$SITES_TOML" ] && ok "Never-touch sites: $SITES_TOML"
 
+# Live traffic for directions: Apple Maps on this Mac is free (no key). A Google Maps key adds Google's traffic,
+# and is what an Android phone uses. Optional either way; the maps app always shows traffic itself.
+GOOGLE_KEY="${ARGUS_GOOGLE_MAPS_KEY:-}"
+if [ -z "$GOOGLE_KEY" ] && [ "$CHANGE_KEYS" = 0 ]; then GOOGLE_KEY="$(secret_get GOOGLE_MAPS_API_KEY)"; fi
+if [ -n "$GOOGLE_KEY" ]; then
+  ok "Google Maps key: found (ending ...$(printf '%s' "$GOOGLE_KEY" | tail -c 4))"
+elif is_tty; then
+  if [ "$PHONE" = android ]; then
+    echo "  Live traffic on Android comes from Google Maps: a free API key from console.cloud.google.com"
+    echo "  (switch on the Routes API). Press Enter to skip; directions then open Google Maps without times."
+  else
+    echo "  Live traffic comes free from Apple Maps on this Mac. A Google Maps API key is optional"
+    echo "  (the always-on server can use it). Press Enter to skip."
+  fi
+  ask_secret GOOGLE_KEY "Google Maps API key (starts with AIza; Enter to skip)" optional
+fi
+if [ -n "$GOOGLE_KEY" ] && ! printf '%s' "$GOOGLE_KEY" | grep -Eq '^AIza[0-9A-Za-z_-]{35}$'; then
+  warn "That doesn't look like a Google Maps API key (they start with AIza and are 39 characters); saving it anyway."
+fi
+
 if [ "${ARGUS_SKIP_VALIDATION:-0}" = 1 ]; then
   warn "Skipping live key checks (ARGUS_SKIP_VALIDATION=1)"
 else
@@ -211,7 +232,7 @@ else
 fi
 
 # =====================================================================
-step "3/9  Python for Argus (hash-checked packages)"
+step "4/10  Python for Argus (hash-checked packages)"
 find_uv() {
   if command -v uv > /dev/null 2>&1; then command -v uv; return 0; fi
   for c in "$ARGUS_HOME/bin/uv" "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do [ -x "$c" ] && { echo "$c"; return 0; }; done
@@ -249,7 +270,7 @@ else
 fi
 
 # =====================================================================
-step "4/9  Speech models (on-device; checksums verified)"
+step "5/10  Speech models (on-device; checksums verified)"
 fetch_model() {  # fetch_model RELEASE_PATH SHA256 DEST
   local path="$1" want="$2" dest="$ARGUS_HOME/models/$3" tmp got unpack
   if [ -e "$dest" ] && [ "$(cat "$dest.sha256" 2>/dev/null)" = "$want" ]; then ok "$3 model already in place"; return; fi
@@ -273,14 +294,19 @@ fetch_model() {  # fetch_model RELEASE_PATH SHA256 DEST
   printf '%s\n' "$want" > "$dest.sha256"
   ok "$3 model installed (checksum verified)"
 }
-while read -r path sum dest; do
-  [ -n "$path" ] || continue
-  fetch_model "$path" "$sum" "$dest"
-done <<< "$MODELS"
+if [ "${ARGUS_SKIP_MODELS:-0}" = 1 ]; then
+  warn "Skipping speech models (ARGUS_SKIP_MODELS=1)"
+else
+  while read -r path sum dest; do
+    [ -n "$path" ] || continue
+    fetch_model "$path" "$sum" "$dest"
+  done <<< "$MODELS"
+fi
 
 # =====================================================================
-step "5/9  Saving keys and settings"
+step "6/10  Saving keys and settings"
 printf '%s' "$ANTHROPIC_KEY" | secret_set ANTHROPIC_API_KEY
+[ -z "$GOOGLE_KEY" ] || printf '%s' "$GOOGLE_KEY" | secret_set GOOGLE_MAPS_API_KEY
 printf '' | secret_set TELEGRAM_BOT_TOKEN        # Telegram was removed: drop any token an older setup saved
 ok "Keys saved to $SECRETS (owner-only)"
 PHONE_IP=""
@@ -295,6 +321,13 @@ if [ "$DRY_RUN" = 1 ]; then
 elif [ -f "$CONFIG" ] && [ "${ARGUS_REWRITE_CONFIG:-0}" != 1 ]; then
   ok "Kept your settings in $CONFIG"
   [ -z "$SITES_TOML" ] || warn "To change blocked sites, edit blocked_sites in $CONFIG, then: argusctl restart"
+  if [ "$OLD_PHONE" != "$PHONE" ]; then            # a different phone: switch the phone-specific settings
+    toml_set "$CONFIG" phone type "\"$PHONE\""
+    toml_set "$CONFIG" maps app "\"$MAPS_APP\""
+    toml_set "$CONFIG" glasses enabled "$GLASSES"
+    [ "$PHONE" = iphone ] || toml_set "$CONFIG" calls enabled false
+    ok "Switched the phone settings to $PHONE (maps: $MAPS_APP)"
+  fi
 else
   umask 077
   cat > "$CONFIG" <<EOF
@@ -342,14 +375,23 @@ blocked_sites = [$SITES_TOML]
 # blocked_apps = ["1Password", "Bitwarden", "Passwords", "Keychain Access", "System Settings"]
 
 [phone]
-enabled = $PHONE_ENABLED                 # iPhone shortcuts and the Argus iPhone app, over Tailscale only
+type = "$PHONE"                 # "iphone" or "android" (run ./setup.sh again to change)
+enabled = $PHONE_ENABLED                 # the phone's shortcut (and the Argus iPhone app), over Tailscale only
 port = 8765
 
+[maps]
+app = "$MAPS_APP"                 # navigation links open in "apple" or "google" Maps
+traffic = "auto"                # live traffic: Apple Maps on this Mac (free) or Google (with a key); "off"
+units = "imperial"              # or "metric"
+
+[push]
+enabled = false                 # reminders on your phone while you're away from the Mac (docs/SERVER.md)
+
 [glasses]
-enabled = true                  # Meta glasses camera through the Argus iPhone app
+enabled = $GLASSES                  # Meta glasses camera through the Argus iPhone app
 
 [calls]
-enabled = false                 # phone calls from your number: run scripts/setup_calls.sh to switch on
+enabled = false                 # calls from your number (iPhone only): run scripts/setup_calls.sh to switch on
 max_minutes = 6
 per_hour = 6
 monitor = true                  # hear both sides on the Mac's speakers
@@ -365,7 +407,7 @@ fi
 run mkdir -p "$WORKSPACE"
 
 # =====================================================================
-step "6/9  Building Argus.app"
+step "7/10  Building Argus.app"
 if [ "$IS_MAC" = 1 ]; then
   build_sum="$(cat "$REPO_DIR/macos/launcher.c" "$REPO_DIR/macos/Info.plist" | shasum -a 256 | cut -d' ' -f1)"
   if [ "$DRY_RUN" = 1 ]; then
@@ -381,6 +423,18 @@ if [ "$IS_MAC" = 1 ]; then
     codesign --force --sign - "$APP_DIR" > /dev/null 2>&1 || warn "Couldn't sign Argus.app locally (it should still run)"
     ok "Built Argus.app in $APP_DIR"
   fi
+  # Free live traffic from Apple Maps: a small MapKit helper (macos/argus-maps.swift), rebuilt when it changes.
+  maps_sum="$(shasum -a 256 "$REPO_DIR/macos/argus-maps.swift" | cut -d' ' -f1)"
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '  [dry-run] build %s\n' "$ARGUS_HOME/bin/argus-maps"
+  elif [ -x "$ARGUS_HOME/bin/argus-maps" ] && [ "$(cat "$ARGUS_HOME/bin/argus-maps.sha256" 2>/dev/null)" = "$maps_sum" ]; then
+    ok "Apple Maps helper is up to date"
+  elif swiftc -O -swift-version 5 -o "$ARGUS_HOME/bin/argus-maps" "$REPO_DIR/macos/argus-maps.swift" > /dev/null 2>&1; then
+    printf '%s\n' "$maps_sum" > "$ARGUS_HOME/bin/argus-maps.sha256"
+    ok "Built the Apple Maps helper (free live traffic for directions)"
+  else
+    warn "Couldn't build the Apple Maps helper; directions open the maps app without times unless there's a Google key"
+  fi
 else
   ok "Skipped (not a Mac)"
 fi
@@ -391,7 +445,7 @@ fi
 ok "Command-line control: argusctl (try: argusctl status)"
 
 # =====================================================================
-step "7/9  Starting Argus at login"
+step "8/10  Starting Argus at login"
 if [ "$NO_SERVICE" = 1 ]; then
   warn "Skipped (--no-service or test mode)."
 elif [ "$DRY_RUN" = 1 ]; then
@@ -406,9 +460,9 @@ else
   launchctl bootstrap "gui/$UID_NUM" "$LAUNCH_AGENTS/com.argus.voice.plist" || die "Couldn't start Argus"
   ok "Argus is running (menu bar ◉) and starts when you log in"
   if [ "$PHONE_ENABLED" = true ]; then
-    ok "iPhone gateway on Tailscale: http://$PHONE_IP:8765"
+    ok "Phone gateway on Tailscale: http://$PHONE_IP:8765"
   else
-    warn "Tailscale isn't connected, so the iPhone connection is off for now (see docs/IPHONE.md)."
+    warn "Tailscale isn't connected, so the phone connection is off for now (see $PHONE_DOC)."
   fi
   want_awake="${ARGUS_STAY_AWAKE:-}"
   if [ -z "$want_awake" ]; then
@@ -418,7 +472,7 @@ else
 fi
 
 # =====================================================================
-step "8/9  Permissions (macOS asks once; click Allow)"
+step "9/10  Permissions (macOS asks once; click Allow)"
 if [ "$IS_MAC" = 1 ] && [ "$NO_SERVICE" = 0 ] && [ "$DRY_RUN" = 0 ]; then
   echo "  • Microphone: \"Argus would like to access the microphone\" → Allow."
   echo "    Speech is processed on this Mac; only what you say to Argus is sent to Claude."
@@ -430,7 +484,7 @@ else
 fi
 
 # =====================================================================
-step "9/9  Saying hello"
+step "10/10  Saying hello"
 if [ "$DRY_RUN" = 1 ] || [ "$NO_SERVICE" = 1 ] || [ "${ARGUS_SEND_HELLO:-yes}" = no ]; then
   ok "Skipped"
 else
@@ -442,11 +496,27 @@ else
   fi
 fi
 
+GATEWAY_NOTE=""
+if [ "$PHONE_ENABLED" = true ]; then GATEWAY_NOTE=" (address http://$PHONE_IP:8765, token: argusctl phone-token)"; fi
 cat <<EOF
 
 ${B}Done.${N} Say "Argus, what's the news today?" near your Mac (or clap twice, then ask).
   - Menu bar ◉: microphone, conversation mode, screen access, stop, activity log
   - Teach it your voice (recommended): argusctl enroll
-  - iPhone and Meta glasses: docs/IPHONE.md$( [ "$PHONE_ENABLED" = true ] && printf ' (address http://%s:8765, token: argusctl phone-token)' "$PHONE_IP" )
-  - Spend so far: argusctl usage    Health check: ./scripts/doctor.sh
 EOF
+if [ "$PHONE" = android ]; then
+  cat <<EOF
+  - ${B}Next, the Android phone${N} (docs/ANDROID.md): install Termux and Termux:API from F-Droid, then in Termux:
+        pkg install git gh && gh auth login && gh repo clone SandeepSrivatsava/A.R.G.U.S argus && cd argus && ./setup.sh
+    That puts Argus on the phone itself: texts, WhatsApp, notifications, live traffic, push-to-talk.
+  - Talk to this Mac from the phone too (HTTP Shortcuts): docs/ANDROID.md$GATEWAY_NOTE
+  - Calls from your own number need an iPhone; on Android, Argus opens the dialer for you.
+EOF
+else
+  cat <<EOF
+  - iPhone, Siri, directions and Meta glasses: docs/IPHONE.md$GATEWAY_NOTE
+  - Calls from your own number (optional): scripts/setup_calls.sh
+  - When the Mac is off or far away: an always-on server, docs/SERVER.md
+EOF
+fi
+echo "  - Spend so far: argusctl usage    Health check: ./scripts/doctor.sh"

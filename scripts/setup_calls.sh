@@ -1,6 +1,6 @@
 #!/bin/bash
-# Phone calls from your own number (optional). Installs what Argus needs to place calls through your
-# iPhone from the Mac and talk on them, then switches calls on. Safe to run again.
+# Phone calls from your own number (optional, iPhone only). Installs what Argus needs to place calls
+# through your iPhone from the Mac and talk on them, then switches calls on. Safe to run again.
 #
 #   scripts/setup_calls.sh            set up and switch calls on
 #   scripts/setup_calls.sh --off      switch calls off again (nothing is uninstalled)
@@ -21,10 +21,8 @@ AUDIOTEE_REPO="https://github.com/makeusabrew/audiotee.git"
 # Pinned: the exact source that was reviewed for Argus (git checks every file against this commit hash).
 AUDIOTEE_COMMIT="56ac954369a09318e46b88a6eec33c2d2b0d32a3"
 
-if [ -t 1 ]; then G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; N=$'\033[0m'; else G=""; Y=""; R=""; N=""; fi
-ok()   { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
-warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*" >&2; }
-die()  { printf '%sError:%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
+# shellcheck source=scripts/lib.sh
+. "$(dirname "$0")/lib.sh"
 
 set_calls() {  # usage: set_calls true|false  (edits [calls] enabled in config.toml)
     local value="$1"
@@ -47,6 +45,11 @@ if [ "${1:-}" = "--off" ]; then
     set_calls false
     ok "Phone calls switched off. Now run: argusctl restart"
     exit 0
+fi
+
+if [ -f "$CONFIG" ] && [ "$(toml_get "$CONFIG" phone type)" = android ]; then
+    die "Calls from your own number go through an iPhone (Continuity), and Argus is set up for Android. \
+On Android, Argus opens the dialer for you instead. (Switch phones with: ./setup.sh --phone iphone)"
 fi
 
 [ "$(uname -s)" = "Darwin" ] || die "Phone calls need a Mac."

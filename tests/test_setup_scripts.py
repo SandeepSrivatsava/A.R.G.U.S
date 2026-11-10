@@ -1,0 +1,254 @@
+"""The setup scripts: setup.sh asks iPhone or Android first and sets everything up for that phone (and hands over to
+the Android installer inside Termux); the Android and server installers; the shared shell helpers."""
+import os
+import pty
+import select
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(scope="module")
+def venv(tmp_path_factory):
+    path = tmp_path_factory.mktemp("venv")
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(path)], check=True)
+    return path
+
+
+def mac_env(tmp_path, venv, **extra):
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("ARGUS_", "TERMUX"))}
+    env.pop("PREFIX", None)
+    env.update(ARGUS_HOME=str(tmp_path / "home"), ARGUS_ANTHROPIC_API_KEY="sk-ant-test", ARGUS_NAME="Sandeep",
+               ARGUS_CITY="Portland, OR", ARGUS_TIMEZONE="America/Los_Angeles", ARGUS_BLOCKED_SITES="",
+               ARGUS_AI_BRIEFING="no", ARGUS_SKIP_VALIDATION="1", ARGUS_SEND_HELLO="no", ARGUS_ALLOW_LINUX="1",
+               ARGUS_SKIP_DEPS="1", ARGUS_SKIP_MODELS="1", ARGUS_VENV=str(venv), ARGUS_BIN_DIR=str(tmp_path / "bin"),
+               ARGUS_WORKSPACE=str(tmp_path / "workspace"))
+    env.update(extra)
+    return env
+
+
+def run(script, env, *args, stdin=subprocess.DEVNULL, timeout=120):
+    return subprocess.run(["bash", str(REPO / script), *args], env=env, stdin=stdin, capture_output=True, text=True,
+                          timeout=timeout)
+
+
+def setting(path, section, key):
+    out = subprocess.run(["bash", "-c", f'. "{REPO}/scripts/lib.sh"; toml_get "$1" "$2" "$3"', "_", str(path),
+                          section, key], capture_output=True, text=True, check=True)
+    return out.stdout.strip()
+
+
+# ---- the shared helpers ---------------------------------------------------------------------------------------------
+def test_toml_helpers(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('name = "Argus"\ncity = "Portland, OR"  # for weather\n\n[phone]\nenabled = true    # gateway\n'
+                   'port = 8765\n\n[calls]\nenabled = false\n')
+
+    def sh(code):
+        return subprocess.run(["bash", "-c", f'. "{REPO}/scripts/lib.sh"; {code}', "_", str(cfg)], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    assert sh('toml_get "$1" "" city') == "Portland, OR" and sh('toml_get "$1" phone enabled') == "true"
+    assert sh('toml_get "$1" phone type') == "" and sh('toml_get "$1" calls enabled') == "false"
+    sh('toml_set "$1" phone type \'"android"\'; toml_set "$1" calls enabled true; toml_set "$1" maps app \'"google"\'')
+    text = cfg.read_text()
+    assert '[phone]\ntype = "android"\nenabled = true    # gateway' in text and "[calls]\nenabled = true" in text
+    assert text.endswith('\n[maps]\napp = "google"\n') and oct(cfg.stat().st_mode & 0o777) == "0o600"
+    sh('toml_set "$1" phone type \'"iphone"\'')
+    assert cfg.read_text().count("type = ") == 1 and sh('toml_get "$1" phone type') == "iphone"
+    for answer, phone in (("1", "iphone"), ("iPhone", "iphone"), (" IOS ", "iphone"), ("2", "android"),
+                          ("Samsung", "android"), ("Pixel", "android"), ("3", ""), ("", "")):
+        assert sh(f'normalize_phone "{answer}"') == phone, answer
+
+
+# ---- setup.sh: the phone question ------------------------------------------------------------------------------------
+def test_setup_for_android_then_iphone(tmp_path, venv):
+    env = mac_env(tmp_path, venv, ARGUS_PHONE="android", ARGUS_GOOGLE_MAPS_KEY="AIza" + "x" * 35)
+    first = run("setup.sh", env)
+    assert first.returncode == 0, first.stdout + first.stderr
+    out = first.stdout
+    assert "1/10  Your phone" in out and "Android: Google Maps links" in out and "10/10  Saying hello" in out
+    assert "Next, the Android phone" in out and "Calls from your own number need an iPhone" in out
+    assert "docs/IPHONE.md" not in out and "Warning" not in first.stderr
+    cfg = tmp_path / "home" / "config.toml"
+    assert setting(cfg, "phone", "type") == "android" and setting(cfg, "maps", "app") == "google"
+    assert setting(cfg, "glasses", "enabled") == "false" and setting(cfg, "calls", "enabled") == "false"
+    secrets = (tmp_path / "home" / "secrets.env").read_text()
+    assert "GOOGLE_MAPS_API_KEY=AIza" in secrets and "AIza" not in cfg.read_text()
+    env.update(ARGUS_PHONE="iphone")
+    env.pop("ARGUS_GOOGLE_MAPS_KEY")
+    second = run("setup.sh", env)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "Kept your settings" in second.stdout and "Switched the phone settings to iphone (maps: apple)" in second.stdout
+    assert "Google Maps key: found" in second.stdout and "scripts/setup_calls.sh" in second.stdout
+    assert setting(cfg, "phone", "type") == "iphone" and setting(cfg, "maps", "app") == "apple"
+    assert setting(cfg, "glasses", "enabled") == "true"
+    assert (tmp_path / "home" / "secrets.env").read_text().count("GOOGLE_MAPS_API_KEY=") == 1
+    third = run("setup.sh", dict(env, ARGUS_PHONE=""))                 # no answer and no terminal: keep iPhone
+    assert third.returncode == 0 and "setting up for iphone" in third.stderr and "Switched" not in third.stdout
+    loaded = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
+                             "from argus import config; s = config.load(); print(s.phone_type, s.maps_link_app)",
+                             str(REPO)], env=env, capture_output=True, text=True)
+    assert loaded.stdout.strip() == "iphone apple"
+
+
+def test_setup_refuses_a_bad_phone_and_explains_linux(tmp_path, venv):
+    bad = run("setup.sh", mac_env(tmp_path, venv), "--phone", "nokia")
+    assert bad.returncode == 1 and "--phone must be iphone or android" in bad.stderr
+    assert run("setup.sh", mac_env(tmp_path, venv), "--phone").returncode == 2
+    linux = run("setup.sh", dict(mac_env(tmp_path, venv), ARGUS_ALLOW_LINUX="0"), "--phone=iphone")
+    assert linux.returncode == 1 and "scripts/setup_server.sh" in linux.stderr
+    helped = run("setup.sh", mac_env(tmp_path, venv), "--help")
+    assert helped.returncode == 0 and "--phone iphone|android" in helped.stdout and "asks first" in helped.stdout
+    dry = run("setup.sh", mac_env(tmp_path, venv, ARGUS_PHONE="2"), "--dry-run")
+    assert dry.returncode == 0 and "[dry-run] write" in dry.stdout and not (tmp_path / "home" / "config.toml").exists()
+
+
+def test_setup_asks_which_phone_on_a_terminal(tmp_path, venv):
+    env = mac_env(tmp_path, venv)
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(["bash", str(REPO / "setup.sh")], env=env, stdin=slave, stdout=slave, stderr=slave,
+                            close_fds=True)
+    os.close(slave)
+    seen = b""
+
+    def wait_for_text(text: bytes, timeout: float = 30) -> None:
+        nonlocal seen
+        deadline = time.time() + timeout
+        while text not in seen:
+            assert time.time() < deadline, f"never saw {text!r}; got {seen[-500:]!r}"
+            ready, _, _ = select.select([master], [], [], 0.5)
+            if ready:
+                try:
+                    seen += os.read(master, 4096)
+                except OSError:
+                    break
+    try:
+        wait_for_text(b"Type 1 or 2")
+        assert b"1) iPhone" in seen and b"2) Android" in seen
+        os.write(master, b"blackberry\n")
+        wait_for_text(b"Please type 1 for iPhone or 2 for Android.")
+        os.write(master, b"2\n")
+        wait_for_text(b"Google Maps API key")
+        assert b"Live traffic on Android comes from Google Maps" in seen
+        os.write(master, b"\n")
+        wait_for_text(b"Done.", timeout=60)
+        proc.wait(30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        os.close(master)
+    assert proc.returncode == 0
+    assert setting(tmp_path / "home" / "config.toml", "phone", "type") == "android"
+    assert "GOOGLE_MAPS_API_KEY" not in (tmp_path / "home" / "secrets.env").read_text()
+
+
+def test_calls_setup_refuses_on_android(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.toml").write_text('[phone]\ntype = "android"\n')
+    out = run("scripts/setup_calls.sh", dict(os.environ, ARGUS_HOME=str(home)))
+    assert out.returncode == 1 and "go through an iPhone" in out.stderr
+    off = run("scripts/setup_calls.sh", dict(os.environ, ARGUS_HOME=str(home)), "--off")
+    assert off.returncode == 0 and "[calls]\nenabled = false" in (home / "config.toml").read_text()
+
+
+# ---- the Android installer (run inside Termux) -----------------------------------------------------------------------
+def termux_env(tmp_path, **extra):
+    stubs = tmp_path / "stubs"
+    stubs.mkdir(exist_ok=True)
+    for name in ("termux-sms-list", "termux-tts-speak", "termux-contact-list", "termux-location",
+                 "termux-notification-list", "termux-wake-lock", "termux-setup-storage", "getprop"):
+        (stubs / name).write_text("#!/bin/sh\necho '[]'\n")
+        (stubs / name).chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ARGUS_")}
+    env.update(HOME=str(tmp_path / "phone"), PATH=f"{stubs}:{os.environ['PATH']}", TERMUX_VERSION="0.119",
+               PREFIX=str(tmp_path / "prefix"), ARGUS_SKIP_PKG="1", ARGUS_SKIP_VALIDATION="1",
+               ARGUS_PYTHON=sys.executable, ARGUS_ANTHROPIC_API_KEY="sk-ant-test", ARGUS_NAME="Sandeep",
+               ARGUS_CITY="Portland, OR", ARGUS_TIMEZONE="America/Los_Angeles", ARGUS_DRIVE_ASSIST="no")
+    env.update(extra)
+    return env
+
+
+def test_setup_in_termux_installs_argus_on_the_phone(tmp_path):
+    env = termux_env(tmp_path)
+    out = run("setup.sh", env, "--phone", "iphone", "--no-service")    # in Termux it's the Android setup either way
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "1/7  Checking this phone" in out.stdout and "Termux 0.119" in out.stdout
+    assert "WhatsApp backup reader\n  ✓ Skipped (no WhatsApp key)" in out.stdout
+    home = tmp_path / "phone" / ".argus"
+    cfg = home / "config.toml"
+    assert setting(cfg, "phone", "type") == "android" and setting(cfg, "android", "drive_assist") == "false"
+    assert setting(cfg, "maps", "app") == "google" and setting(cfg, "glasses", "enabled") == "false"
+    assert oct((home / "secrets.env").stat().st_mode & 0o777) == "0o600"
+    launcher = tmp_path / "prefix" / "bin" / "argus-android"
+    assert f"'{REPO}' android" in launcher.read_text() and oct(launcher.stat().st_mode & 0o777) == "0o700"
+    widget = (tmp_path / "phone" / ".shortcuts" / "tasks" / "Argus").read_text()
+    assert widget.endswith(f"exec '{launcher}' talk\n")
+    boot = (tmp_path / "phone" / ".termux" / "boot" / "argus").read_text()
+    assert "termux-wake-lock" in boot and f"exec '{launcher}' serve >>" in boot
+    status = subprocess.run(["sh", str(launcher), "status"], env=env, capture_output=True, text=True)
+    assert status.returncode == 1 and "Argus isn't running" in status.stdout
+    again = run("scripts/setup_android.sh", dict(env, ARGUS_DRIVE_ASSIST="yes"), "--no-service")
+    assert again.returncode == 0 and "Kept your settings" in again.stdout and "drive assist: true" in again.stdout
+    assert setting(cfg, "android", "drive_assist") == "true"
+
+
+def test_android_setup_checks_its_input(tmp_path):
+    env = termux_env(tmp_path, ARGUS_WHATSAPP_KEY="1234")
+    bad = run("scripts/setup_android.sh", env, "--no-service")
+    assert bad.returncode == 1 and "64 characters" in bad.stderr
+    dry = run("scripts/setup_android.sh", termux_env(tmp_path, ARGUS_WHATSAPP_KEY="AB" * 32), "--dry-run")
+    assert dry.returncode == 0 and "[dry-run]" in dry.stdout and "--require-hashes" in dry.stdout
+    assert not (tmp_path / "phone" / ".argus" / "config.toml").exists()
+    outside = run("scripts/setup_android.sh", dict(termux_env(tmp_path), TERMUX_VERSION="", PREFIX="/usr"))
+    assert outside.returncode == 1 and "inside the Termux app" in outside.stderr
+    wrong_key = run("scripts/setup_android.sh", termux_env(tmp_path, ARGUS_ANTHROPIC_API_KEY="hello"), "--no-service")
+    assert wrong_key.returncode == 1 and "doesn't look like a Claude API key" in wrong_key.stderr
+    assert run("scripts/setup_android.sh", termux_env(tmp_path), "--bogus").returncode == 2
+
+
+# ---- the server installer --------------------------------------------------------------------------------------------
+def test_server_setup_needs_tailscale_and_a_phone(tmp_path):
+    no_tailscale = tmp_path / "tailscale"
+    no_tailscale.write_text("#!/bin/sh\nexit 1\n")
+    no_tailscale.chmod(0o755)
+    env = dict(os.environ, ARGUS_TAILSCALE=str(no_tailscale), ARGUS_PYTHON=sys.executable,
+               ARGUS_STATE_DIR=str(tmp_path / "state"), ARGUS_OPT_DIR=str(tmp_path / "opt" / "argus"))
+    out = run("scripts/setup_server.sh", env, "--no-service")
+    assert out.returncode == 1 and "Tailscale isn't connected" in out.stderr and "sudo tailscale up" in out.stderr
+    no_tailscale.write_text("#!/bin/sh\necho 100.64.1.2\n")
+    bad = run("scripts/setup_server.sh", env, "--no-service", "--phone", "nokia")
+    assert bad.returncode == 1 and "--phone must be" in bad.stderr
+    dry = run("scripts/setup_server.sh", dict(env, ARGUS_ANTHROPIC_API_KEY="sk-ant-x", ARGUS_NAME="S", ARGUS_CITY="P",
+                                              ARGUS_TIMEZONE="Mars/Base", ARGUS_SKIP_VALIDATION="1"),
+              "--dry-run", "--phone=android")
+    assert dry.returncode == 1 and "Unknown time zone Mars/Base" in dry.stderr
+    unsafe = run("scripts/setup_server.sh", dict(env, ARGUS_ANTHROPIC_API_KEY="sk-ant-x", ARGUS_NAME="S",
+                                                 ARGUS_CITY="P", ARGUS_TIMEZONE="UTC", ARGUS_SKIP_VALIDATION="1",
+                                                 ARGUS_OPT_DIR="/"), "--no-service", "--phone=1")
+    assert unsafe.returncode == 1 and "isn't a safe place" in unsafe.stderr
+    helped = run("scripts/setup_server.sh", env, "--help")
+    assert helped.returncode == 0 and "always-on" in helped.stdout
+
+
+def test_server_setup_requires_root_for_the_real_install(tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("running as root")
+    ts = tmp_path / "tailscale"
+    ts.write_text("#!/bin/sh\necho 100.64.1.2\n")
+    ts.chmod(0o755)
+    out = run("scripts/setup_server.sh", dict(os.environ, ARGUS_TAILSCALE=str(ts), ARGUS_PYTHON=sys.executable))
+    assert out.returncode == 1 and "Run it with sudo" in out.stderr
+
+
+@pytest.mark.skipif(not shutil.which("shellcheck"), reason="shellcheck isn't installed")
+def test_shell_scripts_pass_shellcheck():
+    scripts = [REPO / "setup.sh", REPO / "tests" / "e2e.sh"] + sorted((REPO / "scripts").glob("*.sh"))
+    out = subprocess.run(["shellcheck", "-x", *map(str, scripts)], cwd=REPO, capture_output=True, text=True)
+    assert out.returncode == 0, out.stdout

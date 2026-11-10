@@ -2,15 +2,12 @@
 the brain, the scheduler, the iPhone gateway and the menu bar."""
 from __future__ import annotations
 
-import fcntl
 import logging
-import logging.handlers
 import os
 import signal
 import subprocess
 import sys
 import threading
-from datetime import datetime
 from typing import Any, Optional
 
 from . import config as config_mod
@@ -27,9 +24,12 @@ from .lessons import Reflector
 from .hearing import Microphone, Segmenter, SherpaTranscriber, VoicePrint, model_paths
 from .listener import Listener
 from .llm import Claude
-from .news import headlines
+from .maps import Router, route_tool
+from .news import format_headlines
 from .phone import Gatekeeper, PhoneServer, bind_address, load_or_create_token
 from .policy import Policy
+from .push import push_from
+from .runtime import setup_logging, single_instance
 from .scheduler import Scheduler, sync_default_jobs
 from .store import Store
 from .toolbox import build_tools
@@ -38,19 +38,7 @@ from .wake import DEFAULT_SOFT_VARIANTS, DEFAULT_VARIANTS, NameMatcher
 
 log = logging.getLogger("argus")
 IS_MAC = sys.platform == "darwin"
-
-
-def setup_logging(settings: config_mod.Settings, verbose: bool = False) -> None:
-    path = settings.audit_path.parent / "argus.log"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handler = logging.handlers.RotatingFileHandler(path, maxBytes=1_000_000, backupCount=3)
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    root = logging.getLogger()
-    root.handlers[:] = [handler]
-    if verbose or sys.stderr.isatty():
-        root.addHandler(logging.StreamHandler())
-    root.setLevel(logging.INFO)
-    os.chmod(path, 0o600)
+__all__ = ["App", "main", "name_matcher", "notify", "format_headlines", "setup_logging", "single_instance"]
 
 
 def name_matcher(settings: config_mod.Settings) -> NameMatcher:
@@ -59,15 +47,6 @@ def name_matcher(settings: config_mod.Settings) -> NameMatcher:
     variants = (DEFAULT_VARIANTS if is_default else ()) + tuple(settings.all_variants())
     soft = [v for v in settings.soft_variants if is_default or v not in DEFAULT_SOFT_VARIANTS]
     return NameMatcher(name, variants=variants, soft_variants=soft)
-
-
-def format_headlines() -> str:
-    articles, _ = headlines(top=6)
-    if not articles:
-        return "Morning headlines: the news feeds couldn't be reached."
-    lines = [f"Morning headlines, {datetime.now().strftime('%a %d %b')}:"]
-    lines += [f"• {a.title} ({a.source})" for a in articles]
-    return "\n".join(lines)
 
 
 def notify(text: str) -> None:
@@ -105,11 +84,14 @@ class App:
                              inspect_point=self._inspect_point)
         reflector = Reflector(self.llm, self.store, model=settings.small_model, audit=self.audit,
                               cost=request_cost) if settings.self_learning else None
-        self.agent = Agent(self.llm, self.store, self.policy,
-                           build_tools(mac=IS_MAC or computer is not None, glasses=settings.glasses_enabled),
+        tools = build_tools(mac=IS_MAC or computer is not None, glasses=settings.glasses_enabled)
+        self.router = Router(settings, secrets)
+        tools["route"] = route_tool(self.router)
+        self.push = push_from(settings, secrets, self.audit)    # reminders reach the phone while you're away
+        self.agent = Agent(self.llm, self.store, self.policy, tools,
                            settings=settings, audit=self.audit, computer=computer, glasses=self.glasses,
                            glasses_status=(self.glasses.describe if self.glasses else lambda: None),
-                           secrets=self._secret_values(secrets), reflector=reflector)
+                           secrets=self._secret_values(secrets), reflector=reflector, device="mac")
         self.scheduler = Scheduler(self.store, deliver=self.deliver, run_task=self.run_task, headlines=format_headlines,
                                    tz=settings.timezone or None)
         self.phone: Optional[PhoneServer] = None
@@ -183,19 +165,22 @@ class App:
 
     def deliver(self, text: str) -> None:
         """A reminder or scheduled result, spoken at the Mac. If the Mac is locked or the microphone is off,
-        it waits and is spoken as soon as you're back."""
+        it waits and is spoken as soon as you're back, and (with push set up) it goes to your phone too."""
         if self.argus is not None:
             self.argus.announce(text.replace("•", ""))
+        if self.push is not None and (self.argus is None or not self.argus.present()):
+            self.push.send(text)
 
     def run_task(self, text: str) -> str:
         session = self.store.session_for("scheduler", "tasks", 60)
         turn = self.agent.run(session_id=session, channel="scheduler", content=f"Scheduled task: {text}", events=Events())
         return turn.text.strip() or f"(The scheduled task didn't produce an answer: {turn.error or 'no reply'})"
 
-    def ask_phone(self, content: Any) -> str:
+    def ask_phone(self, content: Any, location: Optional[dict] = None) -> dict:
         session = self.store.session_for("phone", "iphone", 30)
-        turn = self.agent.run(session_id=session, channel="phone", content=content, events=Events())
-        return turn.text.strip() or ("Sorry, " + turn.error if turn.error else "Done.")
+        turn = self.agent.run(session_id=session, channel="phone", content=content, events=Events(), location=location)
+        reply = turn.text.strip() or ("Sorry, " + turn.error if turn.error else "Done.")
+        return {"reply": reply, "open": turn.links[0] if turn.links else None}
 
     # ---- start / stop ------------------------------------------------------------------------------
     def start_services(self) -> None:
@@ -224,19 +209,6 @@ class App:
             self.argus.stop()
             self.argus.brain.cancel()
             self.argus.source.close()
-
-
-def single_instance(settings: config_mod.Settings):
-    """An exclusive lock so a second copy (e.g. opened from Finder) exits instead of double-answering."""
-    path = settings.run_dir / "argus.lock"
-    fh = open(path, "w")
-    os.chmod(path, 0o600)
-    try:
-        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        fh.close()
-        return None
-    return fh
 
 
 ICONS = {"listening": "◉", "follow-up": "◉", "conversation": "◉ ∞", "speaking": "◉ ))", "working": "◎",

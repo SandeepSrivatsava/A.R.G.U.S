@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import tempfile
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -74,10 +76,24 @@ class Settings:
     blocked_apps: List[str] = field(default_factory=lambda: list(DEFAULT_BLOCKED_APPS))
     blocked_sites: List[str] = field(default_factory=list)
     # phone + glasses
+    phone_type: str = "iphone"     # "iphone" or "android": setup asks first; decides the phone features
     phone_enabled: bool = False
     phone_host: str = ""
     phone_port: int = 8765
     glasses_enabled: bool = True
+    # maps and live traffic (maps.py)
+    maps_app: str = ""             # navigation links open in "apple" or "google" maps ("" = by phone type)
+    maps_traffic: str = "auto"     # "auto", "google", "apple", "mapkit" or "off"
+    maps_units: str = "imperial"   # or "metric"
+    # push notifications to your phone (push.py), for when Argus can't say something out loud
+    push_enabled: bool = False
+    push_server: str = "https://ntfy.sh"
+    # Argus on an Android phone (android_app.py, in Termux)
+    android_messages: bool = True          # search texts and the notification log
+    android_notification_days: int = 90    # how long the notification log is kept
+    android_whatsapp_dir: str = ""         # where WhatsApp's backups are ("" = the usual places)
+    android_drive_assist: bool = False     # while charging and moving: ask where you're headed, watch traffic
+    android_speak: bool = True             # speak replies (termux-tts-speak)
     # phone calls from your own number, through the Mac (calls.py)
     calls_enabled: bool = False
     call_model: str = ""                    # "" = the brain's model
@@ -140,6 +156,20 @@ class Settings:
     def learned_variants_path(self) -> Path:
         return self.home / "learned_names.txt"
 
+    @property
+    def private_dir(self) -> Path:
+        """Copies of your messages (Android: the notification log, the decrypted WhatsApp backup)."""
+        return self.home / "private"
+
+    @property
+    def bin_dir(self) -> Path:
+        return self.home / "bin"
+
+    @property
+    def maps_link_app(self) -> str:
+        """Which maps app navigation links open in."""
+        return self.maps_app or ("apple" if self.phone_type == "iphone" else "google")
+
     def all_variants(self) -> List[str]:
         learned: List[str] = []
         if self.learned_variants_path.exists():
@@ -160,8 +190,13 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
     "voice": {"engine": "voice_engine", "say_voice": "say_voice", "rate": "rate", "speed": "speed", "greeting": "greeting"},
     "security": {k: k for k in ("approval_needs_touch_id", "pause_when_locked", "screen_control",
                                 "blocked_apps", "blocked_sites", "voice_approvals", "voice_approval_threshold")},
-    "phone": {"enabled": "phone_enabled", "host": "phone_host", "port": "phone_port"},
+    "phone": {"type": "phone_type", "enabled": "phone_enabled", "host": "phone_host", "port": "phone_port"},
     "glasses": {"enabled": "glasses_enabled"},
+    "maps": {"app": "maps_app", "traffic": "maps_traffic", "units": "maps_units"},
+    "push": {"enabled": "push_enabled", "server": "push_server"},
+    "android": {"messages": "android_messages", "notification_days": "android_notification_days",
+                "whatsapp_dir": "android_whatsapp_dir", "drive_assist": "android_drive_assist",
+                "speak": "android_speak"},
     "calls": {"enabled": "calls_enabled", "model": "call_model", "max_minutes": "call_max_minutes",
               "monitor": "call_monitor", "international": "call_international", "per_hour": "calls_per_hour",
               "input_device": "call_input_device", "tap": "call_tap"},
@@ -199,6 +234,19 @@ def _validate(s: "Settings") -> None:
         raise ValueError('listening.guests must be "ask" or "never"')
     if s.voice_engine not in ("piper", "say"):
         raise ValueError('voice.engine must be "piper" or "say"')
+    if s.phone_type not in ("iphone", "android"):
+        raise ValueError('phone.type must be "iphone" or "android"')
+    if s.maps_app not in ("", "apple", "google"):
+        raise ValueError('maps.app must be "apple" or "google"')
+    if s.maps_traffic not in ("auto", "google", "apple", "mapkit", "off"):
+        raise ValueError('maps.traffic must be "auto", "google", "apple", "mapkit" or "off"')
+    if s.maps_units not in ("imperial", "metric"):
+        raise ValueError('maps.units must be "imperial" or "metric"')
+    if s.push_enabled:
+        from .push import check_server
+        problem = check_server(s.push_server)
+        if problem:
+            raise ValueError(f"push.server: {problem}")
     if s.timezone:
         try:
             from zoneinfo import ZoneInfo
@@ -224,7 +272,8 @@ def _validate(s: "Settings") -> None:
               ("phone.port", 1 <= s.phone_port <= 65535),
               ("listening.guest_minutes", 1 <= s.guest_minutes <= 1440),
               ("security.voice_approval_threshold", 0 <= s.voice_approval_threshold <= 1),
-              ("calls.max_minutes", 1 <= s.call_max_minutes <= 30), ("calls.per_hour", 1 <= s.calls_per_hour <= 30))
+              ("calls.max_minutes", 1 <= s.call_max_minutes <= 30), ("calls.per_hour", 1 <= s.calls_per_hour <= 30),
+              ("android.notification_days", 1 <= s.android_notification_days <= 3650))
     for name, ok in checks:
         if not ok:
             raise ValueError(f"{name} is out of range")
@@ -282,7 +331,7 @@ def load(path: Path = None) -> Settings:
 
 
 def ensure_private_dirs(settings: Settings) -> None:
-    for d in (settings.home, settings.run_dir, settings.audit_path.parent, settings.models_dir):
+    for d in (settings.home, settings.run_dir, settings.audit_path.parent, settings.models_dir, settings.private_dir):
         d.mkdir(parents=True, exist_ok=True)
         os.chmod(d, 0o700)
     settings.workspace.mkdir(parents=True, exist_ok=True)
@@ -303,3 +352,54 @@ def read_secrets(path: Path) -> Dict[str, str]:
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip().strip("'\"")
     return values
+
+
+def write_secret(path: Path, key: str, value: str) -> None:
+    """Set KEY=value in the owner-only secrets file ("" removes it). Written atomically; stays readable by you
+    alone."""
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", key) or "\n" in value or "\r" in value:
+        raise ValueError("bad secret name or value")
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(p.parent, 0o700)
+    lines = []
+    if p.exists():
+        if os.stat(p).st_mode & 0o077:
+            raise PermissionError(f"{p} can be read by other users; fix with: chmod 600 {p}")
+        lines = [line for line in p.read_text(encoding="utf-8").splitlines() if not line.startswith(key + "=")]
+    if value:
+        lines.append(f"{key}={value}")
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".secrets.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            os.fchmod(fh.fileno(), 0o600)
+            fh.write("\n".join(lines) + ("\n" if lines else ""))
+        os.replace(tmp, p)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
+def set_setting(path: Path, section: str, key: str, value: str) -> None:
+    """Set one setting in config.toml (adding the section or key if needed), keeping everything else, comments
+    included. `value` is written as TOML: true, 8765, "apple"."""
+    p = Path(path)
+    lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
+    header, line = f"[{section}]", f"{key} = {value}"
+    pattern = re.compile(rf"^{re.escape(key)}\s*=")
+    start = next((i for i, text in enumerate(lines) if text.strip() == header), None)
+    if start is None:
+        lines += ([""] if lines and lines[-1].strip() else []) + [header, line]
+    else:
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("[")), len(lines))
+        found = next((i for i in range(start + 1, end) if pattern.match(lines[i])), None)
+        if found is not None:
+            lines[found] = line
+        else:
+            last = max([start] + [i for i in range(start + 1, end) if lines[i].strip()])
+            lines.insert(last + 1, line)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".config.")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        os.fchmod(fh.fileno(), 0o600)
+        fh.write("\n".join(lines) + "\n")
+    os.replace(tmp, p)

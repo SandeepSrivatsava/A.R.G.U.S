@@ -259,6 +259,16 @@ def headlines(topic: Optional[str] = None, top: int = 8,
     return collect(feeds, top)
 
 
+def format_headlines() -> str:
+    """The free morning headlines job: six top stories, as one message."""
+    articles, _ = headlines(top=6)
+    if not articles:
+        return "Morning headlines: the news feeds couldn't be reached."
+    lines = [f"Morning headlines, {datetime.now().strftime('%a %d %b')}:"]
+    lines += [f"• {a.title} ({a.source})" for a in articles]
+    return "\n".join(lines)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Print today's top news headlines.")
     parser.add_argument("--top", type=int, default=8, help="how many stories (default 8)")

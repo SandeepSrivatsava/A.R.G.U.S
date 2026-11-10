@@ -32,7 +32,7 @@ run_setup() {
   ARGUS_NAME="Sandeep" ARGUS_CITY="Portland, OR" ARGUS_TIMEZONE="America/Los_Angeles" \
   ARGUS_BLOCKED_SITES="MyBank.com, https://www.paypal.com/in/, not a site" ARGUS_AI_BRIEFING=yes \
   ARGUS_SKIP_VALIDATION=1 ARGUS_SEND_HELLO=no ARGUS_ALLOW_LINUX=1 ARGUS_SKIP_DEPS=1 ARGUS_VENV="$VENV" \
-  ARGUS_BIN_DIR="$WORK/bin" ARGUS_WORKSPACE="$WORK/workspace" \
+  ARGUS_BIN_DIR="$WORK/bin" ARGUS_WORKSPACE="$WORK/workspace" ARGUS_PHONE=iphone \
     bash "$REPO/setup.sh" < /dev/null
 }
 
@@ -48,6 +48,7 @@ check "no secret in the settings file" sh -c "! grep -q 'sk-ant' '$C'"
 check "no Telegram settings" sh -c "! grep -qi 'telegram' '$C'"
 check "blocked sites cleaned up and saved" grep -qx 'blocked_sites = \["mybank.com", "www.paypal.com"\]' "$C"
 check "AI briefing scheduled for weekdays" grep -q 'morning_briefing = "30 7 \* \* 1-5"' "$C"
+check "set up for an iPhone, with Apple Maps links" sh -c "grep -q '^type = \"iphone\"' '$C' && grep -q '^app = \"apple\"' '$C'"
 check "settings load cleanly" "$VENV/bin/python3" -I -c "from argus import config; s = config.load(); assert s.city == 'Portland, OR'"
 check "speech models installed with verified checksums" sh -c \
   "test -f '$ARGUS_HOME/models/silero_vad.onnx' && test -f '$ARGUS_HOME/models/asr/tokens.txt' && test -d '$ARGUS_HOME/models/tts/espeak-ng-data' && test -f '$ARGUS_HOME/models/speaker.onnx.sha256'"

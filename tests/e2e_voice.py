@@ -130,6 +130,12 @@ check("iPhone: Siri-style question answered",
       phone("/ask", {"text": "What are the top headlines today?"}, token) ==
       (200, {"reply": "Top story: Storm closes Bay Area highways"}))
 check("iPhone: phone token file is private", oct(settings.phone_token_path.stat().st_mode & 0o777) == "0o600")
+status, body = phone("/ask", {"text": "Fastest way to the airport?", "location": {"lat": 45.52, "lon": -122.68}}, token)
+check("iPhone: directions from the phone's location come back with an Apple Maps link",
+      status == 200 and body.get("reply") == "Opening the route to the airport in Maps."
+      and body.get("open") == "https://maps.apple.com/?daddr=Portland+Airport%2C+OR&dirflg=d")
+check("iPhone: the phone's location never reached Claude or the activity log",
+      "45.52" not in (work / "mock.log").read_text() and "45.52" not in settings.audit_path.read_text())
 
 app.stop()
 sys.exit(1 if failed else 0)

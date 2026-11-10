@@ -7,6 +7,7 @@ As a script (used by tests/e2e.sh): python3 mock_claude.py PORT LOGFILE  -- with
   * "delete"          -> run_command "rm -rf <DANGER_DIR>" (must be held for approval)
   * "bank"            -> fetch_page https://www.mybank.com/statement (must be blocked by the privacy rules)
   * "remember"        -> remember tool
+  * "fastest way"     -> route tool to Portland Airport (from the phone's location)
   * anything else     -> "Argus mock reply."
 """
 from __future__ import annotations
@@ -47,6 +48,8 @@ def rules(body: Dict[str, Any]) -> Tuple[Blocks, str]:
             return [{"type": "text", "text": "I can't open that: it's blocked by your privacy rules."}], "end_turn"
         if "declined" in said:
             return [{"type": "text", "text": "Okay, I didn't delete anything."}], "end_turn"
+        if "navigation link" in said:
+            return [{"type": "text", "text": "Opening the route to the airport in Maps."}], "end_turn"
         m = re.search(r'"title":\s*"([^"]+)"', text_of(content))
         if m:
             return [{"type": "text", "text": "Top story: " + m.group(1)}], "end_turn"
@@ -59,6 +62,8 @@ def rules(body: Dict[str, Any]) -> Tuple[Blocks, str]:
         return [{"type": "tool_use", "name": "run_command", "input": {"command": f"rm -rf {target}"}}], "tool_use"
     if "bank" in said and "fetch_page" in tools:
         return [{"type": "tool_use", "name": "fetch_page", "input": {"url": "https://www.mybank.com/statement"}}], "tool_use"
+    if "fastest way" in said and "route" in tools:
+        return [{"type": "tool_use", "name": "route", "input": {"destination": "Portland Airport, OR"}}], "tool_use"
     if "remember" in said and "remember" in tools:
         return [{"type": "tool_use", "name": "remember", "input": {"fact": said[:80]}}], "tool_use"
     return [{"type": "text", "text": "Argus mock reply."}], "end_turn"

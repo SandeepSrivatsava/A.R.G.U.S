@@ -1,13 +1,16 @@
-"""iPhone gateway: lets Siri / Back Tap Shortcuts talk to Argus over Tailscale.
+"""Phone gateway: lets Siri / Back Tap Shortcuts (iPhone) or HTTP Shortcuts (Android) talk to Argus over
+Tailscale, on the Mac or on the always-on server.
 
-* Listens only on this Mac's Tailscale address (100.x.y.z), never on Wi-Fi or the internet.
+* Listens only on this machine's Tailscale address (100.x.y.z), never on Wi-Fi or the internet.
 * Every request needs the secret token from ~/.argus/phone_token (compared in constant time).
 * Repeated bad tokens lock that address out for 15 minutes; requests are size-limited.
 * From the phone Argus can look and answer, but anything that needs approval is refused
   (approve risky things at the Mac with Touch ID).
 
-POST /ask   {"text": "..."}                                   -> {"reply": "..."}
+POST /ask   {"text": "...", "location": {"lat": 45.5, "lon": -122.6}}  -> {"reply": "...", "open": "<link>"}
 POST /look  {"text": "...", "image": "<base64 png/jpeg>"}     -> {"reply": "..."}   (phone screen or glasses photo)
+"location" is optional (the phone's current place, for directions); "open" is a navigation link for the
+phone to open, when there is one.
 GET  /ping                                                     -> {"ok": true}
 The Argus iPhone app (Meta glasses):
 POST /glasses/status {"connected": true, "device": "Ray-Ban Meta"} -> {"ok": true}
@@ -33,6 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from .audit import Audit
+from .maps import clean_location
 
 log = logging.getLogger("argus.phone")
 
@@ -237,16 +241,21 @@ class PhoneHandler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "text is empty"})
                 return
             content = text
+        location = clean_location(body.get("location"))
         if not self.server.busy.acquire(timeout=1):
             self._send(429, {"reply": "I'm still working on your last request."})
             return
         try:
-            self.server.audit.log("phone_request", kind=self.path[1:], text=text[:500])
-            reply = self.server.ask(content)
-            self._send(200, {"reply": reply or "Done."})
+            self.server.audit.log("phone_request", kind=self.path[1:], text=text[:500], location=bool(location) or None)
+            result = self.server.ask(content, location=location) if location else self.server.ask(content)
+            reply, link = (result.get("reply"), result.get("open")) if isinstance(result, dict) else (result, None)
+            payload = {"reply": reply or "Done."}
+            if isinstance(link, str) and link.startswith("https://"):
+                payload["open"] = link
+            self._send(200, payload)
         except Exception as exc:
             log.warning("phone request failed: %s", exc)
-            self._send(502, {"reply": "Your Mac couldn't answer right now."})
+            self._send(502, {"reply": "Argus couldn't answer right now."})
         finally:
             self.server.busy.release()
 

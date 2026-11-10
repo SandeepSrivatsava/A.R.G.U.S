@@ -2,6 +2,7 @@
 
 Argus listens all the time and can use your Mac, so it is built to fail safe: when in doubt, it doesn't.
 This page lists every protection, where in the code it is enforced, and what it does *not* protect against.
+Argus on an Android phone and the always-on server have their own sections (14 and 15).
 
 ## 1. Your microphone
 
@@ -82,6 +83,8 @@ reading files, working inside the workspace folder, opening apps and links, and 
 | Guests at the Mac (voices you allowed) | none | none: nothing risky, nothing personal |
 | iPhone (Siri, Argus Eye app) | screenshots only | none: risky steps are refused |
 | Scheduled tasks | none | none: risky steps are refused |
+| Argus on Android (on the phone) | none | a dialog on the phone, then your fingerprint |
+| The always-on server (the phone's shortcut) | none | none: risky steps are refused |
 
 The glasses camera is used only from the Mac or the phone when you ask, never by a scheduled task.
 There is no text chat (Telegram was removed): you talk to Argus by voice, at the Mac or on the iPhone.
@@ -99,8 +102,8 @@ There is no text chat (Telegram was removed): you talk to Argus by voice, at the
 
 ## 6. Network exposure
 
-* The iPhone gateway listens **only on the Mac's Tailscale address** (your private, encrypted network)
-  and refuses to start on any other interface. Every request needs a 256-bit token (constant-time
+* The phone gateway listens **only on the Mac's (or the server's) Tailscale address** (your private,
+  encrypted network) and refuses to start on any other interface. Every request needs a 256-bit token (constant-time
   comparison); 5 bad tokens lock that device out for 15 minutes; bodies are capped at 16 MB; slow clients
   are cut off after 60 s; only PNG and JPEG images are accepted; at most 2 requests run at once.
 * The control socket for `argusctl` is a file in `~/.argus` that only you can open.
@@ -137,6 +140,14 @@ There is no text chat (Telegram was removed): you talk to Argus by voice, at the
   content against the commit hash), and it has no other dependencies.
 * The tests check every macOS function name Argus calls through PyObjC against the real PyObjC 13
   packages, so a typo in Mac-only code can't hide until it runs on your Mac.
+* The Apple Maps helper is compiled on your Mac from `macos/argus-maps.swift` (about 100 lines, Apple's
+  MapKit only) and rebuilt when that file changes.
+* Android: Termux's packages come from Termux's signed package repository. The WhatsApp backup reader
+  (wa-crypt-tools, GPL-3.0) is optional; it's installed into its own folder from
+  `scripts/wa-crypt-tools.lock` with `--require-hashes` (every file, including the one built from source,
+  checked against its PyPI hash) and run as a separate program.
+* The always-on server needs no packages at all: Argus runs on the Python the server already has, copied
+  to a root-owned folder it can't change.
 
 ## 9. Settings that can't silently go wrong
 
@@ -172,7 +183,49 @@ or speech that wasn't for Argus. It rotates at 5 MB.
 | To place and end the call, Argus clicks the green Call and red End buttons that appear on screen; it only clicks a button that wasn't there before it dialled. These two clicks are part of the call you approved, not general screen use. | `argus/calls.py` |
 | The call recorder (audiotee, MIT) is built on your Mac from a pinned commit of its source, and needs macOS's "System Audio Recording" permission; no audio is saved, only the transcript in Argus's history. | `scripts/setup_calls.sh` |
 
-## 13. What this does *not* protect against
+## 13. Your location and directions
+
+| Protection | Where |
+|---|---|
+| The phone sends its location only with a request (the Shortcut's Get Current Location step, or Android when a request needs it). Nothing tracks you in the background; Android's drive assist (off unless you switch it on) checks GPS only while the phone is charging. | `argus/phone.py`, `argus/android_app.py` |
+| The location goes to the maps service for that one trip. Claude is told only "your current location", and navigation links leave the start empty so the maps app uses where the phone is: the coordinates never enter the conversation. | `argus/maps.py` |
+| The activity log records that a request came with a location, never the location itself. | `argus/phone.py` |
+| A malformed location (out of range, not a number, "0,0") is ignored. | `argus/maps.py` (`clean_location`) |
+| Maps keys (`GOOGLE_MAPS_API_KEY`, `APPLE_MAPS_TOKEN`) live in `secrets.env` like the others. `argusctl maps-token` signs the Apple Maps token with OpenSSL; your Maps private key is read only by OpenSSL and isn't copied. | `argus/maps.py`, `argus/__main__.py` |
+
+## 14. Argus on Android
+
+| Protection | Where |
+|---|---|
+| Everything Argus keeps (settings, keys, conversations, the notification log, the decrypted WhatsApp copy) is in Termux's private storage, which other apps can't open; `~/.argus` is 700, the files 600, `~/.argus/private` 700. | `argus/android.py`, `scripts/setup_android.sh` |
+| No shell commands: Android gives Termux no sandbox to box them in, so the tool isn't there at all. The file tools refuse Argus's own folder (`~/.argus`), as on the Mac. | `argus/android_app.py`, `argus/policy.py` |
+| Sending a text always asks: a dialog shows the number and the exact message, then Android's fingerprint prompt. Back, a cancelled dialog, a failed fingerprint or any error means no. Texts to short codes (fewer than 7 digits, which can cost money) and texts containing a card number are refused outright. | `argus/android.py` (`AndroidApprover`), `argus/policy.py` |
+| Messages found by a search are passed to Claude labelled as other people's words, information only; Claude is told never to follow instructions in messages or notifications. Only matching messages are sent, at most 50, each cut to 500 characters. | `argus/android.py`, `argus/prompts.py` |
+| WhatsApp: the backup is decrypted on the phone with the key you gave setup, into `~/.argus/private/whatsapp.db`, and again only when WhatsApp writes a newer backup. The decrypter gets a clean environment (no Argus keys); if it fails, its message is shown with the key replaced by `[key]`. The key goes to the decrypter on its command line, which on Android only Termux itself can see. | `argus/android.py` (`WhatsAppBackup`) |
+| The notification log keeps message notifications for 90 days (`notification_days`), skips the system's and Termux's own, and is searched only when you ask. | `argus/android.py` (`NotificationLog`) |
+| Text goes to Termux:API commands on stdin or as single arguments, never through a shell, so a message can't turn into a command. | `argus/android.py` (`Termux`) |
+| **Not on-device:** speech recognition is Android's own (it may send audio to Google unless offline recognition is on). | `docs/ANDROID.md` |
+
+## 15. The always-on server
+
+| Protection | Where |
+|---|---|
+| Runs as its own `argus` user (no password, no login shell) under a locked-down systemd service: writable only `/var/lib/argus`; no new privileges, no capabilities; private `/tmp` and devices; home folders, other processes and kernel settings hidden; only IPv4, IPv6 and local sockets; a system-call filter. | `scripts/setup_server.sh` |
+| Argus's code is in `/opt/argus`, owned by root: the service can't change its own code. It's started with `python3 -I`, so nothing from the environment or the current folder is loaded. | `scripts/setup_server.sh` |
+| No shell commands, no screen, no apps; file tools only inside its own workspace folder; anything that would need your OK is refused, because there's no one there to approve it. | `argus/server.py`, `argus/policy.py` |
+| The phone gateway, token and lockout are the same as on the Mac, on the server's Tailscale address only; it waits for Tailscale rather than listening anywhere else. | `argus/server.py`, `argus/phone.py` |
+| `argus-admin` runs `argusctl` as the `argus` user with a clean environment; only an administrator (sudo) can use it. | `scripts/setup_server.sh` |
+| Use a separate Claude key for the server, so it can be cancelled on its own. The server keeps its own memory; nothing on it reads the Mac. | `docs/SERVER.md` |
+
+## 16. Push notifications
+
+* Optional (`argusctl push on`, or the server). Messages go to an ntfy server you choose (ntfy.sh by
+  default) under a topic of about 190 random bits kept in `secrets.env`. Anyone who knows the topic can read
+  the messages, so treat it like a password; ntfy.sh keeps messages for up to 12 hours. For full privacy, run
+  your own ntfy server inside Tailscale (plain `http` is refused anywhere else). A failed push never stops
+  Argus; it's logged. (`argus/push.py`)
+
+## 17. What this does *not* protect against
 
 * **Voice is not strong authentication.** Voice lock and spoken approvals rely on a voiceprint, and a
   good imitation or clone of your voice could pass (the code word stops replays of old recordings, not a
@@ -190,13 +243,20 @@ or speech that wasn't for Argus. It rotates at 5 MB.
   your keys, but a cleverly disguised command might still reach something else. Read approval dialogs
   before allowing, and keep important files backed up (Time Machine).
 * **The model can be wrong** or be misled by content it reads.
+* **On Android, anything with access to your unlocked phone and Termux** has the same access Argus has.
+  Keep a screen lock; the fingerprint step protects sending, not reading.
+* **Push notifications pass through the ntfy server** (unless you run your own), and the topic is the only
+  thing keeping them private.
 
-## 14. Kill switches
+## 18. Kill switches
 
 * Menu bar ◉ → Microphone (off) or Quit Argus; or say "Argus, turn off the microphone".
 * `argusctl quit` stops everything (voice, phone gateway, schedules).
 * Revoke the Claude key at platform.claude.com.
 * Delete `~/.argus/phone_token` and run `argusctl restart` to cut off the iPhone (then
   `argusctl phone-token` makes a new one).
+* Android: `pkill -f "argus android serve"`, and remove `~/.termux/boot/argus` so it doesn't start again.
+* Server: `sudo systemctl disable --now argus`.
+* `argusctl push off` stops notifications from the Mac; change the topic (`argusctl push on`) if it leaked.
 
 Found a problem? Open a private issue in this repository.

@@ -18,13 +18,14 @@ ENROLL_SENTENCES = [
 ]
 
 
-def _send(cmd: str, **fields):
+def _send(cmd: str, timeout: float = 10.0, **fields):
     from .control import send
     settings = config_mod.load()
     try:
-        return send(settings.socket_path, cmd, **fields)
+        return send(settings.socket_path, cmd, timeout=timeout, **fields)
     except OSError:
-        print("Argus isn't running. Start it with: open -a Argus   (or: argusctl run)")
+        from .runtime import START_HINT, kind
+        print(f"Argus isn't running. Start it with: {START_HINT[kind()]}")
         sys.exit(1)
 
 
@@ -143,26 +144,36 @@ def cmd_log(args) -> int:
 
 def cmd_doctor(args) -> int:
     from pathlib import Path
-    from .hearing import model_paths
     from .llm import Claude, LLMError
+    from .maps import Router
+    from .runtime import START_HINT, kind
     settings = config_mod.load()
     ok = True
+    on_mac = kind() == "mac"
 
     def line(passed: bool, text: str):
         nonlocal ok
         ok &= passed
         print(f"{'PASS' if passed else 'FAIL'}  {text}")
 
-    paths = model_paths(settings.models_dir)
-    line(Path(paths["vad"]).exists(), "voice activity model")
-    line(Path(paths["asr"]).is_dir(), "speech recognition model")
-    line(settings.voice_engine != "piper" or Path(paths["tts"]).is_dir(), "voice model")
+    print(f"Phone: {'iPhone' if settings.phone_type == 'iphone' else 'Android'} "
+          f"(navigation opens in {'Apple' if settings.maps_link_app == 'apple' else 'Google'} Maps)")
+    if on_mac:
+        from .hearing import model_paths
+        paths = model_paths(settings.models_dir)
+        line(Path(paths["vad"]).exists(), "voice activity model")
+        line(Path(paths["asr"]).is_dir(), "speech recognition model")
+        line(settings.voice_engine != "piper" or Path(paths["tts"]).is_dir(), "voice model")
     try:
         secrets = config_mod.read_secrets(settings.secrets_path)
         line(bool(secrets.get("ANTHROPIC_API_KEY")), "Claude API key saved (private file)")
     except PermissionError as exc:
         line(False, str(exc))
         secrets = {}
+    print(f"INFO  directions: {Router(settings, secrets).describe()}")
+    if settings.push_enabled:
+        line(bool(secrets.get("NTFY_TOPIC")), "push notifications set up" if secrets.get("NTFY_TOPIC")
+             else "push notifications are on, but there's no NTFY_TOPIC in the secrets file")
     if secrets.get("ANTHROPIC_API_KEY") and not args.offline:
         try:
             Claude(secrets["ANTHROPIC_API_KEY"], base_url=settings.api_base, max_retries=1).create(
@@ -173,6 +184,8 @@ def cmd_doctor(args) -> int:
     for module, what in (("sounddevice", "microphone library"), ("rumps", "menu bar library"),
                          ("LocalAuthentication", "Touch ID library"), ("Quartz", "screen and lock detection"),
                          ("ApplicationServices", "accessibility check"), ("truststore", "TLS trust store")):
+        if not on_mac:
+            break
         try:
             __import__(module)
             line(True, what)
@@ -186,7 +199,10 @@ def cmd_doctor(args) -> int:
         status = _send_quiet("status")
         line(True, f"Argus running: {status.get('mode')}")
     except OSError:
-        line(False, "Argus app isn't running (argusctl restart)")
+        line(False, "Argus app isn't running (argusctl restart)" if on_mac else
+             f"Argus isn't running ({START_HINT[kind()]})")
+        return 0 if ok else 1
+    if status.get("mode") in ("server", "android"):
         return 0 if ok else 1
     if settings.voice_lock:
         line(bool(status.get("voice_lock")), "voice lock is on" if status.get("voice_lock") else
@@ -229,6 +245,64 @@ def cmd_lessons(args) -> int:
     return 0
 
 
+def cmd_maps_token(args) -> int:
+    """Make a long-lasting Apple Maps token from your Maps private key and save it (Argus then uses Apple Maps
+    for live traffic, on the Mac and on the server)."""
+    from .maps import make_apple_maps_token
+    settings = config_mod.load()
+    try:
+        token = make_apple_maps_token(args.key, args.key_id, args.team_id, args.days)
+    except (ValueError, OSError) as exc:
+        print(f"Couldn't make the token: {exc}")
+        return 1
+    if args.print:
+        print(token)
+        return 0
+    config_mod.write_secret(settings.secrets_path, "APPLE_MAPS_TOKEN", token)
+    print(f"Saved an Apple Maps token that lasts {args.days} days to {settings.secrets_path}.")
+    print("Restart Argus to use it" + (": argusctl restart" if sys.platform == "darwin" else
+                                        " (server: sudo systemctl restart argus)."))
+    return 0
+
+
+def cmd_push(args) -> int:
+    """Phone notifications for reminders while you're away (ntfy): on, off, or a test message."""
+    from .push import TOPIC, check_server, new_topic, push_from
+    settings = config_mod.load()
+    path = config_mod.argus_home() / "config.toml"
+    if args.action == "off":
+        config_mod.set_setting(path, "push", "enabled", "false")
+        print("Push notifications are off." + (" Restart Argus: argusctl restart" if sys.platform == "darwin" else ""))
+        return 0
+    secrets = config_mod.read_secrets(settings.secrets_path)
+    if args.action == "test":
+        push = push_from(settings, secrets)
+        if push is None:
+            print("Push notifications aren't on. Switch them on with: argusctl push on")
+            return 1
+        ok = push.send("Test from Argus: notifications work.")
+        print("Sent. It should be on your phone now." if ok else f"Sending failed; check {settings.push_server}.")
+        return 0 if ok else 1
+    topic = args.topic or secrets.get("NTFY_TOPIC") or new_topic()
+    if not TOPIC.fullmatch(topic):
+        print("The topic must be 20 to 64 letters, digits, - or _ (long and random, like a password).")
+        return 2
+    server = args.server or settings.push_server
+    problem = check_server(server)
+    if problem:
+        print(f"Can't use {server}: {problem}")
+        return 2
+    config_mod.write_secret(settings.secrets_path, "NTFY_TOPIC", topic)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    config_mod.set_setting(path, "push", "enabled", "true")
+    config_mod.set_setting(path, "push", "server", json.dumps(server))
+    print("Push notifications are on. On your phone, install the ntfy app and subscribe to:")
+    print(f"  server {server}\n  topic  {topic}")
+    print("Keep the topic private: anyone who knows it can read your reminders.")
+    print("Then: " + ("argusctl restart, and " if sys.platform == "darwin" else "") + "argusctl push test")
+    return 0
+
+
 def cmd_usage(args) -> int:
     """Claude API spend from the activity log (estimates from token counts)."""
     import time
@@ -249,6 +323,10 @@ def cmd_usage(args) -> int:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["android"]:                 # Argus on an Android phone (in Termux)
+        from .android_app import main as android_main
+        return android_main(argv[1:])
     p = argparse.ArgumentParser(prog="argusctl", description="Control Argus, your voice assistant.")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", help="what Argus is doing")
@@ -277,9 +355,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     s = sub.add_parser("lessons", help="what Argus has learned from your corrections and its own mistakes")
     s.add_argument("action", nargs="?", choices=["list", "forget", "clear"], default="list")
     s.add_argument("id", nargs="?", help="lesson number to forget, e.g. 3 or L3")
-    sub.add_parser("phone-token", help="show the token for the iPhone shortcuts and app")
+    sub.add_parser("phone-token", help="show the token for the phone shortcuts and app")
+    s = sub.add_parser("maps-token", help="make a long-lasting Apple Maps token from your Maps private key (.p8)")
+    s.add_argument("--key", required=True, help="the AuthKey_XXXXXXXXXX.p8 file from your Apple Developer account")
+    s.add_argument("--key-id", required=True, help="the key's 10-character Key ID")
+    s.add_argument("--team-id", required=True, help="your 10-character Team ID (Membership details)")
+    s.add_argument("--days", type=int, default=365, help="how long it lasts (default 365)")
+    s.add_argument("--print", action="store_true", help="print the token instead of saving it")
+    s = sub.add_parser("push", help="reminders on your phone while you're away (ntfy notifications)")
+    s.add_argument("action", choices=["on", "off", "test"])
+    s.add_argument("--topic", help="use this topic (e.g. the one your always-on server uses)")
+    s.add_argument("--server", help="your own ntfy server (default https://ntfy.sh)")
     s = sub.add_parser("run", help="run Argus in the foreground")
     s.add_argument("--headless", action="store_true", help="no menu bar")
+    sub.add_parser("server", help="run Argus in server mode (an always-on Linux machine; systemd starts this)")
     args = p.parse_args(argv)
     try:
         config_mod.load()
@@ -290,6 +379,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.cmd == "run":
         from .app import main as app_main
         return app_main(headless=args.headless)
+    if args.cmd == "server":
+        from .server import main as server_main
+        return server_main()
+    if args.cmd == "maps-token":
+        return cmd_maps_token(args)
+    if args.cmd == "push":
+        return cmd_push(args)
     if args.cmd == "usage":
         return cmd_usage(args)
     if args.cmd == "lessons":
@@ -310,7 +406,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     simple = {
         "status": lambda: _send("status"),
         "say": lambda: _send("say", text=" ".join(args.text)),
-        "ask": lambda: _send("ask", text=" ".join(args.text)),
+        "ask": lambda: _send("ask", timeout=300, text=" ".join(args.text)),
         "mic": lambda: _send("mic", on=args.state == "on"),
         "conversation": lambda: _send("conversation", on=args.state == "on"),
         "sleep": lambda: _send("sleep", on=True),

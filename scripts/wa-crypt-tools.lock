@@ -1,0 +1,10 @@
+# WhatsApp backup reader for Argus on Android (scripts/setup_android.sh installs it only when you set up
+# WhatsApp search). wa-crypt-tools is GPL-3.0: it gets its own folder (~/.argus/wa-crypt-tools) and Argus
+# runs it as a separate program. Every file is checked against these hashes (from PyPI).
+javaobj-py3==0.4.4 --hash=sha256:d7d676fe71825f6c17024df6791b80b7cc30ef40b61100f4ea3961af063f79b6
+protobuf==5.27.5 \
+    --hash=sha256:03a25e0b2b0271bc63fe009d30890ba907fd36dbe2b8e4851da4bb893d251d05 \
+    --hash=sha256:56cb4f9ade31597d06a5aca264cb5d9bf445dc07758296004ead080ec8e4087c \
+    --hash=sha256:aab519ebdc1bd7469e7df4011545ff4f81decad6d02f0185ddbe6ee496f1d940
+pycryptodomex==3.23.0 --hash=sha256:71909758f010c82bc99b0abf4ea12012c98962fbf0583c2164f8b84533c2e4da
+wa-crypt-tools==0.1.0 --hash=sha256:79dc754afe96be2a9091494b067d99da3a7d6308be6afb1827e7ecd703527910

@@ -54,7 +54,10 @@ Each keeps its own license.
 | [NumPy](https://numpy.org), [python-sounddevice](https://github.com/spatialaudio/python-sounddevice) | Audio maths, microphone | BSD-3-Clause, MIT |
 | [rumps](https://github.com/jaredks/rumps), [PyObjC](https://github.com/ronaldoussoren/pyobjc) | Menu bar, Touch ID, lock detection, screen control | BSD-3-Clause, MIT |
 | [truststore](https://github.com/sethmlarson/truststore), [certifi](https://github.com/certifi/python-certifi) | Checking HTTPS certificates with the Mac's trust store | MIT, MPL-2.0 |
-| [Tailscale](https://tailscale.com) (optional, installed by you) | Private network for the iPhone | BSD-3-Clause client; free personal plan |
+| [Tailscale](https://tailscale.com) (optional, installed by you) | Private network for the phone and the server | BSD-3-Clause client; free personal plan |
+
+The Apple Maps helper (`macos/argus-maps.swift`) is Argus's own code, compiled on your Mac against
+Apple's MapKit framework (part of macOS).
 
 ## Installed by scripts/setup_calls.sh (optional, for phone calls)
 
@@ -63,6 +66,20 @@ Each keeps its own license.
 | [audiotee](https://github.com/makeusabrew/audiotee), Copyright (C) 2025 Nick Payne, commit `56ac954` | Hearing the other side of a call (a Core Audio process tap); built from source on your Mac | MIT |
 | [BlackHole](https://github.com/ExistentialAudio/BlackHole) 2ch (Homebrew) | The call's microphone during a call | GPL-3.0 (a separate driver; Argus only selects it as an audio device) |
 | [SwitchAudioSource](https://github.com/deweller/switchaudio-osx) (Homebrew) | Switching the microphone for the call and back | MIT |
+
+## Argus on Android (scripts/setup_android.sh, inside Termux)
+
+Nothing here is included in this repository; Argus only runs these programs.
+
+| Component | Used for | License |
+|---|---|---|
+| [Termux](https://github.com/termux/termux-app) and its packages (Python, git, clang) | Running Argus on the phone | GPL-3.0 app; each package keeps its own license |
+| [Termux:API](https://github.com/termux/termux-api) and the `termux-api` commands | Texts, notifications, contacts, location, speech, the fingerprint prompt, dialogs | GPL-3.0 (separate app; Argus runs its commands) |
+| [Termux:Widget](https://github.com/termux/termux-widget), [Termux:Boot](https://github.com/termux/termux-boot) | The home-screen button; starting at boot | GPL-3.0 (separate apps) |
+| [wa-crypt-tools](https://github.com/ElDavoo/wa-crypt-tools) 0.1.0, Copyright (C) Davide Palma (ElDavoo) | Optional: decrypting your own WhatsApp backup with your 64-digit key. Installed into its own folder and run as a separate program (`wadecrypt`); Argus doesn't import or include its code. | GPL-3.0-or-later |
+| [PyCryptodome(x)](https://github.com/Legrandin/pycryptodome) 3.23.0 | AES for wa-crypt-tools (built on the phone) | BSD-2-Clause and Public Domain |
+| [protobuf](https://github.com/protocolbuffers/protobuf) 5.27.5, [javaobj-py3](https://github.com/tcalmant/python-javaobj) 0.4.4 | Reading the backup's header and key file, for wa-crypt-tools | BSD-3-Clause, Apache-2.0 |
+| [setuptools](https://github.com/pypa/setuptools) 80.9.0 | Building PyCryptodome on the phone | MIT |
 
 ## The iPhone app
 
@@ -76,3 +93,8 @@ Each keeps its own license.
   terms.
 * The news tool reads public RSS feeds (Google News, BBC, NPR); headlines and summaries belong to their
   publishers.
+* Directions use, when set up with your own key or token: the **Google Routes API** (Google Maps Platform
+  terms) or the **Apple Maps Server API** (Apple Developer Program); on the Mac, Apple's **MapKit**.
+  Navigation links open Apple Maps or Google Maps.
+* Push notifications use [ntfy](https://ntfy.sh) (open source, Apache-2.0 / GPL-2.0), through its public
+  web API: ntfy.sh or your own server. No ntfy code is included.

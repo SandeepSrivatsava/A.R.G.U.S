@@ -143,8 +143,12 @@ def has_card_number(text: str) -> bool:
 class Policy:
     def __init__(self, settings, *, workspace: Path, home: Optional[Path] = None,
                  desktop_state: Callable[[], Dict[str, Any]] = dict,
-                 inspect_point: Callable[[Any], Dict[str, Any]] = lambda coordinate: {}):
+                 inspect_point: Callable[[Any], Dict[str, Any]] = lambda coordinate: {},
+                 outside_workspace: str = "read"):
         self.settings = settings
+        # "read": files anywhere may be read (except protected places) and writing elsewhere needs your OK
+        # (the Mac, Android). "none": nothing outside the workspace at all (the always-on server).
+        self.outside_workspace = outside_workspace
         self.workspace = Path(workspace).expanduser().resolve()
         self.home = Path(home or Path.home()).expanduser().resolve()
         self.desktop_state = desktop_state     # {"locked", "screen_private", "front_bundle", "front_name", "visible_apps",
@@ -187,6 +191,8 @@ class Policy:
             path = self.resolve(args.get("path") or ".")
             if self.protected(path):
                 return Verdict(BLOCK, "that location holds passwords or keys, so Argus never reads it.")
+            if self.outside_workspace == "none" and not self.inside_workspace(path):
+                return Verdict(BLOCK, "here Argus only works inside its own workspace folder.")
             return Verdict(ALLOW)
         if tool == "write_file":
             path = self.resolve(args.get("path") or "")
@@ -194,7 +200,19 @@ class Policy:
                 return Verdict(BLOCK, "that location holds passwords or keys, so Argus never changes it.")
             if self.inside_workspace(path):
                 return Verdict(ALLOW)
+            if self.outside_workspace == "none":
+                return Verdict(BLOCK, "here Argus only works inside its own workspace folder.")
             return Verdict(ASK, f"write to {path}", scope=f"write:{path.parent}")
+        if tool == "send_text":
+            digits = re.sub(r"[^\d+]", "", str(args.get("to") or ""))
+            if len(re.sub(r"\D", "", digits)) < 7:
+                return Verdict(BLOCK, "that isn't a full phone number (texts to short codes can cost money).")
+            message = " ".join(str(args.get("message") or "").split())
+            if not message:
+                return Verdict(BLOCK, "the text is empty.")
+            if has_card_number(message):
+                return Verdict(BLOCK, "that text contains a card number, which Argus never sends.")
+            return Verdict(ASK, f"text {digits}: {message[:160]}", scope=f"text:{digits}")
         if tool in ("open_app",):
             name = str(args.get("name") or "")
             if is_blocked_app(name, self.settings.blocked_apps):

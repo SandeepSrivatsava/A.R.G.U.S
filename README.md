@@ -1,11 +1,13 @@
 # Argus
 
-A speaking, always-listening assistant for your Mac, iPhone and Meta glasses, named after Argus
-Panoptes, the hundred-eyed watchman of Greek myth who never slept. Say "Argus" anywhere in a sentence,
-or clap twice, and it answers out loud. It can look at your screen when you ask, use your apps, run
-commands, search the web, read the news, remember what you tell it, remind you of things, see
-through your Meta glasses, phone a restaurant from your own number, and learn from your corrections and
-its own mistakes.
+A speaking, always-listening assistant for your Mac, your phone (iPhone or Android) and Meta glasses,
+named after Argus Panoptes, the hundred-eyed watchman of Greek myth who never slept. Say "Argus" anywhere
+in a sentence, or clap twice, and it answers out loud. It can look at your screen when you ask, use your
+apps, run commands, search the web, read the news, remember what you tell it, remind you of things, find
+the fastest route with live traffic, see through your Meta glasses, phone a restaurant from your own
+number, and learn from your corrections and its own mistakes. On Android it also lives on the phone
+itself (your texts, WhatsApp and notifications), and an optional always-on server keeps it answering when
+the Mac is off.
 
 Argus is its own code, written from scratch for this project. The brain talks straight to the Claude
 API (no agent framework in between), and listening, speech recognition and the voice all run on your Mac.
@@ -22,6 +24,7 @@ double clap ──────────────────────�
 speakers ◄─ on-device voice ◄─ reply, sentence by sentence    tools: shell, files, web, news, memory,
                                                                reminders, apps, screen, glasses, phone calls
 Siri shortcuts and the Argus Eye iPhone app (Meta glasses) talk to the same brain. Everything is by voice.
+Android: the same brain runs on the phone (Termux). Mac off: an always-on server answers the phone.
 ```
 
 ## What's inside
@@ -33,7 +36,10 @@ Siri shortcuts and the Argus Eye iPhone app (Meta glasses) talk to the same brai
 | Rules | Checks every tool call first: allowed, needs your OK, or blocked | `argus/policy.py`, `guard.py`, `approvals.py` |
 | Ears | Microphone, voice detection, speech recognition, name spotting, double-clap detection, voice lock | `argus/hearing.py`, `wake.py`, `listener.py`, `clap.py` |
 | Voice | On-device Piper voice (or any macOS voice); you can interrupt it | `argus/voice.py`, `brain.py` |
-| Reach | iPhone gateway, Meta glasses bridge, reminders and scheduled jobs, phone calls from your number | `argus/phone.py`, `glasses.py`, `scheduler.py`, `cron.py`, `calls.py` |
+| Reach | Phone gateway, Meta glasses bridge, reminders and scheduled jobs, phone calls from your number, push notifications | `argus/phone.py`, `glasses.py`, `scheduler.py`, `cron.py`, `calls.py`, `push.py` |
+| Maps | Directions with live traffic (Google Routes, Apple Maps, MapKit on the Mac) and navigation links | `argus/maps.py`, `macos/argus-maps.swift` |
+| Android | Argus on the phone: texts, WhatsApp backup and notification search, fingerprint approvals, drive assist | `argus/android.py`, `android_app.py` |
+| Server | Always-on Argus on a Linux server, for when the Mac is off | `argus/server.py`, `scripts/setup_server.sh` |
 | Mac app | Menu bar, Touch ID, lock detection, starts at login | `argus/app.py`, `daemon.py`, `macos/` |
 | iPhone app | Argus Eye: Meta glasses camera, push-to-talk | `ios/` |
 
@@ -49,7 +55,8 @@ Siri shortcuts and the Argus Eye iPhone app (Meta glasses) talk to the same brai
 | "Argus, call Luigi's and book a table for two at seven tomorrow" | Phones them from your own number (through your iPhone), says it's your AI assistant, books it and tells you how it went. "Argus, hang up" / "Argus, let me talk" at any point. |
 | "No, when I say the report I mean the PDF in Work" | Saves that as a lesson and follows it from then on. It also writes its own lessons when something fails and it finds the fix. "What have you learned?" |
 | Someone else: "Argus, what's the capital of France?" | Once it knows your voice, it asks you first: "Someone else is asking me something. Should I answer them?" "Argus, talk to everyone" / "Argus, only me". |
-| "Argus, find the address Ravi sent me on WhatsApp" | Searches WhatsApp on the Mac, or your iPhone's apps through iPhone Mirroring (slow, but it can see everything there). |
+| "Argus, find the address Ravi sent me on WhatsApp" | Searches WhatsApp on the Mac, or your iPhone's apps through iPhone Mirroring (slow, but it can see everything there). On Android, Argus searches your texts, WhatsApp's full history and your notifications on the phone itself. |
+| "Hey Siri, Argus" → "fastest way to the airport?" | Live traffic for up to three routes from where your phone is, which one is faster and by how much, and your maps app opens with it. |
 | "Argus, what am I looking at?" | Looks through your Meta glasses if they're connected (Argus Eye app), otherwise at the screen. Only when asked. |
 | "Argus, remember that my sister's birthday is 12 March" | Remembers across conversations. "What do you remember?" / "Forget number 3." |
 | "Argus, remind me at 6 to call Mom" / "every weekday at 8, check the weather" | Reminders and scheduled tasks, spoken at the Mac. If you're away (Mac locked or microphone off), Argus keeps them and tells you when you're back. |
@@ -89,8 +96,14 @@ The full list is in [SECURITY.md](SECURITY.md). The short version:
   Keychain Access, System Settings and the banking sites you list are blocked outright, before anything runs.
   On the Mac, every command Argus runs is also boxed in by a macOS sandbox that can't touch your keys,
   and Argus's own keys are removed from anything a tool shows Claude.
-* **No open doors.** The iPhone gateway only listens on your private Tailscale network and needs a
-  256-bit token. Nothing listens on your Wi-Fi or the internet.
+* **No open doors.** The phone gateway (on the Mac or the server) only listens on your private Tailscale
+  network and needs a 256-bit token. Nothing listens on your Wi-Fi or the internet.
+* **Your location and messages.** The phone's location is used only for the trip you asked about: it goes
+  to the maps service, not to Claude or the logs. On Android your messages stay on the phone; only what a
+  search finds goes to Claude, marked as other people's words (information, never instructions), and
+  sending a text needs your fingerprint.
+* **The always-on server is boxed in.** It runs as its own user that can write only its own folder, runs no
+  shell commands, and refuses anything that would need your OK.
 * **Keys never in the repo.** They live in `~/.argus/secrets.env` (owner-only), are typed with hidden
   input, never appear on a command line, and are removed from the environment of commands Argus runs.
   Your Claude Pro subscription is never used; Argus uses its own pay-per-use API key.
@@ -146,6 +159,49 @@ with a simulated phone line; the first real call on your Mac is the real test. R
 differ by place (the US treats AI voices as "artificial voices"), so keep it to businesses you'd call
 yourself; this isn't legal advice.
 
+## iPhone or Android? Setup asks first
+
+`./setup.sh` starts by asking which phone you use, and sets everything up for it:
+
+| | iPhone | Android |
+|---|---|---|
+| Talking to Argus away from the Mac | Siri Shortcut (and the Argus Eye app) | Argus runs on the phone itself: home-screen button |
+| Your messages | iPhone Mirroring on the Mac (slow) | Texts, WhatsApp's full history (its encrypted backup, with your key) and app notifications, searched on the phone |
+| Directions and traffic | Apple Maps; free live traffic through the Mac | Google Maps; live traffic with a Google Maps key |
+| When the Mac is off | An always-on server ([docs/SERVER.md](docs/SERVER.md)) | Works anyway (it's on the phone) |
+| Approvals away from the Mac | None (risky things wait for the Mac) | A dialog and your fingerprint |
+| Calls from your own number | Yes (Mac + iPhone) | No (Android doesn't let apps hear calls); it opens the dialer |
+| Meta glasses | Yes (Argus Eye app) | Not yet |
+| Listening for "Argus" all the time | At the Mac | At the Mac; on the phone you press a button |
+
+Run `./setup.sh` again (or `./setup.sh --phone android`) to switch. Guides: [docs/IPHONE.md](docs/IPHONE.md),
+[docs/ANDROID.md](docs/ANDROID.md).
+
+## Directions and live traffic
+
+Ask "how's the traffic to work?" or "fastest way to the airport?" and Argus compares up to three routes
+with live traffic, says which is faster and by how much, and opens your maps app with the route. Your
+phone's location comes with the request (the Siri Shortcut, or the Android app); it goes to the maps
+service for that trip only, never to Claude or the activity log.
+
+* **Where the traffic times come from:** free from Apple Maps through MapKit on the Mac (setup builds a
+  small helper), or the Google Routes API (a free-tier Google Maps key), or the Apple Maps Server API (an
+  Apple Developer token: `argusctl maps-token`). Without any, Argus still opens the maps app, which shows
+  traffic itself.
+* **Android drive assist** (optional): when the phone is charging and moving at driving speed, Argus asks
+  "Where are you headed?", gives you the best route, and speaks up if traffic later makes another route at
+  least five minutes faster. On iPhone, a CarPlay/Bluetooth automation can ask the same question
+  ([docs/IPHONE.md](docs/IPHONE.md)).
+
+## When the Mac is off
+
+* **Android:** Argus runs on the phone, so nothing changes.
+* **iPhone:** run Argus on a small always-on Linux server (a few dollars a month) with
+  `sudo scripts/setup_server.sh`: same Shortcut, answers anywhere, reminders as phone notifications (ntfy).
+  It's locked down (its own user, can only write its own folder, no shell commands, nothing that needs your
+  OK) and keeps its own memory. See [docs/SERVER.md](docs/SERVER.md).
+* **Reminders while you're away from the Mac** can also reach your phone: `argusctl push on`.
+
 ## Your iPhone
 
 Apple doesn't let any app read other apps' data on the iPhone, and a developer account doesn't change
@@ -158,6 +214,13 @@ The legitimate ways in, from the Mac:
   touching your iPhone. Close it before calls: it drops them.
 * **Mac copies:** Messages (if your texts sync to the Mac), Mail, and WhatsApp for Mac.
 
+## Your Android phone
+
+Android lets an app read your texts and notifications (with your permission), and WhatsApp's own backup can
+be read with the 64-digit key you choose in WhatsApp. So on Android, Argus runs on the phone itself in
+Termux (free, open source): it searches your messages, gives directions from where you are, reminds you out
+loud, and asks for your fingerprint before sending a text. Install: [docs/ANDROID.md](docs/ANDROID.md).
+
 ## What you need
 
 * An Apple Silicon Mac on macOS 13 or newer (an 8 GB MacBook Air is fine) with Apple's Command Line
@@ -166,7 +229,11 @@ The legitimate ways in, from the Mac:
   (separate from Claude Pro). Rough guide: a spoken question costs 1 to 3 cents, a web search adds a
   cent or two, and a ten-step task on the screen costs 10 to 30 cents. `argusctl usage` shows the running
   estimate, and you can set a monthly limit in the Claude console.
-* Optional, for the iPhone and glasses: **Tailscale** (free) on the Mac and the iPhone.
+* Optional, for the phone and glasses: **Tailscale** (free) on the Mac and the phone.
+* Optional, for live traffic: nothing on the Mac (Apple Maps is free there); a Google Maps API key for
+  Android or the server.
+* Android: the free Termux apps from F-Droid ([docs/ANDROID.md](docs/ANDROID.md)). Always-on server: a
+  small Debian or Ubuntu server ([docs/SERVER.md](docs/SERVER.md)).
 
 ## Install
 
@@ -176,9 +243,10 @@ cd ~/argus
 ./setup.sh
 ```
 
-The script checks the Mac, asks for the Claude key (typing is hidden), your name and city,
-installs Python and Argus's packages (every file checked against a pinned hash), downloads the speech
-models (checksums verified), builds Argus.app, and starts it at login. Then:
+The script first asks which phone you use (1 iPhone, 2 Android), then checks the Mac, asks for the Claude
+key (typing is hidden), your name and city, and an optional Google Maps key, installs Python and Argus's
+packages (every file checked against a pinned hash), downloads the speech models (checksums verified),
+builds Argus.app and the Apple Maps helper, and starts it at login. Then:
 
 1. **Click Allow** when macOS asks whether Argus may use the microphone.
 2. **Switch on Argus** in System Settings → Privacy & Security → **Screen Recording** and
@@ -186,7 +254,8 @@ models (checksums verified), builds Argus.app, and starts it at login. Then:
 3. **Teach it your voice**: `argusctl enroll`. You read five short sentences; Argus learns how you say
    its name and makes a voiceprint. From then on it answers only you (it asks you about anyone else),
    and you can approve things by voice. Without it, everyone counts as you and approvals are Touch ID only.
-4. **iPhone and glasses**: follow [docs/IPHONE.md](docs/IPHONE.md).
+4. **Your phone**: iPhone and glasses, [docs/IPHONE.md](docs/IPHONE.md); Android,
+   [docs/ANDROID.md](docs/ANDROID.md) (in Termux on the phone, the same `./setup.sh` installs Argus there).
 
 Then say: "Argus, what's the news today?"
 
@@ -201,6 +270,8 @@ argusctl say "Hello"       # speak something
 argusctl mic off|on        # microphone
 argusctl screen block|allow
 argusctl lessons           # what Argus has learned (forget L3 / clear)
+argusctl push on|test|off  # reminders on your phone while you're away (ntfy)
+argusctl maps-token ...    # a year-long Apple Maps token from your Maps key (docs/SERVER.md)
 argusctl doctor            # check models, keys, Claude, the app and its permissions
 argusctl restart           # after editing ~/.argus/config.toml
 argusctl quit              # stop Argus
@@ -210,8 +281,9 @@ argusctl quit              # stop Argus
 
 Settings live in `~/.argus/config.toml`: your name and city, the model, web search, the per-request
 token budget, follow-up time, clap mode (`"double"`, `"single"` or `"off"`), voice lock, the voice,
-blocked apps and sites, how long a pause ends what you're saying (`end_of_speech_seconds`, 0.6), the phone gateway, the
-glasses, and the morning headlines (7:00, free) and optional AI briefing. The voice is an on-device
+blocked apps and sites, how long a pause ends what you're saying (`end_of_speech_seconds`, 0.6), your phone
+(`[phone] type`) and its gateway, maps (`[maps]`: which app links open, where traffic comes from, miles or
+km), push notifications, the glasses, and the morning headlines (7:00, free) and optional AI briefing. The voice is an on-device
 British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a macOS voice instead.
 
 ## Troubleshooting
@@ -234,7 +306,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **598 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **698 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed
@@ -245,7 +317,15 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
   reminders and cron schedules, the iPhone gateway
   (tokens, lockout, image checks), the glasses bridge, clap detection (double clap yes; single claps,
   triple claps, applause and speech no), name detection including mishearings like "August", the
-  listening rules, settings, secrets and logs.
+  listening rules, settings, secrets and logs. And the newer parts: directions (Google Routes, Apple Maps
+  and the MapKit helper, against stand-in services: requests, alternatives, traffic delays, errors, token
+  refresh), navigation links that never carry your location, the phone's location through the gateway,
+  push notifications, the Apple Maps token (a real ES256 signature, checked with OpenSSL), Argus on Android
+  with stand-in Termux commands (searching texts, the notification log and WhatsApp backups, both database
+  layouts, a real WhatsApp crypt15 backup made and read with wa-crypt-tools, fingerprint approvals, drive
+  assist from "where are you headed?" to "another route is now faster"), server mode (installed by its
+  setup script and started the way systemd starts it), and the setup scripts themselves (the phone
+  question, switching phones, the Android and server installers, shellcheck).
 * **Failure cases on purpose** (about 200 of the tests): the Claude API not answering in time, going
   silent or breaking off mid-reply (retried, or picked up where it stopped), sending junk, refusing the key
   or rate-limiting; dropped and stale connections; "Argus, stop" while a request hangs; slow news feeds;
@@ -254,20 +334,24 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
   can't start or flood the output; and sounds that look like claps (a "p" before a voice, a door slam,
   claps right after music). Every request Argus sends to the stand-in Claude is checked against the rules
   the real API enforces.
-* **Coverage**: the tests reach 95% of Argus's code (lines and branches), 96% with the end-to-end run.
+* **Coverage**: the tests reach 96% of Argus's code (lines and branches), 97% with the end-to-end run.
   What's left is mostly Mac-only (the menu bar, the screen and audio pieces of phone calls, a few
   fallbacks for older macOS). Run `scripts/coverage.sh` (add `--e2e` for the full run) to see it yourself.
 * **Real speech**: sentences spoken by the real voice go through the real voice-detection and
   speech-recognition models into the listening loop.
-* **End to end** (`tests/e2e.sh`, 32 checks): runs `setup.sh` twice, then starts the whole app with the
+* **End to end** (`tests/e2e.sh`, 35 checks): runs `setup.sh` twice, then starts the whole app with the
   real speech models and a stand-in Claude server: a spoken question is answered by actually running the
   news tool, a dangerous `rm -rf` is held for approval and denied (nothing deleted), a banking site is
   blocked, a double clap opens listening, a reminder is spoken (and one that comes while the Mac is
-  locked is spoken once you're back), and the iPhone gateway answers only with the right token.
+  locked is spoken once you're back), the iPhone gateway answers only with the right token, and a
+  "fastest way to the airport?" with the phone's location comes back with an Apple Maps link while the
+  location itself never reaches Claude or the logs.
 * **Not testable off a Mac, so check on first run:** the microphone prompt, the menu bar, the approval
   dialog with Touch ID, lock detection, real screen control, the live Claude API with the computer
   tools, spotting Buy buttons through the Mac's accessibility interface, a real phone call (placing it,
-  pressing the Call button, hearing the other side, being heard), and the iPhone app (not yet compiled).
+  pressing the Call button, hearing the other side, being heard), the iPhone app (not yet compiled), the
+  MapKit helper (Swift, built on the Mac), the live Google and Apple maps services, a real Android phone
+  with Termux, and a real cloud server with systemd.
 
 ## Uninstall
 
@@ -276,6 +360,8 @@ argusctl quit; launchctl bootout gui/$(id -u)/com.argus.voice
 ./scripts/stay-awake.sh off      # if you turned it on during setup
 rm -rf ~/.argus ~/Applications/Argus.app ~/Library/LaunchAgents/com.argus.voice.plist ~/.local/bin/argusctl
 ```
+
+Android and the server: see the end of [docs/ANDROID.md](docs/ANDROID.md) and [docs/SERVER.md](docs/SERVER.md).
 
 ## License
 

@@ -65,6 +65,7 @@ class Turn:
     usage: Dict[str, int] = field(default_factory=dict)
     cost: float = 0.0
     steps: List[Dict[str, Any]] = field(default_factory=list)    # what each tool call did (for lessons)
+    links: List[str] = field(default_factory=list)               # for the phone to open (e.g. navigation)
 
 
 def request_cost(model: str, usage: Dict[str, int]) -> float:
@@ -173,8 +174,9 @@ class Agent:
     def __init__(self, llm: Claude, store: Store, policy: Policy, tools: Dict[str, Tool], *, settings,
                  audit: Audit, computer: Optional[Computer] = None,
                  glasses=None, glasses_status: Callable[[], Optional[str]] = lambda: None,
-                 secrets: Sequence[str] = (), reflector=None):
+                 secrets: Sequence[str] = (), reflector=None, device: str = "mac"):
         self.llm = llm
+        self.device = device                  # where this Argus runs: "mac", "server" or "android"
         self.reflector = reflector            # learns a lesson after a request that hit errors (lessons.py)
         self.store = store
         self.policy = policy
@@ -338,7 +340,8 @@ class Agent:
 
     # ---- a whole turn -------------------------------------------------------------------------------
     def run(self, *, session_id: str, channel: str, content: Any, events: Events,
-            cancel: Optional[threading.Event] = None) -> Turn:
+            cancel: Optional[threading.Event] = None, location: Optional[Dict[str, float]] = None,
+            locate: Optional[Callable[[], Optional[Dict[str, float]]]] = None) -> Turn:
         cancel = cancel or threading.Event()
         turn = Turn()
         messages = repair(self.store.history(session_id, limit=self.settings.history_messages))
@@ -352,9 +355,12 @@ class Agent:
                                workspace=str(self.settings.workspace), channel=channel,
                                facts=() if guest else self.store.facts(limit=40),
                                lessons=[(i, text) for i, text, _ in lessons],
-                               glasses=None if guest else self.glasses_status())
+                               glasses=None if guest else self.glasses_status(), device=self.device,
+                               phone=getattr(self.settings, "phone_type", "iphone"),
+                               location_known=bool(location or locate) and not guest)
         ctx = Context(channel=channel, workspace=self.settings.workspace, store=self.store, cancel=cancel,
-                      glasses=self.glasses, timezone=self.settings.timezone or None)
+                      glasses=self.glasses, timezone=self.settings.timezone or None,
+                      location=None if guest else location, locate=None if guest else locate)
         grants: Set[str] = set()
         spent = 0
         resumes, said_before = 0, ""
@@ -437,6 +443,7 @@ class Agent:
                        input_tokens=turn.usage.get("input_tokens"), output_tokens=turn.usage.get("output_tokens"),
                        cache_read=turn.usage.get("cache_read_input_tokens"),
                        web_searches=turn.usage.get("web_search_requests"), cost_usd=round(turn.cost, 4))
-        if self.reflector is not None and channel in ("voice", "phone", "cli") and not turn.stopped:
+        turn.links = list(dict.fromkeys(ctx.links))
+        if self.reflector is not None and channel in ("voice", "phone", "cli", "android") and not turn.stopped:
             self.reflector.learn_later(asked, turn.steps, turn.text)
         return turn

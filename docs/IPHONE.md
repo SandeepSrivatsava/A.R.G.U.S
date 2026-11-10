@@ -1,15 +1,18 @@
 # Argus on your iPhone and Meta glasses
 
+(Using Android? See [ANDROID.md](ANDROID.md). `./setup.sh` asks which phone you have.)
+
 Three ways, from simplest to fullest:
 
 | | What you get | What it takes |
 |---|---|---|
-| **Siri shortcut** | "Hey Siri, Argus" → ask anything, hear the answer | Tailscale + one Shortcut |
+| **Siri shortcut** | "Hey Siri, Argus" → ask anything, hear the answer, get directions with live traffic | Tailscale + one Shortcut |
 | **Glasses photo shortcut** | "Hey Meta, take a photo", then "Hey Siri, Argus look" → Argus describes it | One more Shortcut |
 | **Argus Eye app** | Live link to the glasses: knows when you wear them, Look button, push-to-talk through the glasses, and "Argus, what am I looking at?" at the Mac | Build it in Xcode ([ios/README.md](../ios/README.md)) |
 
 What the phone can't do: approve risky actions (do those at the Mac: Touch ID, or your voice with the code word). It
 also can't listen all the time: Apple doesn't let any app listen in the background or watch the screen.
+When the Mac is off, point the same Shortcut at an always-on Argus server instead: [SERVER.md](SERVER.md).
 
 ## 1. Connect the Mac and the iPhone with Tailscale (free)
 
@@ -27,16 +30,35 @@ The gateway only listens on the Mac's Tailscale address, never on Wi-Fi or the i
 Open **Shortcuts** → **+** and add these actions in order:
 
 1. **Dictate Text** (Language: English, Stop Listening: After Pause).
-2. **Get Contents of URL**. Set it up like this:
+2. **Get Current Location** (lets Argus give directions from where you are; the first time, allow
+   Shortcuts to use your location "While Using the App").
+3. **Get Contents of URL**. Set it up like this:
    * URL: `http://100.x.y.z:8765/ask`
    * Method: **POST**
    * Headers: `Authorization` = `Bearer YOUR-TOKEN`
-   * Request Body: **JSON**, field `text` = **Dictated Text**
-3. **Get Dictionary Value**: `reply` in **Contents of URL**.
-4. **Speak Text**: **Dictionary Value**.
+   * Request Body: **JSON**, field `text` = **Dictated Text**, and field `location` (Dictionary) with
+     `lat` = **Current Location → Latitude** and `lon` = **Current Location → Longitude**
+4. **Get Dictionary Value**: `reply` in **Contents of URL**, then **Speak Text**: **Dictionary Value**.
+5. **Get Dictionary Value**: `open` in **Contents of URL**. **If** it **has any value** → **Open URLs**:
+   **Dictionary Value** (that's a navigation link: it opens Apple Maps with the route). End If.
 
 Name it **Argus**. Say "Hey Siri, Argus", wait for the tone, and talk. On iPhones with an Action Button
 you can also assign it there.
+
+The location goes only to the Mac (over Tailscale), and from there to the maps service for the trip you
+asked about. Claude doesn't see it, and it isn't written to the activity log. Leave step 2 out if you don't
+want directions from where you are.
+
+### Directions and "where are you headed?" in the car
+
+* Ask: "Hey Siri, Argus" → "fastest way to the airport?" Argus compares up to three routes with live
+  traffic, tells you which is quicker and by how much, and Apple Maps opens with the route.
+* Live traffic numbers come free from Apple Maps on the Mac (setup builds a small MapKit helper). A Google
+  Maps key or an Apple Maps token also works, and is what an always-on server uses ([SERVER.md](SERVER.md)).
+* To be asked automatically when you start driving: Shortcuts → Automation → **+** → **CarPlay** (or
+  **Bluetooth** with your car) → When Connects → Run Immediately → add **Ask for Input** ("Where are you
+  headed?") and then the same steps as above, sending the text "Directions to " + **Provided Input**.
+  Apple Maps keeps rerouting around new traffic once you're driving.
 
 ## 3. Shortcut: "Argus look" (glasses photo or screenshot)
 
@@ -72,8 +94,10 @@ Once it's running and linked to your glasses:
 ## Good to know
 
 * Long jobs can take longer than Shortcuts likes to wait. Ask for those at the Mac.
-* "Your Mac couldn't answer right now" usually means the Mac is asleep. Run `./scripts/stay-awake.sh on`
-  to keep it awake while it's plugged in.
+* "Argus couldn't answer right now" usually means the Mac is asleep. Run `./scripts/stay-awake.sh on`
+  to keep it awake while it's plugged in, or set up an always-on server ([SERVER.md](SERVER.md)).
+* Reminders while you're away from the Mac can come to the phone as notifications: `argusctl push on`
+  ([SERVER.md](SERVER.md#reminders-from-the-mac-while-youre-away)).
 * Five wrong tokens lock the phone out for 15 minutes. If the token leaks: delete `~/.argus/phone_token`,
   run `argusctl restart`, then `argusctl phone-token` for a new one, and update the shortcuts and the app.
 * To turn the gateway off, set `enabled = false` under `[phone]` in `~/.argus/config.toml`, then run

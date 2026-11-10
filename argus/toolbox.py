@@ -50,6 +50,9 @@ class Context:
     cancel: threading.Event = field(default_factory=threading.Event)
     glasses: Any = None                                        # bridge to the iPhone app (glasses camera)
     timezone: Optional[str] = None
+    location: Optional[Dict[str, float]] = None                # where the phone is (sent with this request)
+    locate: Optional[Callable[[], Optional[Dict[str, float]]]] = None   # or a way to ask the phone (Android)
+    links: List[str] = field(default_factory=list)             # links for the phone to open (navigation)
 
 
 @dataclass
@@ -58,7 +61,7 @@ class Tool:
     description: str
     schema: Dict[str, Any]
     run: Callable[[Dict[str, Any], Context], ToolOutput]
-    channels: frozenset = frozenset({"voice", "phone", "scheduler", "cli"})
+    channels: frozenset = frozenset({"voice", "phone", "scheduler", "cli", "android"})
 
     def spec(self) -> Dict[str, Any]:
         return {"name": self.name, "description": self.description, "input_schema": self.schema}
@@ -528,14 +531,16 @@ def glasses_look(args: Dict[str, Any], ctx: Context) -> ToolOutput:
                                                     "data": base64.b64encode(jpeg).decode()}}])
 
 
-def build_tools(*, mac: bool = True, glasses: bool = True) -> Dict[str, Tool]:
+def build_tools(*, mac: bool = True, glasses: bool = True, commands: bool = True) -> Dict[str, Tool]:
+    """The tools for one kind of Argus: the Mac has them all; the always-on server and Android have no shell
+    commands (there's no kernel sandbox to run them in)."""
     tools = [
         Tool("run_command", "Run a shell command on the Mac (zsh) in Argus's workspace folder and return its output. "
              "Use for files, system info, calculations, and anything a command line can do. Risky commands need "
              "the user's approval; some are never allowed.",
              _obj({"command": {"type": "string"}, "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
                    "cwd": {"type": "string", "description": "folder to run in (default: workspace)"}}, ["command"]), run_command),
-        Tool("read_file", "Read a text file or image on the Mac.",
+        Tool("read_file", "Read a text file or image.",
              _obj({"path": {"type": "string"}, "max_chars": {"type": "integer"}}, ["path"]), read_file),
         Tool("write_file", "Create or overwrite (or append to) a text file. Inside the workspace no approval is needed.",
              _obj({"path": {"type": "string"}, "content": {"type": "string"}, "append": {"type": "boolean"}},
@@ -546,10 +551,10 @@ def build_tools(*, mac: bool = True, glasses: bool = True) -> Dict[str, Tool]:
              _obj({"pattern": {"type": "string"}, "path": {"type": "string"}}, ["pattern"]), search_files),
         Tool("fetch_page", "Read a web page (text) or image by URL.",
              _obj({"url": {"type": "string"}, "max_chars": {"type": "integer"}}, ["url"]), fetch_page,
-             frozenset({"voice", "phone", "scheduler", "cli", "guest"})),
+             frozenset({"voice", "phone", "scheduler", "cli", "android", "guest"})),
         Tool("get_news", "Today's top headlines (Google News, BBC, NPR, Reuters), optionally about a topic.",
              _obj({"topic": {"type": "string"}, "count": {"type": "integer", "minimum": 1, "maximum": 20}}), get_news,
-             frozenset({"voice", "phone", "scheduler", "cli", "guest"})),
+             frozenset({"voice", "phone", "scheduler", "cli", "android", "guest"})),
         Tool("remember", "Save a lasting fact or preference about the user for future conversations.",
              _obj({"fact": {"type": "string"}}, ["fact"]), remember),
         Tool("forget", "Delete a remembered fact by its number.", _obj({"id": {"type": "integer"}}, ["id"]), forget),
@@ -558,9 +563,9 @@ def build_tools(*, mac: bool = True, glasses: bool = True) -> Dict[str, Tool]:
              "corrects you or tells you how they want something done from now on (one-off facts go to remember).",
              _obj({"lesson": {"type": "string", "description": "e.g. 'When Sandeep says the report, he means the "
                                                               "latest PDF in ~/Documents/Work.'"}}, ["lesson"]),
-             learn, frozenset({"voice", "phone", "cli"})),
+             learn, frozenset({"voice", "phone", "cli", "android"})),
         Tool("forget_lesson", "Delete a learned lesson by its L-number.", _obj({"id": {"type": "integer"}}, ["id"]),
-             forget_lesson, frozenset({"voice", "phone", "cli"})),
+             forget_lesson, frozenset({"voice", "phone", "cli", "android"})),
         Tool("schedule", "Create, list or cancel reminders and scheduled tasks. 'reminder' says/sends the text at the time; "
              "'task' has Argus do the text as a request at that time and send the result. Give either 'at' (ISO local "
              "date-time) or 'cron' (5-field repeat, e.g. '0 7 * * 1-5').",
@@ -568,6 +573,8 @@ def build_tools(*, mac: bool = True, glasses: bool = True) -> Dict[str, Tool]:
                    "mode": {"type": "string", "enum": ["reminder", "task"]}, "at": {"type": "string"},
                    "cron": {"type": "string"}, "id": {"type": "integer"}}, ["action"]), schedule),
     ]
+    if not commands:
+        tools = [t for t in tools if t.name != "run_command"]
     if mac:
         tools += [
             Tool("open_app", "Open (or bring forward) a Mac app by name.", _obj({"name": {"type": "string"}}, ["name"]),
@@ -610,4 +617,10 @@ def describe_call(name: str, args: Dict[str, Any]) -> str:
         return f"open {args.get('name')}"
     if name == "phone_call":
         return f"phone {args.get('business') or args.get('number')}: {str(args.get('goal'))[:120]}"
+    if name == "route":
+        return f"directions to {str(args.get('destination'))[:120]}"
+    if name == "search_messages":
+        return f"search messages: {str(args.get('query'))[:120]}"
+    if name == "send_text":
+        return f"text {args.get('to')}: {str(args.get('message'))[:120]}"
     return f"{name} {json.dumps(args, ensure_ascii=False)[:160]}"
