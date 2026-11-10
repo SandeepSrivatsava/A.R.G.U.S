@@ -3,6 +3,7 @@ risky actions are approved with buttons, the Mac's screen stays off-limits unles
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import logging
 import secrets
@@ -35,7 +36,7 @@ class TelegramAPI:
                          headers={"Content-Type": "application/json"})
             resp = conn.getresponse()
             data = json.loads(resp.read() or b"{}")
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, http.client.HTTPException) as exc:
             raise TelegramError(f"{method} failed: {exc}") from exc
         finally:
             conn.close()
@@ -50,7 +51,15 @@ class TelegramAPI:
             resp = conn.getresponse()
             if resp.status != 200:
                 raise TelegramError(f"download failed: HTTP {resp.status}")
-            return resp.read(limit)
+            data = resp.read(limit + 1)
+            if len(data) > limit:
+                raise TelegramError("that file is too big")
+            expected = resp.getheader("Content-Length")
+            if expected and expected.isdigit() and int(expected) != len(data):
+                raise TelegramError("the download was cut off")
+            return data
+        except (OSError, http.client.HTTPException) as exc:
+            raise TelegramError(f"download failed: {exc}") from exc
         finally:
             conn.close()
 
@@ -189,6 +198,7 @@ class TelegramBot:
             self.send("I can't listen to voice notes yet. Type it, or talk to me at the Mac.", chat_id)
             return
         if not content:
+            self.send("I can read text and photos for now.", chat_id)
             return
         if self._worker is not None and self._worker.is_alive():
             self.send("Still working on your last message. Send /stop to cancel it.", chat_id)
@@ -243,8 +253,8 @@ class TelegramBot:
             try:
                 self.poll_once()
                 backoff = 2.0
-            except TelegramError as exc:
-                log.warning("%s", exc)
+            except Exception as exc:   # never let one bad response stop Argus answering on Telegram
+                log.warning("Telegram polling: %s", exc)
                 self._stop.wait(backoff)
                 backoff = min(backoff * 2, 120)
 

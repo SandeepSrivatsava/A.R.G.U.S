@@ -59,8 +59,13 @@ class Scheduler:
                     self.deliver(self.headlines())
                 else:
                     self.deliver(self.run_task(task["text"]))
-            except Exception:
+            except Exception as exc:
                 log.exception("scheduled item #%s failed", task["id"])
+                if task["mode"] != "reminder":
+                    try:
+                        self.deliver(f"A scheduled job couldn't run ({task['text'][:60]}): {exc}")
+                    except Exception:
+                        pass
             nxt = None
             if task["cron"]:
                 try:

@@ -10,6 +10,7 @@ import re
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from urllib.parse import urljoin, urlsplit
 from . import news as news_mod
 from .cron import Cron, CronError
 from .llm import connect
+from .protected import is_protected, sandbox_profile
 
 Content = Union[str, List[Dict[str, Any]]]
 MAX_OUTPUT = 12_000
@@ -88,17 +90,44 @@ def child_env() -> Dict[str, str]:
     return env
 
 
+# On macOS every command runs inside a kernel-enforced sandbox that can't read or change the places in
+# protected.py, so even a disguised command can't reach your keys. (Elsewhere, e.g. in tests, it's skipped.)
+SANDBOX_EXEC = "/usr/bin/sandbox-exec" if sys.platform == "darwin" else ""
+
+
+def sandbox_prefix(home: Optional[Path] = None) -> List[str]:
+    if not SANDBOX_EXEC or not os.path.exists(SANDBOX_EXEC):
+        return []
+    return [SANDBOX_EXEC, "-p", sandbox_profile(Path(home or Path.home()))]
+
+
+def _number(value: Any, default: float, low: float, high: float) -> float:
+    try:
+        return max(low, min(float(value if value not in (None, "") else default), high))
+    except (TypeError, ValueError):
+        raise ValueError(f"expected a number, got {value!r}") from None
+
+
 def run_command(args: Dict[str, Any], ctx: Context) -> ToolOutput:
     command = str(args.get("command") or "").strip()
-    timeout = max(1, min(int(args.get("timeout_seconds") or 60), 600))
+    if not command:
+        return ToolOutput.error("no command given")
+    try:
+        timeout = _number(args.get("timeout_seconds"), 60, 1, 600)
+    except ValueError as exc:
+        return ToolOutput.error(f"timeout_seconds: {exc}")
     cwd = Path(os.path.expanduser(str(args.get("cwd") or ctx.workspace)))
     if not cwd.is_absolute():
         cwd = ctx.workspace / cwd
     if not cwd.is_dir():
         return ToolOutput.error(f"folder not found: {cwd}")
     shell = "/bin/zsh" if os.path.exists("/bin/zsh") else "/bin/sh"
-    proc = subprocess.Popen([shell, "-c", command], cwd=str(cwd), env=child_env(), stdin=subprocess.DEVNULL,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        proc = subprocess.Popen(sandbox_prefix() + [shell, "-c", command], cwd=str(cwd), env=child_env(),
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+    except OSError as exc:
+        return ToolOutput.error(f"couldn't start the command: {exc}")
     deadline = time.monotonic() + timeout
     out: List[bytes] = []
     reader = threading.Thread(target=lambda: out.append(proc.stdout.read()), daemon=True)
@@ -111,7 +140,7 @@ def run_command(args: Dict[str, Any], ctx: Context) -> ToolOutput:
                 pass
             proc.wait()
             reader.join(2)
-            why = "cancelled" if ctx.cancel.is_set() else f"timed out after {timeout}s"
+            why = "cancelled" if ctx.cancel.is_set() else f"timed out after {timeout:g}s"
             return ToolOutput.error(f"command {why}\n{_clip(b''.join(out).decode('utf-8', 'replace'))}")
         time.sleep(0.05)
     reader.join(5)
@@ -139,7 +168,10 @@ def read_file(args: Dict[str, Any], ctx: Context) -> ToolOutput:
     data = path.read_bytes()[:2_000_000]
     if b"\0" in data[:4096]:
         return ToolOutput.error("that's a binary file; Argus can read text files and images")
-    limit = max(500, min(int(args.get("max_chars") or 40_000), 200_000))
+    try:
+        limit = int(_number(args.get("max_chars"), 40_000, 500, 200_000))
+    except ValueError as exc:
+        return ToolOutput.error(f"max_chars: {exc}")
     return ToolOutput(_clip(data.decode("utf-8", "replace"), limit))
 
 
@@ -179,13 +211,21 @@ def search_files(args: Dict[str, Any], ctx: Context) -> ToolOutput:
         pattern = re.compile(str(args.get("pattern") or ""), re.IGNORECASE)
     except re.error as exc:
         return ToolOutput.error(f"bad search pattern: {exc}")
+    if not root.is_dir():
+        return ToolOutput.error(f"not a folder: {root}")
+    home = Path.home().resolve()
     hits: List[str] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in ("node_modules", "Library")]
+        if len(hits) >= 100 or ctx.cancel.is_set():
+            break
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in ("node_modules", "Library")
+                       and not is_protected(Path(dirpath) / d, home)]
         for name in filenames:
             if len(hits) >= 100 or ctx.cancel.is_set():
                 break
             p = Path(dirpath) / name
+            if is_protected(p, home) or p.is_symlink():   # never follow a link into a protected place
+                continue
             if pattern.search(name):
                 hits.append(f"{p}  (name matches)")
             try:
@@ -262,10 +302,6 @@ def public_ip(host: str) -> Optional[str]:
     return ips[0] if ips else None
 
 
-def public_address(host: str) -> bool:
-    return public_ip(host) is not None
-
-
 def fetch_url(url: str, max_bytes: int = 3_000_000, timeout: float = 20.0, redirects: int = 5,
               allow_private: bool = False):
     """GET a web page. Returns (final_url, content_type, bytes). Refuses local and private networks."""
@@ -306,7 +342,10 @@ def fetch_url(url: str, max_bytes: int = 3_000_000, timeout: float = 20.0, redir
 
 def fetch_page(args: Dict[str, Any], ctx: Context) -> ToolOutput:
     url = str(args.get("url") or "").strip()
-    limit = max(1000, min(int(args.get("max_chars") or 20_000), 100_000))
+    try:
+        limit = int(_number(args.get("max_chars"), 20_000, 1000, 100_000))
+    except ValueError as exc:
+        return ToolOutput.error(f"max_chars: {exc}")
     try:
         final, ctype, data = fetch_url(url)
     except (ValueError, OSError) as exc:
@@ -325,7 +364,11 @@ def fetch_page(args: Dict[str, Any], ctx: Context) -> ToolOutput:
 
 # ---- news, memory, schedules, phone, apps, glasses -----------------------------------------------------
 def get_news(args: Dict[str, Any], ctx: Context) -> ToolOutput:
-    articles, errors = news_mod.headlines(args.get("topic") or None, int(args.get("count") or 8),
+    try:
+        count = int(_number(args.get("count"), 8, 1, 20))
+    except ValueError as exc:
+        return ToolOutput.error(f"count: {exc}")
+    articles, errors = news_mod.headlines(args.get("topic") or None, count,
                                           offline=os.environ.get("ARGUS_NEWS_OFFLINE", "").split(os.pathsep)
                                           if os.environ.get("ARGUS_NEWS_OFFLINE") else None)
     if not articles:
@@ -341,9 +384,16 @@ def remember(args: Dict[str, Any], ctx: Context) -> ToolOutput:
     return ToolOutput(f"remembered (#{ctx.store.remember(fact[:500])})")
 
 
+def _whole(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def forget(args: Dict[str, Any], ctx: Context) -> ToolOutput:
-    ok = ctx.store.forget(int(args.get("id") or 0))
-    return ToolOutput("forgotten" if ok else "no such memory") if ok else ToolOutput.error("no such memory")
+    ok = ctx.store.forget(_whole(args.get("id")))
+    return ToolOutput("forgotten") if ok else ToolOutput.error("no such memory")
 
 
 def recall(args: Dict[str, Any], ctx: Context) -> ToolOutput:
@@ -355,11 +405,14 @@ def parse_when(text: str, tz: Optional[str] = None) -> float:
     """ISO 8601 local date-time ("2026-11-09T18:30") -> epoch seconds."""
     value = datetime.fromisoformat(text.strip().replace("Z", "+00:00"))
     if value.tzinfo is None:
+        zone = None
         if tz:
             from zoneinfo import ZoneInfo
-            value = value.replace(tzinfo=ZoneInfo(tz))
-        else:
-            value = value.astimezone()
+            try:
+                zone = ZoneInfo(tz)
+            except Exception:   # unknown zone: use the Mac's own time
+                zone = None
+        value = value.replace(tzinfo=zone) if zone else value.astimezone()
     return value.timestamp()
 
 
@@ -374,7 +427,7 @@ def schedule(args: Dict[str, Any], ctx: Context) -> ToolOutput:
             (f" next {datetime.fromtimestamp(t['next_run']).strftime('%a %d %b %H:%M')}" if t["next_run"] else "")
             for t in tasks))
     if action == "cancel":
-        ok = ctx.store.cancel_task(int(args.get("id") or 0))
+        ok = ctx.store.cancel_task(_whole(args.get("id")))
         return ToolOutput("cancelled") if ok else ToolOutput.error("no such scheduled item")
     if action != "create":
         return ToolOutput.error("action must be create, list or cancel")
@@ -413,7 +466,10 @@ def open_app(args: Dict[str, Any], ctx: Context) -> ToolOutput:
     name = str(args.get("name") or "").strip()
     if not re.fullmatch(r"[\w .&'+-]{1,60}", name):
         return ToolOutput.error("that doesn't look like an app name")
-    proc = subprocess.run(["open", "-a", name], capture_output=True, text=True, timeout=20)
+    try:
+        proc = subprocess.run(["open", "-a", name], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return ToolOutput.error(f"couldn't open {name}: {exc}")
     return ToolOutput(f"opened {name}") if proc.returncode == 0 else ToolOutput.error(proc.stderr.strip() or f"couldn't open {name}")
 
 
@@ -421,8 +477,12 @@ def open_url(args: Dict[str, Any], ctx: Context) -> ToolOutput:
     url = str(args.get("url") or "").strip()
     if not re.match(r"^https?://", url):
         return ToolOutput.error("only http and https links can be opened")
-    proc = subprocess.run(["open", url], capture_output=True, text=True, timeout=20)
-    return ToolOutput(f"opened {url} in the browser") if proc.returncode == 0 else ToolOutput.error(proc.stderr.strip())
+    try:
+        proc = subprocess.run(["open", url], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return ToolOutput.error(f"couldn't open that link: {exc}")
+    return ToolOutput(f"opened {url} in the browser") if proc.returncode == 0 else ToolOutput.error(
+        proc.stderr.strip() or "couldn't open that link")
 
 
 def glasses_look(args: Dict[str, Any], ctx: Context) -> ToolOutput:
@@ -432,7 +492,7 @@ def glasses_look(args: Dict[str, Any], ctx: Context) -> ToolOutput:
         jpeg = ctx.glasses.capture(timeout=25, cancel=ctx.cancel)
     except Exception as exc:
         return ToolOutput.error(f"couldn't get a picture from the glasses: {exc}")
-    return ToolOutput([{"type": "text", "text": "Photo from Sandeep's Meta glasses, just now:"},
+    return ToolOutput([{"type": "text", "text": "Photo from the user's Meta glasses, just now:"},
                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                     "data": base64.b64encode(jpeg).decode()}}])
 

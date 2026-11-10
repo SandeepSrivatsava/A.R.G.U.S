@@ -60,7 +60,10 @@ class Cron:
         self.tz = None
         if tz:
             from zoneinfo import ZoneInfo
-            self.tz = ZoneInfo(tz)
+            try:
+                self.tz = ZoneInfo(tz)
+            except Exception:   # an unknown zone falls back to the Mac's own time rather than failing
+                self.tz = None
 
     def _day_ok(self, d: datetime) -> bool:
         dom = d.day in self.days
@@ -75,7 +78,10 @@ class Cron:
 
     def next_after(self, ts: float) -> float:
         t = datetime.fromtimestamp(ts, self.tz).replace(second=0, microsecond=0) + timedelta(minutes=1)
+        give_up = t + timedelta(days=366 * 8 + 1)    # long enough for 29 February, even across 2100
         for _ in range(60 * 24 * 370):
+            if t > give_up:
+                break
             if t.month not in self.months:
                 t = (t.replace(day=1, hour=0, minute=0) + timedelta(days=32)).replace(day=1)
                 continue

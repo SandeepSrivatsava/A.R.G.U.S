@@ -152,16 +152,59 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
 }
 
 
-def _coerce(default: Any, value: Any) -> Any:
+def _coerce(name: str, default: Any, value: Any) -> Any:
+    """Check a setting's type against its default. Strict on purpose: "false" in quotes is not false."""
     if isinstance(default, bool):
-        return bool(value)
-    if isinstance(default, float):
-        return float(value)
-    if isinstance(default, int):
-        return int(value)
+        if not isinstance(value, bool):
+            raise ValueError(f"{name} must be true or false (without quotes)")
+        return value
+    if isinstance(default, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{name} must be a number")
+        if isinstance(default, int) and not isinstance(value, int):
+            raise ValueError(f"{name} must be a whole number")
+        return type(default)(value)
     if isinstance(default, list):
-        return [str(v) for v in value]
-    return str(value)
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise ValueError(f'{name} must be a list of words in quotes, like ["one", "two"]')
+        return list(value)
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be text in quotes")
+    return value
+
+
+def _validate(s: "Settings") -> None:
+    """Values that would make Argus misbehave quietly are errors instead."""
+    from .cron import Cron, CronError
+    if s.clap not in ("double", "single", "off"):
+        raise ValueError('listening.clap must be "double", "single" or "off"')
+    if s.voice_engine not in ("piper", "say"):
+        raise ValueError('voice.engine must be "piper" or "say"')
+    if s.timezone:
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(s.timezone)
+        except Exception:
+            raise ValueError(f"unknown time zone {s.timezone!r} (use a name like America/Los_Angeles)") from None
+    for name, cron in (("schedule.morning_headlines", s.morning_headlines),
+                       ("schedule.morning_briefing", s.morning_briefing)):
+        if cron:
+            try:
+                Cron(cron)
+            except CronError as exc:
+                raise ValueError(f"{name}: {exc}") from None
+    checks = (("listening.followup_seconds", s.followup_seconds >= 0),
+              ("listening.conversation_idle_seconds", s.conversation_idle_seconds >= 0),
+              ("listening.voice_lock_threshold", 0 <= s.voice_lock_threshold <= 1),
+              ("listening.vad_threshold", 0 < s.vad_threshold < 1),
+              ("brain.max_steps", s.max_steps >= 1), ("brain.max_turn_tokens", s.max_turn_tokens >= 1000),
+              ("brain.context_tokens", s.context_tokens >= 1000), ("brain.history_messages", s.history_messages >= 2),
+              ("brain.session_idle_minutes", s.session_idle_minutes > 0),
+              ("voice.rate", s.rate > 0), ("voice.speed", s.speed > 0),
+              ("phone.port", 1 <= s.phone_port <= 65535), ("telegram.user_id", s.telegram_user_id >= 0))
+    for name, ok in checks:
+        if not ok:
+            raise ValueError(f"{name} is out of range")
 
 
 def load(path: Path = None) -> Settings:
@@ -176,7 +219,7 @@ def load(path: Path = None) -> Settings:
         raise ValueError(f"unknown setting(s) in {path}: {', '.join(unknown)}")
     for key in _TOP:
         if key in data:
-            setattr(settings, key, str(data[key]))
+            setattr(settings, key, _coerce(key, "", data[key]))
     known = {f.name for f in fields(Settings)}
     for section, mapping in _SECTIONS.items():
         table = data.get(section) or {}
@@ -186,7 +229,14 @@ def load(path: Path = None) -> Settings:
             target = mapping.get(raw_key)
             if target is None or target not in known:
                 raise ValueError(f"unknown setting {section}.{raw_key} in {path}")
-            setattr(settings, target, _coerce(getattr(settings, target), value))
+            try:
+                setattr(settings, target, _coerce(f"{section}.{raw_key}", getattr(settings, target), value))
+            except ValueError as exc:
+                raise ValueError(f"{exc} (in {path})") from None
+    try:
+        _validate(settings)
+    except ValueError as exc:
+        raise ValueError(f"{exc} (in {path})") from None
     return settings
 
 

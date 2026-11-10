@@ -16,3 +16,13 @@ dev = ["pytest>=8"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["invalid_requests_ok: the test sends requests the real Claude API would reject, on purpose"]
+
+[tool.coverage.run]
+branch = true
+source = ["argus"]
+patch = ["subprocess"]       # also measure the real Argus processes that some tests start
+parallel = true
+
+[tool.coverage.report]
+show_missing = true

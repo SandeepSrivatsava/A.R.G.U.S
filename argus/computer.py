@@ -260,7 +260,8 @@ class MacBackend(Backend):
             chunk = text[i:i + 16]
             for down in (True, False):
                 ev = Q.CGEventCreateKeyboardEvent(None, 0, down)
-                Q.CGEventKeyboardSetUnicodeString(ev, len(chunk), chunk)
+                # The length is counted in UTF-16 units, so emoji (two units each) aren't cut short.
+                Q.CGEventKeyboardSetUnicodeString(ev, len(chunk.encode("utf-16-le")) // 2, chunk)
                 self._post(ev)
             time.sleep(0.01)
 

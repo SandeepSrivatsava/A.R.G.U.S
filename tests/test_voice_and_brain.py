@@ -6,13 +6,9 @@ import numpy as np
 from argus.approvals import DENY, ONCE, TASK, ApprovalRequest, DenyAll, ScriptedApprover
 from argus.audit import Audit
 from argus.brain import Brain, Sessions, spoken_error
-from argus.daemon import Argus
-from argus.hearing import ScriptedTranscriber
-from argus.listener import Listener
 from argus.voice import RecordingVoice, SentenceBuffer, Speaker, speakable
-from argus.wake import NameMatcher
 
-from fakes import Script, call, make_agent, say, wait_for
+from fakes import SPEECH, Script, call, make_agent, make_argus, say, wait_for
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -143,50 +139,6 @@ def test_sessions_rotate(tmp_path):
 
 
 # ---- the listening loop (scripted transcripts, fake microphone) -----------------------------------------
-class FakeSource:
-    def __init__(self):
-        self.is_open = False
-
-    def open(self):
-        self.is_open = True
-
-    def close(self):
-        self.is_open = False
-
-    def read(self, timeout=0.25):
-        return None
-
-
-class FakeSegmenter:
-    speech_active = False
-
-    def feed(self, chunk):
-        return []
-
-    def flush(self):
-        return []
-
-    def reset(self):
-        pass
-
-    def recent_audio(self):
-        return np.zeros(0, dtype=np.float32)
-
-
-def make_argus(tmp_path, transcripts, script=None, answers=()):
-    script = script or Script()
-    agent, _ = make_agent(tmp_path, script)
-    voice = RecordingVoice()
-    speaker = Speaker(voice)
-    audit = Audit(tmp_path / "audit.jsonl")
-    brain = Brain(agent, speaker, ScriptedApprover(list(answers)), audit, Sessions(agent.store))
-    argus = Argus(source=FakeSource(), segmenter=FakeSegmenter(), transcriber=ScriptedTranscriber(transcripts),
-                  listener=Listener(NameMatcher("argus")), speaker=speaker, brain=brain, audit=audit)
-    argus.set_mic(True)
-    return argus, voice, script
-
-
-SPEECH = np.ones(16000, dtype=np.float32) * 0.1
 
 
 def test_only_addressed_speech_reaches_the_brain(tmp_path):

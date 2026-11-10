@@ -8,6 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+import numpy as np
+
 from mock_claude import ClaudeMock
 
 
@@ -87,6 +89,7 @@ class FakeTelegram(ThreadingHTTPServer):
         self.sent: List[Dict[str, Any]] = []
         self.calls: List[Tuple[str, Dict[str, Any]]] = []
         self.files: Dict[str, bytes] = {}
+        self.fail_methods: set = set()      # Bot API methods that answer {"ok": false} (error tests)
         self._next = 1
         self._lock = threading.Lock()
         threading.Thread(target=self.serve_forever, daemon=True).start()
@@ -148,6 +151,14 @@ class _TgHandler(BaseHTTPRequestHandler):
             return
         method = self.path[len(prefix):]
         self.server.calls.append((method, body))
+        if method in self.server.fail_methods:
+            data = json.dumps({"ok": False, "error_code": 400, "description": "Bad Request: refused in this test"}).encode()
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if method == "getUpdates":
             deadline = time.time() + min(float(body.get("timeout") or 0), 1.0)
             while time.time() < deadline:
@@ -167,3 +178,58 @@ class _TgHandler(BaseHTTPRequestHandler):
         if method == "getMe":
             return self._ok({"username": "argus_test_bot"})
         return self._ok(True)
+
+
+# ---- the listening loop with scripted transcripts and a fake microphone ---------------------------------
+class FakeSource:
+    def __init__(self):
+        self.is_open = False
+
+    def open(self):
+        self.is_open = True
+
+    def close(self):
+        self.is_open = False
+
+    def read(self, timeout=0.25):
+        return None
+
+
+class FakeSegmenter:
+    speech_active = False
+
+    def feed(self, chunk):
+        return []
+
+    def flush(self):
+        return []
+
+    def reset(self):
+        pass
+
+    def recent_audio(self):
+        return np.zeros(0, dtype=np.float32)
+
+
+def make_argus(tmp_path, transcripts, script=None, answers=()):
+    from argus.approvals import ScriptedApprover
+    from argus.audit import Audit
+    from argus.brain import Brain, Sessions
+    from argus.daemon import Argus
+    from argus.hearing import ScriptedTranscriber
+    from argus.listener import Listener
+    from argus.voice import RecordingVoice, Speaker
+    from argus.wake import NameMatcher
+    script = script or Script()
+    agent, _ = make_agent(tmp_path, script)
+    voice = RecordingVoice()
+    speaker = Speaker(voice)
+    audit = Audit(tmp_path / "audit.jsonl")
+    brain = Brain(agent, speaker, ScriptedApprover(list(answers)), audit, Sessions(agent.store))
+    argus = Argus(source=FakeSource(), segmenter=FakeSegmenter(), transcriber=ScriptedTranscriber(transcripts),
+                  listener=Listener(NameMatcher("argus")), speaker=speaker, brain=brain, audit=audit)
+    argus.set_mic(True)
+    return argus, voice, script
+
+
+SPEECH = np.ones(16000, dtype=np.float32) * 0.1

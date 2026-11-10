@@ -6,6 +6,7 @@
 #      through the installed models, real tools, approvals, privacy rules, Telegram, a reminder and
 #      the iPhone gateway.
 # Usage: ARGUS_VENV=/path/to/venv ARGUS_MODEL_MIRROR=/dir tests/e2e.sh
+#        (ARGUS_COVERAGE=/path/.coverage.e2e also measures which code the run exercised; needs coverage.py)
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -69,7 +70,11 @@ sed -i.bak -e "s|^\[brain\]$|[brain]\napi_base = \"http://127.0.0.1:$MOCK_PORT\"
   -e "s/^port = 8765$/port = $PHONE_PORT\nhost = \"127.0.0.1\"/" "$C"
 grep -q '^enabled = true                 # iPhone' "$C" || sed -i.bak2 -e '/^\[phone\]$/,/^\[/{s/^enabled = .*/enabled = true/}' "$C"
 for _ in $(seq 1 50); do curl -s -m 1 -o /dev/null "http://127.0.0.1:$MOCK_PORT/" && break; sleep 0.1; done
-(cd "$WORK" && ARGUS_NEWS_OFFLINE="$REPO/tests/fixtures/google_news.xml" "$VENV/bin/python3" "$REPO/tests/e2e_voice.py" "$DANGER_DIR" "$WORK") 2>&1 \
+PYRUN=("$VENV/bin/python3")
+if [ -n "${ARGUS_COVERAGE:-}" ]; then
+  PYRUN+=(-m coverage run --branch --source="$REPO/argus" --data-file="$ARGUS_COVERAGE")
+fi
+(cd "$WORK" && ARGUS_NEWS_OFFLINE="$REPO/tests/fixtures/google_news.xml" "${PYRUN[@]}" "$REPO/tests/e2e_voice.py" "$DANGER_DIR" "$WORK") 2>&1 \
   | grep -v -i "warning" | tee "$WORK/voice.log" | grep -E '^(PASS|FAIL|SKIP|spoken)' || true
 grep -q '^FAIL' "$WORK/voice.log" && FAILED=1
 grep -q '^PASS' "$WORK/voice.log" || { echo "FAIL  voice test did not run"; tail -30 "$WORK/voice.log"; FAILED=1; }

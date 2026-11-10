@@ -94,7 +94,8 @@ class App:
         self.agent = Agent(self.llm, self.store, self.policy,
                            build_tools(mac=IS_MAC or computer is not None, glasses=settings.glasses_enabled),
                            settings=settings, audit=self.audit, computer=computer, notify=self.notify,
-                           glasses=self.glasses, glasses_status=(self.glasses.describe if self.glasses else lambda: None))
+                           glasses=self.glasses, glasses_status=(self.glasses.describe if self.glasses else lambda: None),
+                           secrets=self._secret_values(secrets))
         token = secrets.get("TELEGRAM_BOT_TOKEN", "")
         if settings.telegram_enabled and token and settings.telegram_user_id:
             self.bot = TelegramBot(TelegramAPI(token, os.environ.get("ARGUS_TELEGRAM_API") or "https://api.telegram.org"),
@@ -106,6 +107,14 @@ class App:
             self.argus = self._build_voice(transcriber, source, speaker_voice, approver)
 
     # ---- pieces ------------------------------------------------------------------------------------
+    def _secret_values(self, secrets: dict) -> list:
+        values = [v for v in secrets.values() if v]
+        try:
+            values.append(self.settings.phone_token_path.read_text().strip())
+        except OSError:
+            pass
+        return values
+
     def _desktop_state(self) -> dict:
         state = desktop_state() if IS_MAC else {"locked": False, "front_bundle": "", "front_name": "", "visible_apps": []}
         state["screen_private"] = bool(self.argus and self.argus.screen_private)
@@ -159,7 +168,9 @@ class App:
         if s.phone_enabled:
             host = bind_address(s)
             if host:
-                gate = Gatekeeper(load_or_create_token(s.phone_token_path))
+                token = load_or_create_token(s.phone_token_path)
+                self.agent.add_secret(token)
+                gate = Gatekeeper(token)
                 self.phone = PhoneServer((host, s.phone_port), self.ask_phone, gate, self.audit, self.glasses)
                 threading.Thread(target=self.phone.serve_forever, name="argus-phone", daemon=True).start()
                 self.audit.log("phone_gateway_started", host=host, port=s.phone_port)
@@ -250,7 +261,11 @@ def run_menubar(app: App, quit_event: threading.Event) -> None:
 
 
 def main(headless: bool = False) -> int:
-    settings = config_mod.load()
+    try:
+        settings = config_mod.load()
+    except ValueError as exc:     # a typo in config.toml: say so plainly instead of a traceback
+        print(f"Argus could not start: there's a problem in its settings: {exc}", file=sys.stderr)
+        return 2
     config_mod.ensure_private_dirs(settings)
     setup_logging(settings)
     lock = single_instance(settings)

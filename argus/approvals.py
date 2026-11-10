@@ -10,7 +10,7 @@ import subprocess
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import List
 
 log = logging.getLogger("argus.approvals")
 
@@ -28,13 +28,6 @@ class ApprovalRequest:
     choices: List[str] = field(default_factory=list)
     pattern_key: str = ""
     origin: str = "voice"
-
-    @classmethod
-    def from_event(cls, run_id: str, event: Dict[str, Any], origin: str = "voice") -> "ApprovalRequest":
-        return cls(run_id=run_id, command=str(event.get("command") or "")[:600],
-                   description=str(event.get("description") or "")[:300],
-                   choices=[str(c) for c in (event.get("choices") or [])],
-                   pattern_key=str(event.get("pattern_key") or ""), origin=origin)
 
     @property
     def task_scope_offered(self) -> bool:
@@ -125,9 +118,13 @@ class MacApprover(Approver):
             message += f"\n\nWhy this needs approval: {request.description}"
         message += "\n\n\"Allow\" will ask for Touch ID." if self.require_owner_auth else ""
         with self._lock:
-            proc = subprocess.run(
-                ["osascript", str(_DIALOG_SCRIPT), message, "task" if request.task_scope_offered else "once",
-                 str(self.timeout)], capture_output=True, text=True, timeout=self.timeout + 30)
+            try:
+                proc = subprocess.run(
+                    ["osascript", str(_DIALOG_SCRIPT), message, "task" if request.task_scope_offered else "once",
+                     str(self.timeout)], capture_output=True, text=True, timeout=self.timeout + 30)
+            except (OSError, subprocess.SubprocessError) as exc:
+                log.error("couldn't show the approval dialog: %s", exc)
+                return DENY
             button = proc.stdout.strip()
             answer = {"Allow once": ONCE, "Allow for this task": TASK}.get(button, DENY)
             if answer != DENY and self.require_owner_auth:

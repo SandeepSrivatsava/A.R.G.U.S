@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -38,6 +39,7 @@ log = logging.getLogger("argus.phone")
 MAX_BODY = 16 * 1024 * 1024
 LOCKOUT_FAILURES = 5
 LOCKOUT_SECONDS = 15 * 60
+TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")   # the only addresses Tailscale hands out
 
 
 
@@ -49,8 +51,11 @@ def tailscale_ip() -> Optional[str]:
         except (OSError, subprocess.TimeoutExpired):
             continue
         for ip in out:
-            if re.fullmatch(r"100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}", ip):
-                return ip
+            try:
+                if ipaddress.ip_address(ip) in TAILSCALE_NET:
+                    return ip
+            except ValueError:
+                continue
     return None
 
 
@@ -63,6 +68,7 @@ def load_or_create_token(path: Path) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     token = secrets.token_urlsafe(32)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)          # an older file may have been readable by others
     with os.fdopen(fd, "w") as fh:
         fh.write(token + "\n")
     return token
@@ -248,6 +254,10 @@ class PhoneHandler(BaseHTTPRequestHandler):
 def bind_address(settings) -> Optional[str]:
     """Where the gateway may listen: the Mac's Tailscale address (or 127.0.0.1 for tests)."""
     host = settings.phone_host or tailscale_ip()
-    if not host or not (host == "127.0.0.1" or host.startswith("100.")):
+    try:
+        ip = ipaddress.ip_address(host or "")
+    except ValueError:
         return None
-    return host
+    if ip == ipaddress.ip_address("127.0.0.1") or ip in TAILSCALE_NET:
+        return str(ip)
+    return None

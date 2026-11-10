@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from urllib.parse import urlsplit
+
 from .guard import is_blocked_app, mentions_blocked_site
+from .protected import MENTION, is_protected
 
 ALLOW, ASK, BLOCK = "allow", "ask", "block"
 
@@ -40,8 +43,7 @@ HARDLINE = _rx([
     (r"\bcsrutil\b|\bspctl\s+--master-disable|\bnvram\b", "turning off macOS security protections"),
     (r"\btccutil\b", "changing macOS privacy permissions"),
     (r"\bsecurity\s+(dump-keychain|find-(generic|internet)-password\b[^\n]*-[wg]\b|export)", "reading passwords from the keychain"),
-    (r"\.argus/(secrets\.env|phone_token|voiceprint)|argus\.db\b", "reading Argus's own secrets"),
-    (r"\.ssh/(id_|.*_key)|\.gnupg/|\.aws/credentials|\.config/gh/hosts", "reading private keys or credentials"),
+    (r"\bargus\.db\b|\bsecrets\.env\b|\bphone_token\b|\bvoiceprint\.npy\b", "reading Argus's own secrets"),
     (r"\b(shutdown|halt|reboot)\b|\bpmset\b[^\n]*\bsleepnow\b|\bkillall\s+(-[a-z0-9]+\s+)*(loginwindow|WindowServer|Finder|Dock)\b",
      "shutting down or breaking the session"),
     (r"(curl|wget)\b[^\n|]*\|\s*(ba|z|fi)?sh\b", "running a script straight from the internet"),
@@ -73,10 +75,8 @@ ASK_PATTERNS = _rx([
     (r">\s*~|>\s*/(?!dev/null)|>>\s*~|>>\s*/(?!dev/null)", "writing a file outside the workspace"),
 ])
 
-# Paths Argus may never read or write.
-PROTECTED_PATHS = (".argus/secrets.env", ".argus/phone_token", ".argus/voiceprint.npy", ".argus/argus.db",
-                   ".ssh/", ".gnupg/", ".aws/", "Library/Keychains/", ".config/gh/", "Library/Cookies/",
-                   "Library/Application Support/Google/Chrome/", "Library/Safari/")
+# A web address whose query is this long could be carrying your data out; it needs your OK.
+LONG_QUERY = 300
 
 # Desktop actions (computer toolset members) and what they need.
 COMPUTER_READ_ONLY = frozenset({"screenshot", "zoom", "cursor_position", "wait", "mouse_move"})
@@ -114,15 +114,14 @@ class Policy:
 
     # ---- paths -------------------------------------------------------------------------------------
     def resolve(self, path: str) -> Path:
-        p = Path(os.path.expanduser(str(path or ".")))
+        text = str(path or ".")
+        p = self.home / text[2:] if text.startswith("~/") else self.home if text == "~" else Path(os.path.expanduser(text))
         if not p.is_absolute():
             p = self.workspace / p
         return p.resolve()
 
     def protected(self, path: Path) -> bool:
-        text = str(path)
-        rel = text[len(str(self.home)) + 1:] if text.startswith(str(self.home) + os.sep) else text
-        return any(rel.startswith(p) or f"/{p}" in text for p in PROTECTED_PATHS)
+        return is_protected(path, self.home)
 
     def inside_workspace(self, path: Path) -> bool:
         return path == self.workspace or self.workspace in path.parents
@@ -136,7 +135,15 @@ class Policy:
         if toolset == "computer":
             return self._computer(tool, args, channel)
         if tool == "run_command":
+            if args.get("cwd") and self.protected(self.resolve(str(args.get("cwd")))):
+                return Verdict(BLOCK, "that folder holds passwords or keys, so Argus never works in it.")
             return self._shell(str(args.get("command") or ""))
+        if tool in ("fetch_page", "open_url"):
+            parts = urlsplit(str(args.get("url") or ""))
+            if len(parts.query) + len(parts.fragment) > LONG_QUERY:
+                return Verdict(ASK, f"open a long web address that could carry your data to {parts.hostname}: "
+                                    f"{str(args.get('url'))[:160]}…", scope=f"web:{parts.hostname}")
+            return Verdict(ALLOW)
         if tool in ("read_file", "list_files", "search_files"):
             path = self.resolve(args.get("path") or ".")
             if self.protected(path):
@@ -166,6 +173,8 @@ class Policy:
         for rx, why in HARDLINE:
             if rx.search(command):
                 return Verdict(BLOCK, f"not allowed: {why}.")
+        if MENTION.search(command):
+            return Verdict(BLOCK, "that command touches a place that holds passwords or keys.")
         for rx, why in ASK_PATTERNS:
             if rx.search(command):
                 return Verdict(ASK, f"{why}: {command[:200]}", scope=f"shell:{why}")

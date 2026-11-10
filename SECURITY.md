@@ -27,9 +27,15 @@ approval that overrides it, and Claude is told not to look for a way around it.
   `nvram`); changing privacy permissions (`tccutil`).
 * Deleting your whole disk, home folder or system folders; erasing or raw-writing disks; fork bombs;
   shutting down or logging out; running scripts piped straight from the internet (`curl … | sh`).
-* Reading passwords from the keychain, SSH/GPG keys, cloud and GitHub credentials, browser cookie and
-  profile folders, or Argus's own secrets (`~/.argus/secrets.env`, phone token, voiceprint, database).
-  This is checked both in shell commands and in the file tools.
+* Anything in a place that holds passwords, keys or logins (listed in `argus/protected.py`): all of
+  `~/.argus`, `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.docker`, `~/.kube`, the GitHub and Google Cloud command
+  line logins, Keychains, Cookies, Safari, the Chrome, Brave, Edge and Firefox profiles, and `.netrc`,
+  `.git-credentials`, `.npmrc`, `.pypirc`. The file tools refuse them (including through a symbolic link),
+  searches skip them, a shell command that names one is blocked, and no command may start inside one.
+  Reading passwords from the keychain with `security` is blocked too.
+* **On the Mac, every shell command also runs inside a sandbox enforced by macOS itself** (`sandbox-exec`)
+  that can't read or change those places, so even a command disguised to slip past the rules above (a
+  wildcard, an encoded path) is stopped by the kernel.
 * Anything that mentions a website on your never-touch list (in a link, a command, typed text or a search).
 * Opening, looking at or touching a never-touch app (password managers, Keychain Access, System
   Settings, plus any you add), including when one is merely visible on screen.
@@ -46,6 +52,8 @@ approval that overrides it, and Claude is told not to look for a way around it.
 * Writing files outside the workspace folder (`~/argus-workspace`).
 * Every click, drag, scroll, key press and typed text on the screen (looking is allowed; touching asks).
 * Creating a scheduled task that will run by itself later (reminders don't ask).
+* Opening or reading a web address with a very long query (over 300 characters): that's how a page could
+  trick an AI into carrying your data out.
 
 **Allowed without asking:** answering, web search, reading public web pages, news, memory, reminders,
 reading files, working inside the workspace folder, opening apps and links, and screenshots when you ask.
@@ -60,6 +68,7 @@ reading files, working inside the workspace folder, opening apps and links, and 
 | Answers are *once* or *for this task* (the same kind of action, until the task ends), never "always". | `argus/agent.py`, `argus/approvals.py` |
 | No answer within 2 minutes = denied. | `argus/approvals.py`, `argus/telegram.py` |
 | Scheduled tasks and the iPhone can't approve anything: risky steps are refused and you're told. | `argus/app.py`, `argus/agent.py` |
+| A dialog that crashes, hangs or can't open counts as "no", and so does any answer other than *once* or *for this task*. | `argus/agent.py`, `argus/approvals.py` |
 | After a failed screen action, the rest of that batch is not carried out. | `argus/agent.py` |
 
 ## 4. Channels
@@ -103,6 +112,9 @@ task.
   repo or in `config.toml`. Argus refuses to start if the secrets file is readable by others.
 * Commands Argus runs get a minimal environment (path, home, language): your API keys and tokens never
   reach them.
+* Argus's own keys (the Claude key, the Telegram bot token, the phone token) are removed from anything a
+  tool returns before Claude sees it, and a tool call that contains one of them is blocked, so a web page
+  can't talk Argus into sending a key anywhere.
 * Argus uses its own pay-per-use Claude API key. It never borrows your Claude Pro or Claude Code login.
 * Each request has a token budget (`max_turn_tokens`) and a step limit, so a runaway task stops before it
   gets expensive. `argusctl usage` shows the estimated spend; set a monthly limit in the Claude console too.
@@ -119,15 +131,23 @@ task.
   macOS asks about the microphone, Screen Recording and Accessibility for *Argus*, not for Terminal or
   Python.
 * The iPhone app pulls Meta's toolkit at an exact version (1.0.1) through Swift Package Manager.
+* The tests check every macOS function name Argus calls through PyObjC against the real PyObjC 13
+  packages, so a typo in Mac-only code can't hide until it runs on your Mac.
 
-## 9. The activity log
+## 9. Settings that can't silently go wrong
+
+A typo or a wrong kind of value in `~/.argus/config.toml` (an unknown setting, `"false"` in quotes, a
+number out of range, an unknown time zone or schedule) stops Argus with a plain message saying which
+setting to fix, instead of starting with a value you didn't mean (`argus/config.py`).
+
+## 10. The activity log
 
 `~/.argus/logs/audit.jsonl` (`argusctl log`) records: requests you made (text), tools that ran (name
 and a short preview), every approval and its answer, every block, estimated cost per request, microphone
 and lock changes, claps, Telegram strangers, phone-gateway requests and bad tokens. It never records audio
 or speech that wasn't for Argus. It rotates at 5 MB.
 
-## 10. What this does *not* protect against
+## 11. What this does *not* protect against
 
 * **Anyone in the room can talk to Argus** unless voice lock is on, and voice lock is a convenience
   filter, not strong authentication (a recording of your voice could pass). Approvals still need your
@@ -137,12 +157,12 @@ or speech that wasn't for Argus. It rotates at 5 MB.
 * **A stolen, unlocked Mac** or a compromised user account gives the same access you have.
 * **Your Telegram account**: if someone takes it over, they can chat with Argus and press its approval
   buttons. Turn on Telegram's two-step verification, or leave Telegram out during setup.
-* **Shell rules are patterns, not a sandbox.** They catch the common dangerous commands; a cleverly
-  disguised command might not match. Read approval dialogs before allowing, and keep important files
-  backed up (Time Machine).
+* **Shell rules are patterns.** They catch the common dangerous commands, and the macOS sandbox guards
+  your keys, but a cleverly disguised command might still reach something else. Read approval dialogs
+  before allowing, and keep important files backed up (Time Machine).
 * **The model can be wrong** or be misled by content it reads.
 
-## 11. Kill switches
+## 12. Kill switches
 
 * Menu bar ◉ → Microphone (off) or Quit Argus; or say "Argus, turn off the microphone".
 * `argusctl quit` stops everything (voice, Telegram, phone gateway, schedules).

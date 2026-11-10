@@ -77,6 +77,8 @@ The full list is in [SECURITY.md](SECURITY.md). The short version:
   can't approve anything. Approvals cover one action or one task, never "always".
 * **Hard limits.** `sudo`, wiping disks, reading your keys or Argus's own secrets, password managers,
   Keychain Access, System Settings and the banking sites you list are blocked outright, before anything runs.
+  On the Mac, every command Argus runs is also boxed in by a macOS sandbox that can't touch your keys,
+  and Argus's own keys are removed from anything a tool shows Claude.
 * **No open doors.** The iPhone gateway only listens on your private Tailscale network and needs a
   256-bit token. Telegram only answers your user ID. Nothing listens on your Wi-Fi or the internet.
 * **Keys never in the repo.** They live in `~/.argus/secrets.env` (owner-only), are typed with hidden
@@ -158,13 +160,23 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **194 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **439 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny), the policy rules, screen control (scaling,
   stopping after a failed action, locked Mac, password apps), web-fetch safety, cost estimates, memory,
   reminders and cron schedules, Telegram (strangers ignored, approval buttons), the iPhone gateway
   (tokens, lockout, image checks), the glasses bridge, clap detection (double clap yes; single claps,
   triple claps, applause and speech no), name detection including mishearings like "August", the
   listening rules, settings, secrets and logs.
+* **Failure cases on purpose** (about 200 of the tests): the Claude API timing out, cutting a reply
+  off, sending junk, refusing the key or rate-limiting; Telegram refusing messages or failing downloads;
+  crashing tools, approval dialogs and schedules; malformed requests to the iPhone gateway; broken
+  settings, secrets and voiceprint files; DNS tricks and links into protected folders; commands that hang,
+  can't start or flood the output; and sounds that look like claps (a "p" before a voice, a door slam,
+  claps right after music). Every request Argus sends to the stand-in Claude is checked against the rules
+  the real API enforces.
+* **Coverage**: the tests reach 96% of Argus's code (lines and branches), 97% with the end-to-end run;
+  before this round of failure tests it was 70%. What's left is mostly Mac-only (the menu bar, a few
+  fallbacks for older macOS). Run `scripts/coverage.sh` (add `--e2e` for the full run) to see it yourself.
 * **Real speech**: sentences spoken by the real voice go through the real voice-detection and
   speech-recognition models into the listening loop.
 * **End to end** (`tests/e2e.sh`, 34 checks): runs `setup.sh` twice, then starts the whole app with the

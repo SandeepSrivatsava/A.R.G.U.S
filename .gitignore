@@ -23,3 +23,8 @@ models/
 .DS_Store
 .vscode/
 .idea/
+
+# Test coverage data (scripts/coverage.sh)
+.coverage
+.coverage.*
+htmlcov/

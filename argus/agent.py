@@ -11,9 +11,9 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 
-from .approvals import DENY, TASK, ApprovalRequest
+from .approvals import DENY, ONCE, TASK, ApprovalRequest
 from .audit import Audit
 from .computer import NOT_EXECUTED, TOOLSET, Computer
 from .llm import Claude, LLMError, StreamAccumulator
@@ -154,7 +154,8 @@ def prune_images(messages: List[Dict[str, Any]], keep: int = KEEP_IMAGES) -> Lis
 class Agent:
     def __init__(self, llm: Claude, store: Store, policy: Policy, tools: Dict[str, Tool], *, settings,
                  audit: Audit, computer: Optional[Computer] = None, notify: Callable[[str], bool] = lambda t: False,
-                 glasses=None, glasses_status: Callable[[], Optional[str]] = lambda: None):
+                 glasses=None, glasses_status: Callable[[], Optional[str]] = lambda: None,
+                 secrets: Sequence[str] = ()):
         self.llm = llm
         self.store = store
         self.policy = policy
@@ -165,7 +166,29 @@ class Agent:
         self.notify = notify
         self.glasses = glasses
         self.glasses_status = glasses_status
+        # Argus's own keys and tokens: never shown to Claude, never sent anywhere by a tool.
+        self.secrets = sorted({str(v) for v in secrets if v and len(str(v)) >= 8}, key=len, reverse=True)
         self._lock = threading.Lock()
+
+    def add_secret(self, value: str) -> None:
+        if value and len(value) >= 8 and value not in self.secrets:
+            self.secrets = sorted(set(self.secrets) | {value}, key=len, reverse=True)
+
+    def _redact(self, content: Any) -> Any:
+        if not self.secrets:
+            return content
+        if isinstance(content, str):
+            for value in self.secrets:
+                content = content.replace(value, "[secret removed]")
+            return content
+        if isinstance(content, list):
+            return [dict(b, text=self._redact(b["text"])) if isinstance(b, dict) and isinstance(b.get("text"), str)
+                    else b for b in content]
+        return content
+
+    def _mentions_secret(self, args: Any) -> bool:
+        text = json.dumps(args, ensure_ascii=False)
+        return any(value in text for value in self.secrets)
 
     # ---- request building --------------------------------------------------------------------------
     def _tools_for(self, channel: str) -> List[Dict[str, Any]]:
@@ -216,6 +239,8 @@ class Agent:
         except LLMError as exc:
             log.warning("couldn't summarise the conversation: %s", exc)
             return messages
+        if not summary:   # keep the full conversation rather than replace it with nothing
+            return messages
         compacted = [{"role": "user", "content": f"(Summary of our conversation so far)\n{summary}"},
                      {"role": "assistant", "content": [{"type": "text", "text": "Understood."}]}] + messages[split:]
         self.store.replace_history(session_id, compacted)
@@ -226,7 +251,8 @@ class Agent:
     # ---- one tool call -----------------------------------------------------------------------------
     def _call(self, block: Dict[str, Any], *, channel: str, session_id: str, events: Events, ctx: Context,
               grants: Set[str], earlier_screen_failure: bool) -> Dict[str, Any]:
-        name, args = str(block.get("name")), block.get("input") or {}
+        name, args = str(block.get("name")), block.get("input")
+        args = {} if args is None else args
         toolset = str(block.get("toolset_name") or "")
         result: Dict[str, Any] = {"type": "tool_result", "tool_use_id": block["id"]}
         if toolset:
@@ -235,6 +261,12 @@ class Agent:
         def fail(text: str) -> Dict[str, Any]:
             result.update(content=text, is_error=True)
             return result
+
+        if not isinstance(args, dict):
+            return fail("The tool input must be a JSON object.")
+        if self._mentions_secret(args):
+            self.audit.log("tool_blocked", channel=channel, tool=name, reason="contains one of Argus's keys")
+            return fail("Blocked by Argus rules: that would use one of Argus's private keys.")
 
         if toolset == "computer" and earlier_screen_failure:
             return fail(NOT_EXECUTED)
@@ -256,7 +288,14 @@ class Agent:
         if verdict.action == ASK and verdict.scope not in grants:
             request = ApprovalRequest(run_id=session_id, command=what, description=verdict.reason,
                                       choices=["once", "session", "deny"], pattern_key=verdict.scope, origin=channel)
-            choice = events.approve(request)
+            try:
+                choice = events.approve(request)
+            except Exception as exc:   # a broken dialog must never count as a yes
+                log.exception("asking for approval failed")
+                self.audit.log("approval_failed", channel=channel, tool=name, error=str(exc)[:200])
+                choice = DENY
+            if choice not in (ONCE, TASK):
+                choice = DENY
             self.audit.log("approval", channel=channel, tool=name, action=what[:200], choice=choice)
             if choice == DENY:
                 return fail("The user declined this action. Don't retry it; ask what they'd prefer instead.")
@@ -273,7 +312,7 @@ class Agent:
         events.tool_finished(name, not out.is_error)
         if time.monotonic() - started > 5:
             self.audit.log("tool_slow", tool=name, seconds=round(time.monotonic() - started, 1))
-        result["content"] = out.content
+        result["content"] = self._redact(out.content)
         if out.is_error:
             result["is_error"] = True
         return result

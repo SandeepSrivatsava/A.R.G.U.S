@@ -37,6 +37,8 @@ def spoken_error(error: str) -> str:
         return "The Claude account is out of credit."
     if "token budget" in text or "too many steps" in text:
         return "That was getting long, so I stopped there. Tell me if you want me to keep going."
+    if "cut off" in text:
+        return "I lost the connection partway through. Please ask again."
     if "reach" in text or "connection" in text or "quiet" in text:
         return "I can't reach my brain right now. Check the internet connection."
     return "Sorry, something went wrong with that."

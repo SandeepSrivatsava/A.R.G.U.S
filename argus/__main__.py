@@ -60,7 +60,7 @@ def _record(prompts: List[str]):
 def cmd_enroll(args) -> int:
     from .app import name_matcher
     from .hearing import SherpaTranscriber, VoicePrint, model_paths
-    from .wake import NOT_THE_NAME, words
+    from .wake import misheard_name
     settings = config_mod.load()
     paths = model_paths(settings.models_dir)
     running = True
@@ -87,11 +87,9 @@ def cmd_enroll(args) -> int:
         heard_ok += ok
         print(f"   {'✓' if ok else '✗'} {text!r}")
         if not ok:
-            spoken = words(prompt)
-            got = words(text)
-            idx = spoken.index(settings.name.lower()) if settings.name.lower() in spoken else -1
-            if 0 <= idx < len(got) and got[idx] not in NOT_THE_NAME and len(got[idx]) >= 3:
-                learned.add(got[idx])
+            word = misheard_name(prompt, text, settings.name)
+            if word:
+                learned.add(word)
     if learned:
         path = settings.learned_variants_path
         existing = set(path.read_text().split()) if path.exists() else set()
@@ -184,6 +182,9 @@ def cmd_doctor(args) -> int:
     except OSError:
         line(False, "Argus app isn't running (argusctl restart)")
         return 0 if ok else 1
+    if settings.voice_lock:
+        line(bool(status.get("voice_lock")), "voice lock is on" if status.get("voice_lock") else
+             "voice lock is switched on, but there's no usable voiceprint: run argusctl enroll")
     if settings.screen_control:
         try:
             perms = _send_quiet("permissions")
@@ -249,6 +250,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     s = sub.add_parser("run", help="run Argus in the foreground")
     s.add_argument("--headless", action="store_true", help="no menu bar")
     args = p.parse_args(argv)
+    try:
+        config_mod.load()
+    except ValueError as exc:
+        print(f"There's a problem in Argus's settings: {exc}")
+        return 2
 
     if args.cmd == "run":
         from .app import main as app_main

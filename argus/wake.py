@@ -71,6 +71,26 @@ def levenshtein(a: str, b: str) -> int:
     return previous[-1]
 
 
+def misheard_name(prompt: str, heard: str, name: str) -> Optional[str]:
+    """When someone read `prompt` aloud and the recogniser wrote `heard`, the word it wrote for the name,
+    if that word plausibly *is* the name misheard ("Markus" for "Argus"). Looks one word either side, since
+    recognisers drop or merge little words, and never returns a word that merely happened to be there
+    ("what's", "play"): learning one of those would make Argus answer ordinary speech."""
+    name = name.lower()
+    said, got = words(prompt), words(heard)
+    if name not in said:
+        return None
+    at = said.index(name)
+    best = None
+    for word in got[max(0, at - 1):at + 2]:
+        if word in NOT_THE_NAME or len(word) < 3 or word == name:
+            continue
+        distance = levenshtein(word, name)
+        if distance <= max(2, len(name) // 2) and (best is None or distance < best[0]):
+            best = (distance, word)
+    return best[1] if best else None
+
+
 def is_hallucination(text: str) -> bool:
     return " ".join(words(text)) in _HALLUCINATIONS
 

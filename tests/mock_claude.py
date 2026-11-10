@@ -64,6 +64,67 @@ def rules(body: Dict[str, Any]) -> Tuple[Blocks, str]:
     return [{"type": "text", "text": "Argus mock reply."}], "end_turn"
 
 
+BLOCK_TYPES = {"text", "image", "tool_use", "tool_result", "server_tool_use", "web_search_tool_result",
+               "thinking", "redacted_thinking", "document"}
+
+
+def validate(body: Dict[str, Any]) -> str:
+    """The checks the real Messages API makes that Argus could get wrong. Returns "" when the request is fine."""
+    if not body.get("model") or not isinstance(body.get("max_tokens"), int):
+        return "model and max_tokens are required"
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return "messages: at least one message is required"
+    if messages[0].get("role") != "user":
+        return "messages: the first message must use the user role"
+    breakpoints = 0
+    for block in (body.get("system") or []) if isinstance(body.get("system"), list) else []:
+        breakpoints += "cache_control" in block
+    names = set()
+    for tool in body.get("tools") or []:
+        breakpoints += "cache_control" in tool
+        name = tool.get("name") or tool.get("type")
+        if not name:
+            return "tools: each tool needs a name or a type"
+        if name in names:
+            return f"tools: duplicate tool {name}"
+        names.add(name)
+        if "name" in tool and "type" not in tool and not isinstance(tool.get("input_schema"), dict):
+            return f"tools.{name}: input_schema is required"
+    pending: Dict[str, str] = {}
+    for i, m in enumerate(messages):
+        role, content = m.get("role"), m.get("content")
+        if role not in ("user", "assistant"):
+            return f"messages.{i}: unknown role {role!r}"
+        blocks = [{"type": "text", "text": content}] if isinstance(content, str) else content
+        if not isinstance(blocks, list) or not blocks:
+            return f"messages.{i}: content must be a non-empty string or list"
+        for j, b in enumerate(blocks):
+            if not isinstance(b, dict) or b.get("type") not in BLOCK_TYPES:
+                return f"messages.{i}.content.{j}: unknown block"
+            breakpoints += "cache_control" in b
+            if b["type"] == "text" and not str(b.get("text") or "").strip():
+                return f"messages.{i}.content.{j}: text content blocks must be non-empty"
+        if pending:   # the previous assistant turn called tools: this turn must answer every one of them first
+            results = [b for b in blocks if b.get("type") == "tool_result"]
+            if role != "user" or blocks[:len(results)] != results:
+                return f"messages.{i}: tool_result blocks must come first, right after the tool_use blocks"
+            got = {b.get("tool_use_id") for b in results}
+            if got != set(pending):
+                return f"messages.{i}: tool_use ids without tool_result: {sorted(set(pending) - got)}"
+            for b in results:
+                if b.get("toolset_name", "") != pending[b["tool_use_id"]]:
+                    return f"messages.{i}: tool_result must echo toolset_name {pending[b['tool_use_id']]!r}"
+            pending = {}
+        elif any(b.get("type") == "tool_result" for b in blocks):
+            return f"messages.{i}: tool_result without a matching tool_use"
+        if role == "assistant":
+            pending = {b["id"]: b.get("toolset_name", "") for b in blocks if b.get("type") == "tool_use"}
+    if breakpoints > 4:
+        return f"a maximum of 4 blocks with cache_control may be provided. Found {breakpoints}."
+    return ""
+
+
 class ClaudeMock(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -75,6 +136,7 @@ class ClaudeMock(ThreadingHTTPServer):
         self.requests: List[Dict[str, Any]] = []
         self.log_path = log_path
         self.fail_next: List[int] = []      # HTTP statuses to return before succeeding (retry tests)
+        self.invalid: List[str] = []        # requests the real API would have rejected (should stay empty)
         self._ids = 0
         self._lock = threading.Lock()
 
@@ -118,6 +180,10 @@ class _Handler(BaseHTTPRequestHandler):
         if self.server.fail_next:
             status = self.server.fail_next.pop(0)
             return self._json(status, {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}})
+        problem = validate(body)
+        if problem:
+            self.server.invalid.append(problem)
+            return self._json(400, {"type": "error", "error": {"type": "invalid_request_error", "message": problem}})
         self.server.requests.append(body)
         if self.server.log_path:
             with open(self.server.log_path, "a", encoding="utf-8") as fh:

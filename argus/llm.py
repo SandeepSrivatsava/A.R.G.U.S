@@ -39,6 +39,16 @@ def ssl_context() -> ssl.SSLContext:
         return ssl.create_default_context()
 
 
+def bypasses_proxy(host: str, no_proxy: str) -> bool:
+    """NO_PROXY rules: "*" means everything; "example.com" covers it and its subdomains (not "notexample.com")."""
+    host = (host or "").lower().rstrip(".")
+    for entry in no_proxy.split(","):
+        entry = entry.strip().lower().lstrip(".").split(":")[0]
+        if entry and (entry == "*" or host == entry or host.endswith("." + entry)):
+            return True
+    return False
+
+
 def connect(url: str, timeout: float) -> http.client.HTTPConnection:
     """HTTP(S) connection to `url`'s host, through HTTPS_PROXY if one is set."""
     parts = urlsplit(url)
@@ -47,7 +57,7 @@ def connect(url: str, timeout: float) -> http.client.HTTPConnection:
         return http.client.HTTPConnection(host, port or 80, timeout=timeout)
     proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
     no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
-    if proxy and not any(host.endswith(d.strip().lstrip(".")) for d in no_proxy.split(",") if d.strip()):
+    if proxy and not bypasses_proxy(host, no_proxy):
         p = urlsplit(proxy if "//" in proxy else "http://" + proxy)
         conn = http.client.HTTPSConnection(p.hostname, p.port or 8080, timeout=timeout, context=ssl_context())
         conn.set_tunnel(host, port or 443)
@@ -113,9 +123,16 @@ class Claude:
     def create(self, body: Dict[str, Any]) -> Dict[str, Any]:
         conn, resp = self._open(dict(body, stream=False), stream=False)
         try:
-            return json.loads(resp.read())
+            reply = json.loads(resp.read())
+        except ValueError as exc:
+            raise LLMError("the Claude API sent a reply Argus couldn't read", retryable=False) from exc
+        except (OSError, http.client.HTTPException) as exc:
+            raise LLMError(f"lost the connection to the Claude API ({exc})") from exc
         finally:
             conn.close()
+        if not isinstance(reply, dict):
+            raise LLMError("the Claude API sent a reply Argus couldn't read", retryable=False)
+        return reply
 
     def stream(self, body: Dict[str, Any], cancel: Optional[threading.Event] = None) -> Iterator[Dict[str, Any]]:
         """Yields the stream's events as dicts. Stops early (without error) if `cancel` is set."""
@@ -130,7 +147,7 @@ class Claude:
                 except socket.timeout as exc:
                     raise LLMError("the Claude API went quiet for too long", retryable=False) from exc
                 if not raw:
-                    return
+                    raise LLMError("the reply from the Claude API was cut off", retryable=False)
                 line = raw.decode("utf-8", "replace").rstrip("\r\n")
                 if line.startswith("data:"):
                     data_lines.append(line[5:].lstrip())
@@ -192,7 +209,9 @@ class StreamAccumulator:
             elif dtype == "signature_delta":
                 block["signature"] = delta.get("signature", "")
             elif dtype == "citations_delta":
-                block.setdefault("citations", []).append(delta.get("citation"))
+                if not isinstance(block.get("citations"), list):
+                    block["citations"] = []
+                block["citations"].append(delta.get("citation"))
         elif kind == "content_block_stop":
             index = int(event["index"])
             if index in self._json:

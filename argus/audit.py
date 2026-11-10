@@ -41,6 +41,7 @@ class Audit:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 self._rotate()
                 fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+                os.fchmod(fd, 0o600)
                 with os.fdopen(fd, "a", encoding="utf-8") as fh:
                     fh.write(line)
             except OSError:

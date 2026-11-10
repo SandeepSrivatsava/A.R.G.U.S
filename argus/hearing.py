@@ -11,7 +11,7 @@ import queue
 import threading
 import wave
 from pathlib import Path
-from typing import Callable, Dict, Iterator, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
@@ -271,7 +271,14 @@ class VoicePrint:
         self._lock = threading.Lock()
         self._ref: Optional[np.ndarray] = None
         if self.path.exists():
-            self._ref = np.load(self.path)
+            try:
+                ref = np.load(self.path)          # never unpickles: allow_pickle stays off
+                if ref.ndim == 1 and ref.size >= 16 and np.isfinite(ref).all():
+                    self._ref = ref.astype(np.float32)
+                else:
+                    log.error("the voiceprint in %s isn't valid; run argusctl enroll again", self.path)
+            except (OSError, ValueError) as exc:
+                log.error("couldn't read the voiceprint (%s); run argusctl enroll again", exc)
 
     @property
     def enrolled(self) -> bool:
@@ -304,18 +311,6 @@ class VoicePrint:
 
     def matches(self, samples: np.ndarray) -> bool:
         return self.score(samples) >= self.threshold
-
-
-def utterances(source, segmenter: Segmenter, stop: threading.Event) -> Iterator[np.ndarray]:
-    """Yields each complete utterance from an audio source until `stop` is set or a file source ends."""
-    while not stop.is_set():
-        chunk = source.read()
-        if chunk is None:
-            if getattr(source, "finished", False):
-                yield from segmenter.flush()
-                return
-            continue
-        yield from segmenter.feed(chunk)
 
 
 def model_paths(models_dir: str) -> Dict[str, str]:
