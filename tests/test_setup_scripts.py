@@ -103,10 +103,39 @@ def test_setup_refuses_a_bad_phone_and_explains_linux(tmp_path, venv):
     assert run("setup.sh", mac_env(tmp_path, venv), "--phone").returncode == 2
     linux = run("setup.sh", dict(mac_env(tmp_path, venv), ARGUS_ALLOW_LINUX="0"), "--phone=iphone")
     assert linux.returncode == 1 and "scripts/setup_server.sh" in linux.stderr
+    if "microsoft" not in Path("/proc/version").read_text().lower():
+        assert "This is a Linux computer. ./setup.sh is for a Mac" in linux.stderr
     helped = run("setup.sh", mac_env(tmp_path, venv), "--help")
     assert helped.returncode == 0 and "--phone iphone|android" in helped.stdout and "asks first" in helped.stdout
     dry = run("setup.sh", mac_env(tmp_path, venv, ARGUS_PHONE="2"), "--dry-run")
     assert dry.returncode == 0 and "[dry-run] write" in dry.stdout and not (tmp_path / "home" / "config.toml").exists()
+
+
+@pytest.mark.parametrize("system,expected", [
+    ("MINGW64_NT-10.0-22631", "This is Windows. Argus runs on a Mac"),
+    ("MSYS_NT-10.0", "This is Windows. Argus runs on a Mac"),
+    ("CYGWIN_NT-10.0", "an Android phone on its own"),
+    ("FreeBSD", "Unsupported system: FreeBSD"),
+])
+def test_setup_explains_computers_it_cannot_run_on(tmp_path, venv, system, expected):
+    """Setup never asks which computer this is: it looks, and says what to do on Windows and others."""
+    out = run("setup.sh", dict(mac_env(tmp_path, venv), ARGUS_TEST_SYSTEM=system), "--phone=iphone")
+    assert out.returncode == 1 and expected in out.stderr
+    assert not (tmp_path / "home" / "config.toml").exists()
+
+
+def test_setup_says_the_mac_is_set_and_the_question_is_about_the_phone(tmp_path, venv):
+    out = run("setup.sh", dict(mac_env(tmp_path, venv), ARGUS_TEST_SYSTEM="Darwin"), "--phone=2", "--dry-run")
+    # on Linux the Mac checks after the phone question stop the run; the explanation comes before them
+    assert "This computer: a Mac (macOS). Argus will run on it" in out.stdout
+    assert "The next question is only about your phone." in out.stdout
+    assert "1/10  Your phone (Argus runs on this Mac; the phone is how you reach it when away)" in out.stdout
+
+
+def test_windows_gets_an_explanation_too():
+    text = (REPO / "setup.cmd").read_bytes().decode()
+    assert text.startswith("@echo off\r\n") and "runs on a Mac" in text and "docs\\ANDROID.md" in text
+    assert text.rstrip().endswith("pause")
 
 
 def test_setup_asks_which_phone_on_a_terminal(tmp_path, venv):

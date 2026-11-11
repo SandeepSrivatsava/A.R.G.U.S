@@ -253,6 +253,19 @@ loud, and asks for your fingerprint before sending a text. Install: [docs/ANDROI
 
 ## What you need
 
+**Which computer?** Argus runs on a **Mac**. Setup doesn't ask about the computer: it checks it, says
+"This computer: a MacBook Air (macOS)", and then asks only which phone you carry. There is **no Windows
+version yet** (Argus needs macOS for always listening, Touch ID approvals, using apps on the screen and
+Apple Maps); on Windows, `setup.cmd` explains the options. Without a Mac, Argus can run on an Android
+phone on its own, or on a small always-on Linux server.
+
+| You have | Run | Argus runs on |
+|---|---|---|
+| A Mac and an iPhone | `./setup.sh` on the Mac, choose **1) iPhone** | the Mac; the iPhone reaches it with Siri |
+| A Mac and an Android phone | `./setup.sh` on the Mac, choose **2) Android**; then setup on the phone | the Mac, and the phone too |
+| Only an Android phone | setup in Termux on the phone ([docs/ANDROID.md](docs/ANDROID.md)) | the phone |
+| Windows, or no Mac at all | an always-on Linux server ([docs/SERVER.md](docs/SERVER.md)) for your phone | the server |
+
 * An Apple Silicon Mac on macOS 13 or newer (an 8 GB MacBook Air is fine) with Apple's Command Line
   Tools (`xcode-select --install`).
 * A **Claude API key** with some credit, from [platform.claude.com](https://platform.claude.com)
@@ -336,7 +349,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **737 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **744 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed

@@ -66,5 +66,7 @@ In rough order of value:
    with its own permissions.
 9. **Calls, both ways.** Screen unknown callers, summarise voicemail, and take a message.
 10. **Other people.** Family voices with their own, smaller permissions.
-11. **Works offline.** A small local model for simple commands when the internet is down. Needs a Mac with
+11. **Windows.** A Windows version: listening, speaking and the phone gateway are portable; screen control,
+    approvals (Windows Hello instead of Touch ID) and the maps helper would need Windows versions.
+12. **Works offline.** A small local model for simple commands when the internet is down. Needs a Mac with
     more memory than 8 GB.

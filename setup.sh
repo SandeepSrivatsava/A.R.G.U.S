@@ -98,14 +98,40 @@ find_tailscale_ip() {
   return 1
 }
 
-case "$(uname -s)" in      # before any question: is this a Mac? (Android and servers have their own setup)
-  Darwin) ;;
-  Linux) [ "${ARGUS_ALLOW_LINUX:-0}" = 1 ] || die "This sets Argus up on a Mac. On an always-on Linux server, run: scripts/setup_server.sh" ;;
-  *) die "Unsupported system: $(uname -s)" ;;
+# Which computer this is: setup never asks, it looks. Argus itself runs on this computer (a Mac); the phone
+# is how you reach it when you're away. ARGUS_TEST_SYSTEM stands in for uname in the tests.
+SYSTEM="${ARGUS_TEST_SYSTEM:-$(uname -s)}"
+case "$SYSTEM" in
+  Darwin)
+    model="$(sysctl -n hw.model 2>/dev/null || true)"
+    case "$model" in MacBookAir*) model="MacBook Air" ;; MacBookPro*) model="MacBook Pro" ;; Macmini*) model="Mac mini" ;;
+      iMac*) model="iMac" ;; Mac1*|Mac2*) model="Mac" ;; *) model="Mac" ;; esac
+    echo
+    echo "  This computer: a $model (macOS). Argus will run on it: listening, speaking and using the Mac."
+    echo "  Nothing to choose for the computer. The next question is only about your phone."
+    ;;
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    die "This is Windows. Argus runs on a Mac: it needs macOS for listening all the time, Touch ID approvals,
+  using apps on the screen and Apple Maps, and there is no Windows version yet. What works today:
+    * a Mac (an Apple Silicon one, like a MacBook Air): run ./setup.sh there;
+    * an Android phone on its own: Argus runs on the phone (docs/ANDROID.md);
+    * an always-on Linux server for an iPhone or Android phone (docs/SERVER.md).
+  A Windows version is on the roadmap (docs/ROADMAP.md)." ;;
+  Linux)
+    if [ "${ARGUS_ALLOW_LINUX:-0}" != 1 ]; then
+      if grep -qi microsoft /proc/version 2>/dev/null; then
+        die "This is Windows (WSL). Argus runs on a Mac; there is no Windows version yet (see docs/ROADMAP.md).
+  Without a Mac: Argus can run on an Android phone (docs/ANDROID.md) or on an always-on Linux server
+  (docs/SERVER.md)."
+      fi
+      die "This is a Linux computer. ./setup.sh is for a Mac. On an always-on Linux server, run:
+  sudo scripts/setup_server.sh   (see docs/SERVER.md)"
+    fi ;;
+  *) die "Unsupported system: $SYSTEM. Argus runs on a Mac (and on Android phones and Linux servers with their own setup)." ;;
 esac
 
 # =====================================================================
-step "1/10  Your phone"
+step "1/10  Your phone (Argus runs on this Mac; the phone is how you reach it when away)"
 OLD_PHONE=""
 [ -f "$CONFIG" ] && OLD_PHONE="$(toml_get "$CONFIG" phone type)"
 GIVEN="${PHONE_FLAG:-${ARGUS_PHONE:-}}"
@@ -113,7 +139,7 @@ PHONE="$(normalize_phone "$GIVEN")"
 [ -z "$GIVEN" ] || [ -n "$PHONE" ] || die "--phone must be iphone or android"
 if [ -z "$PHONE" ]; then
   if is_tty; then
-    echo "  Which phone do you use with Argus?"
+    echo "  Which phone do you carry? (Not the computer: this Mac is already set.)"
     echo "    1) iPhone   Siri and Shortcuts, Apple Maps, calls from your own number through this Mac"
     echo "    2) Android  Argus also runs on the phone itself: texts, WhatsApp, notifications, Google Maps"
     default_choice=""
@@ -150,7 +176,7 @@ ok "Directions open in $(app_name "$MAPS_APP")${MAPS_APPS_TOML:+ (also offered: 
 # =====================================================================
 step "2/10  Checking this Mac"
 IS_MAC=0
-case "$(uname -s)" in
+case "$SYSTEM" in
   Darwin)
     [ "$(uname -m)" = arm64 ] || die "Argus needs an Apple Silicon Mac (this one reports $(uname -m))."
     IS_MAC=1
@@ -162,7 +188,7 @@ case "$(uname -s)" in
     [ "${ARGUS_ALLOW_LINUX:-0}" = 1 ] || die "This sets Argus up on a Mac. On an always-on Linux server, run: scripts/setup_server.sh"
     NO_SERVICE=1
     warn "Linux test mode: the Mac app, permissions and login items are skipped" ;;
-  *) die "Unsupported system: $(uname -s)" ;;
+  *) die "Unsupported system: $SYSTEM" ;;
 esac
 command -v curl > /dev/null || die "curl is missing"
 if [ "${ARGUS_SKIP_VALIDATION:-0}" != 1 ]; then
