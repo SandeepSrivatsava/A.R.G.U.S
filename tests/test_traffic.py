@@ -91,7 +91,7 @@ def test_road_names():
     assert not share_a_road(Route(1, meters=20_000, via="I-5 N"), Route(1, meters=26_000, via="I-5 N"))
     assert not share_a_road(Route(1, meters=20_000, via="I-5 N"), Route(1, meters=20_000, via="I-205 N"))
     assert not share_a_road(Route(1, via="I-5 N"), Route(1, via="I-5 N"))
-    assert news_roads([Route(1, via="I-5 N and Burnside St"), Route(1, via="Fremont Bridge")]) == ["I-5", "Fremont Bridge"]
+    assert news_roads([Route(1, via="I-5 N and Burnside St"), Route(1, via="Hawthorne Bridge")]) == ["I-5", "Hawthorne Bridge"]
 
 
 # ---- TomTom ---------------------------------------------------------------------------------------------------
@@ -220,20 +220,20 @@ def test_road_news_keeps_only_headlines_about_these_roads():
                     ("Interstate 5 bridge funding debated in Salem", "OPB", 3),              # the road, but no incident
                     ("Overnight closure planned on I-205 at Glenn Jackson Bridge", "ODOT", 0.5),
                     ("Semi overturns on northbound 205 near Airport Way", "KATU", 5),
-                    ("Fremont Bridge closed for inspection this weekend", "Oregonian", 30),  # older than a day
+                    ("Hawthorne Bridge closed for inspection this weekend", "Oregonian", 30),  # older than a day
                     ("Construction on Highway 26 to last all summer", "KPTV", 4))            # not one of our roads
-    found = road_news(["I-5", "I-205", "Fremont Bridge", "OR-99E"], fetch=fetch, now=1_800_000_000)
+    found = road_news(["I-5", "I-205", "Hawthorne Bridge", "OR-99E"], fetch=fetch, now=1_800_000_000)
     assert [(h.title, h.source, h.roads) for h in found] == [
         ("Crash blocks two lanes of I-5 near Rose Quarter", "KGW", ["I-5"]),
         ("Overnight closure planned on I-205 at Glenn Jackson Bridge", "ODOT", ["I-205"]),
         ("Semi overturns on northbound 205 near Airport Way", "KATU", ["I-205"])]
     assert found[0].hours == pytest.approx(2) and found[1].hours == pytest.approx(0.5)
     assert len(asked) == 1 and asked[0].startswith("https://news.google.com/rss/search?q=%28%22I-5%22+OR+%22I-205%22+OR+"
-                                                   "%22Fremont+Bridge%22%29+%28crash+OR+accident+OR+closure")
+                                                   "%22Hawthorne+Bridge%22%29+%28crash+OR+accident+OR+closure")
     assert "when%3A1d" in asked[0] and "OR-99E" not in asked[0] and "45." not in asked[0]     # three roads, nothing else
     assert road_news([], fetch=fetch) == [] and len(asked) == 1
-    named = road_news(["Fremont Bridge"], fetch=lambda url: feed(("Fremont Bridge closed after crash", "KGW", 1)), now=1_800_000_000)
-    assert named[0].roads == ["Fremont Bridge"]
+    named = road_news(["Hawthorne Bridge"], fetch=lambda url: feed(("Hawthorne Bridge closed after crash", "KGW", 1)), now=1_800_000_000)
+    assert named[0].roads == ["Hawthorne Bridge"]
     undated = b"<rss><channel><item><title>I-5 closed by crash</title></item></channel></rss>"
     assert road_news(["I-5"], fetch=lambda url: undated)[0].hours is None
     assert len(road_news(["I-5"], fetch=lambda url: feed(*[(f"Crash number {n} on I-5", "KGW", 1) for n in range(9)]),
