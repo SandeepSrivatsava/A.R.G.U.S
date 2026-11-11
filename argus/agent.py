@@ -32,6 +32,7 @@ PRICES = {
     "claude-sonnet-5-5": (2.00, 2.50, 0.10, 10.00),
     "claude-haiku-5-5": (0.10, 0.125, 0.01, 0.50),
     "claude-opus-5-5": (4.00, 5.00, 0.20, 20.00),
+    "claude-fable-5-2": (8.00, 10.00, 0.20, 40.00),
 }
 MAX_RESUMES = 2       # how often a reply that broke off halfway is picked up again
 RESUME_NOTE = ("(Your reply above was cut off by a network problem. Continue exactly where it stopped: don't repeat "

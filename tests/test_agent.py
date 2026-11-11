@@ -242,6 +242,7 @@ def test_cost_estimates_follow_the_price_list():
                                                 "cache_read_input_tokens": 1_000_000})
     assert sonnet == pytest.approx(2.00 + 10.00 + 2.50 + 0.10)
     assert request_cost("claude-opus-5-5", {"input_tokens": 1_000_000, "output_tokens": 1_000_000}) == pytest.approx(24.0)
+    assert request_cost("claude-fable-5-2", {"input_tokens": 1_000_000, "output_tokens": 1_000_000}) == pytest.approx(48.0)
     # Haiku 5.5 is priced by prompt length: over 100k prompt tokens the whole request pays the higher rate.
     assert request_cost("claude-haiku-5-5", {"input_tokens": 100_000}) == pytest.approx(0.01)
     assert request_cost("claude-haiku-5-5", {"input_tokens": 50_000, "cache_read_input_tokens": 60_000}) == \

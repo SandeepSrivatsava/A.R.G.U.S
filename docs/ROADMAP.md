@@ -61,9 +61,18 @@ In rough order of value:
    weekly "here's what I learned about you" that you can correct.
 7. **Home and car.** Lights, locks, thermostat (HomeKit, Matter or Home Assistant) and the car's own app
    (lock, climate, range), each behind the same approval rules.
-8. **Long jobs.** "Research this tonight and tell me in the morning": work that runs for an hour, with a
-   plan you approve once and a report at the end. And a safe way to add new tools (MCP servers), each
-   with its own permissions.
+8. **Long, hard projects.** Argus takes on big work, not only quick questions: "plan my move and compare
+   these five towns", "research this tonight and tell me in the morning", "build me a spreadsheet of every
+   breeder within 200 miles". How it would work:
+   * **The right model for the job.** Everyday questions stay on Sonnet (quick and cheap). A hard project
+     moves to Opus (about 2× the cost) or Fable (about 4×, the most capable), chosen by how hard it is.
+   * **A plan first, approved once.** Argus says what it will do, which model, roughly how long and what
+     it may cost ("about $1.50, Opus, an hour"), and starts only after you say yes.
+   * **Its own budget.** Each project has a spending cap; Argus stops and asks before going past it.
+   * **Hours or days, safely.** It keeps its notes and progress on disk, so a project survives a restart
+     or the Mac sleeping, and can run on the always-on server overnight.
+   * **A finished result:** a report, a document or a spreadsheet, plus a spoken summary when you're back.
+   * And a safe way to add new tools (MCP servers), each with its own permissions.
 9. **Calls, both ways.** Screen unknown callers, summarise voicemail, and take a message.
 10. **Other people.** Family voices with their own, smaller permissions.
 11. **Windows.** A Windows version: listening, speaking and the phone gateway are portable; screen control,
