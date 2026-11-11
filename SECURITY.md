@@ -188,10 +188,14 @@ or speech that wasn't for Argus. It rotates at 5 MB.
 | Protection | Where |
 |---|---|
 | The phone sends its location only with a request (the Shortcut's Get Current Location step, or Android when a request needs it). Nothing tracks you in the background; Android's drive assist (off unless you switch it on) checks GPS only while the phone is charging. | `argus/phone.py`, `argus/android_app.py` |
-| The location goes to the maps service for that one trip. Claude is told only "your current location", and navigation links leave the start empty so the maps app uses where the phone is: the coordinates never enter the conversation. | `argus/maps.py` |
+| The location goes to the maps services that are set up (Apple, Google, TomTom) for that one trip. Claude is told only "your current location", and navigation links leave the start empty so the maps app uses where the phone is: the coordinates never enter the conversation. | `argus/maps.py` |
+| The incident check sends TomTom small boxes that follow the routes, not your position. The news search sends Google News only the names of up to three main roads on the way: never where you are, where you're going, or the route. | `argus/traffic.py` |
+| Turn-by-turn steps and incident descriptions reach Claude as text, so road names along the route do. From "here", the turns in the first 250 metres are left out, because they would name the street you are on. | `argus/maps.py` (`past_the_start`) |
+| Headlines and incident texts are other people's words: cut short, labelled unverified, and never able to change the ranking (headlines) or do anything but add minutes to a route (incidents). | `argus/traffic.py`, `argus/prompts.py` |
+| Waze is never read: it has no public service and forbids automatic access. Argus only makes a link that opens Waze. | `argus/maps.py` |
 | The activity log records that a request came with a location, never the location itself. | `argus/phone.py` |
 | A malformed location (out of range, not a number, "0,0") is ignored. | `argus/maps.py` (`clean_location`) |
-| Maps keys (`GOOGLE_MAPS_API_KEY`, `APPLE_MAPS_TOKEN`) live in `secrets.env` like the others. `argusctl maps-token` signs the Apple Maps token with OpenSSL; your Maps private key is read only by OpenSSL and isn't copied. | `argus/maps.py`, `argus/__main__.py` |
+| Maps keys (`GOOGLE_MAPS_API_KEY`, `APPLE_MAPS_TOKEN`, `TOMTOM_API_KEY`) live in `secrets.env` like the others. TomTom takes its key in the request address (over HTTPS); it is removed from any error message. `argusctl maps-token` signs the Apple Maps token with OpenSSL; your Maps private key is read only by OpenSSL and isn't copied. | `argus/maps.py`, `argus/__main__.py` |
 
 ## 14. Argus on Android
 

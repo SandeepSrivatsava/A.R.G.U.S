@@ -7,10 +7,12 @@ Tailscale, on the Mac or on the always-on server.
 * From the phone Argus can look and answer, but anything that needs approval is refused
   (approve risky things at the Mac with Touch ID).
 
-POST /ask   {"text": "...", "location": {"lat": 45.5, "lon": -122.6}}  -> {"reply": "...", "open": "<link>"}
+POST /ask   {"text": "...", "location": {"lat": 45.5, "lon": -122.6}}  -> {"reply": "...", "open": "<link>",
+                                                                            "links": {"Apple Maps": "<link>", ...}}
 POST /look  {"text": "...", "image": "<base64 png/jpeg>"}     -> {"reply": "..."}   (phone screen or glasses photo)
 "location" is optional (the phone's current place, for directions); "open" is a navigation link for the
-phone to open, when there is one.
+phone to open, when there is one; "links" has the same trip for each navigation app on the phone (only
+when there's more than one), so a Shortcut can let you choose.
 GET  /ping                                                     -> {"ok": true}
 The Argus iPhone app (Meta glasses):
 POST /glasses/status {"connected": true, "device": "Ray-Ban Meta"} -> {"ok": true}
@@ -252,6 +254,12 @@ class PhoneHandler(BaseHTTPRequestHandler):
             payload = {"reply": reply or "Done."}
             if isinstance(link, str) and link.startswith("https://"):
                 payload["open"] = link
+            choices = result.get("links") if isinstance(result, dict) else None
+            if isinstance(choices, dict):
+                choices = {str(name)[:40]: url for name, url in choices.items()
+                           if isinstance(url, str) and url.startswith("https://")}
+                if len(choices) > 1:
+                    payload["links"] = choices
             self._send(200, payload)
         except Exception as exc:
             log.warning("phone request failed: %s", exc)

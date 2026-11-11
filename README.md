@@ -37,7 +37,7 @@ Android: the same brain runs on the phone (Termux). Mac off: an always-on server
 | Ears | Microphone, voice detection, speech recognition, name spotting, double-clap detection, voice lock | `argus/hearing.py`, `wake.py`, `listener.py`, `clap.py` |
 | Voice | On-device Piper voice (or any macOS voice); you can interrupt it | `argus/voice.py`, `brain.py` |
 | Reach | Phone gateway, Meta glasses bridge, reminders and scheduled jobs, phone calls from your number, push notifications | `argus/phone.py`, `glasses.py`, `scheduler.py`, `cron.py`, `calls.py`, `push.py` |
-| Maps | Directions with live traffic (Google Routes, Apple Maps, MapKit on the Mac) and navigation links | `argus/maps.py`, `macos/argus-maps.swift` |
+| Maps | The best route from several maps services (Apple Maps, Google Routes, TomTom), incidents and road news on each, navigation links for Apple Maps, Google Maps and Waze | `argus/maps.py`, `argus/traffic.py`, `macos/argus-maps.swift` |
 | Android | Argus on the phone: texts, WhatsApp backup and notification search, fingerprint approvals, drive assist | `argus/android.py`, `android_app.py` |
 | Server | Always-on Argus on a Linux server, for when the Mac is off | `argus/server.py`, `scripts/setup_server.sh` |
 | Mac app | Menu bar, Touch ID, lock detection, starts at login | `argus/app.py`, `daemon.py`, `macos/` |
@@ -179,15 +179,45 @@ Run `./setup.sh` again (or `./setup.sh --phone android`) to switch. Guides: [doc
 
 ## Directions and live traffic
 
-Ask "how's the traffic to work?" or "fastest way to the airport?" and Argus compares up to three routes
-with live traffic, says which is faster and by how much, and opens your maps app with the route. Your
-phone's location comes with the request (the Siri Shortcut, or the Android app); it goes to the maps
-service for that trip only, never to Claude or the activity log.
+Ask "fastest way to the airport?" or "how's the traffic to work?" and Argus works out the best way there:
+
+1. **Asks every maps service that is set up, at the same time:** Apple Maps, Google Maps and TomTom, each
+   with live traffic and its other routes.
+2. **Lines the answers up.** The same road from two services counts as one way to go (matched by the
+   route's shape on the map, not by its name), and each way gets every service's time for it. When they
+   agree, the time is solid; when they differ by minutes, Argus says so.
+3. **Checks what's in the way:** accidents, closures, closed lanes and road works on each route (from
+   TomTom, matched to the road and the direction you're driving), and the last day's news headlines about
+   those roads.
+4. **Picks one and says why.** Usually the fastest. A route with an accident or a closure on it, or one
+   that only a single service suggests, has to be clearly faster to win. You hear the road, the time and
+   the reason; ask for the turns and you get them step by step.
+5. **Opens your maps app with the trip.** If Google Maps or Waze are on your phone too, the Shortcut gets
+   a link for each. When your usual app's own first choice is clearly worse than the best route and
+   another of your apps would take the best one, Argus opens that app and tells you.
+
+**About Waze:** Waze offers no service that other software may ask for routes or traffic, and its terms
+forbid reading its data automatically, so Argus can't include Waze's own times. Two things make up for it:
+Waze drivers' reports also show up in Google Maps' traffic (same company), and Argus can open the trip in
+Waze.
+
+Your phone's location comes with the request (the Siri Shortcut, or the Android app); it goes to the maps
+services for that trip only, never to Claude or the activity log.
 
 * **Where the traffic times come from:** free from Apple Maps through MapKit on the Mac (setup builds a
-  small helper), or the Google Routes API (a free-tier Google Maps key), or the Apple Maps Server API (an
-  Apple Developer token: `argusctl maps-token`). Without any, Argus still opens the maps app, which shows
-  traffic itself.
+  small helper); the Google Routes API (a free-tier Google Maps key); TomTom (a free key from
+  developer.tomtom.com: 2,500 requests a day, no card; one trip check uses about 3 to 12), which also
+  brings the accidents, closures and road works; or the Apple Maps Server API (an Apple Developer token:
+  `argusctl maps-token`). Setup asks for the keys; run `./setup.sh` again to add one later. One service
+  gives you its routes; two or three give you the comparison. Without any, Argus still opens the maps app,
+  which shows traffic itself.
+* **Settings** (`[maps]` in `~/.argus/config.toml`): `app` is the navigation app that opens, `apps` your
+  other ones, `traffic` is `"auto"` (compare every service), one service's name, or `"off"`, and `news`
+  switches the headline check.
+* **What it can't do:** a link can't tell a maps app which of its routes to take, so the app opens with its
+  own first choice; Argus tells you which road to pick if that differs. Headlines are unverified: they're
+  read to you as headlines and never change the ranking. Incidents come from TomTom only, so without a
+  TomTom key there are times but no accident list.
 * **Android drive assist** (optional): when the phone is charging and moving at driving speed, Argus asks
   "Where are you headed?", gives you the best route, and speaks up if traffic later makes another route at
   least five minutes faster. On iPhone, a CarPlay/Bluetooth automation can ask the same question
@@ -306,7 +336,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **698 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **737 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed
@@ -319,7 +349,10 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
   triple claps, applause and speech no), name detection including mishearings like "August", the
   listening rules, settings, secrets and logs. And the newer parts: directions (Google Routes, Apple Maps
   and the MapKit helper, against stand-in services: requests, alternatives, traffic delays, errors, token
-  refresh), navigation links that never carry your location, the phone's location through the gateway,
+  refresh), the best-route check (the same road from three services recognised as one, TomTom times and
+  incidents matched to the road and the driving direction, road news, the ranking and its reasons, a
+  service failing or putting the destination somewhere else, opening the app that takes the best route),
+  navigation links that never carry your location, the phone's location through the gateway,
   push notifications, the Apple Maps token (a real ES256 signature, checked with OpenSSL), Argus on Android
   with stand-in Termux commands (searching texts, the notification log and WhatsApp backups, both database
   layouts, a real WhatsApp crypt15 backup made and read with wa-crypt-tools, fingerprint approvals, drive
@@ -334,7 +367,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
   can't start or flood the output; and sounds that look like claps (a "p" before a voice, a door slam,
   claps right after music). Every request Argus sends to the stand-in Claude is checked against the rules
   the real API enforces.
-* **Coverage**: the tests reach 96% of Argus's code (lines and branches), 97% with the end-to-end run.
+* **Coverage**: the tests reach 97% of Argus's code (lines and branches), with or without the end-to-end run.
   What's left is mostly Mac-only (the menu bar, the screen and audio pieces of phone calls, a few
   fallbacks for older macOS). Run `scripts/coverage.sh` (add `--e2e` for the full run) to see it yourself.
 * **Real speech**: sentences spoken by the real voice go through the real voice-detection and
@@ -352,6 +385,10 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
   pressing the Call button, hearing the other side, being heard), the iPhone app (not yet compiled), the
   MapKit helper (Swift, built on the Mac), the live Google and Apple maps services, a real Android phone
   with Termux, and a real cloud server with systemd.
+
+## What's next
+
+[docs/ROADMAP.md](docs/ROADMAP.md): what would make this first phase dependable, and what a second phase could add (real phone apps, Argus speaking first, one memory across devices).
 
 ## Uninstall
 

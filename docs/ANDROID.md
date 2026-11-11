@@ -14,7 +14,7 @@ up for it (Google Maps links, no iPhone-only features). Then put Argus on the ph
 |---|---|
 | "Find the wifi password Priya sent me" | Searches your texts, WhatsApp and notifications, and tells you the exact detail, who sent it and when. |
 | "What was the flight number in that airline email last month?" | Same search, limited to the last month. |
-| "How's the traffic to the airport?" / "Fastest way to Powell's?" | Live traffic for up to three routes from where you are, says which is fastest and by how much, and opens Google Maps with it. |
+| "How's the traffic to the airport?" / "Fastest way to Powell's?" | Asks Google Maps and TomTom (whichever have a key) for live-traffic routes from where you are, checks accidents, closures, road works and road news on each, says which way is best and why, and opens Google Maps (or Waze, if you chose it) with the trip. |
 | "Text Mom I'll be 10 minutes late" | Shows what it will send; you approve with a dialog and your fingerprint. |
 | "Call the dentist" | Opens the dialer with the number; you press call. |
 | "Remind me at 6 to pick up the parcel" | A notification at 6, read aloud. |
@@ -70,6 +70,13 @@ Argus can compare routes and tell you which is faster.
 Google gives a monthly free allowance that covers normal personal use; traffic-aware routes count as the
 "Pro" tier. Set a budget alert in the console if you like. Prices and free tiers change; check Google's
 pricing page.
+
+### Accidents and a second opinion: a TomTom key (optional)
+
+A free key from developer.tomtom.com (2,500 requests a day, no card) adds TomTom's live-traffic times next
+to Google's, and the list of accidents, closures and road works on each route. Setup asks for it; to add it
+later, run `bash scripts/setup_android.sh` again. Waze's own times can't be read by other software, so
+Waze is only an app the trip can open in (setup asks whether you have it).
 
 ### WhatsApp's full history (optional)
 

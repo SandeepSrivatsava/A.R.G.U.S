@@ -50,6 +50,7 @@ def make_settings(tmp_path: Path, **overrides):
     s.workspace_dir = str(tmp_path / "workspace")
     s.user_name, s.city, s.timezone = "Sandeep", "Portland, OR", "America/Los_Angeles"
     s.web_search = False
+    s.maps_news = False             # no test reaches the web; the road-news tests hand in their own feed
     for k, v in overrides.items():
         setattr(s, k, v)
     Path(s.workspace_dir).mkdir(parents=True, exist_ok=True)

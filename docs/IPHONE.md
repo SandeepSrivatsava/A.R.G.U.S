@@ -40,7 +40,13 @@ Open **Shortcuts** → **+** and add these actions in order:
      `lat` = **Current Location → Latitude** and `lon` = **Current Location → Longitude**
 4. **Get Dictionary Value**: `reply` in **Contents of URL**, then **Speak Text**: **Dictionary Value**.
 5. **Get Dictionary Value**: `open` in **Contents of URL**. **If** it **has any value** → **Open URLs**:
-   **Dictionary Value** (that's a navigation link: it opens Apple Maps with the route). End If.
+   **Dictionary Value** (that's a navigation link: it opens your maps app with the trip). End If.
+
+**If Google Maps or Waze are on your iPhone too** (you told setup so), Argus also sends `links`: the same
+trip for each app. To choose every time, use this instead of step 5: **Get Dictionary Value**: `links` in
+**Contents of URL** → **If** it **has any value** → **Choose from List**: **Dictionary Value** (it shows
+the app names) → **Open URLs**: **Chosen Item** → **Otherwise** → the two actions of step 5 → End If.
+With step 5 as it is, the app Argus recommends opens by itself.
 
 Name it **Argus**. Say "Hey Siri, Argus", wait for the tone, and talk. On iPhones with an Action Button
 you can also assign it there.
@@ -51,10 +57,17 @@ want directions from where you are.
 
 ### Directions and "where are you headed?" in the car
 
-* Ask: "Hey Siri, Argus" → "fastest way to the airport?" Argus compares up to three routes with live
-  traffic, tells you which is quicker and by how much, and Apple Maps opens with the route.
-* Live traffic numbers come free from Apple Maps on the Mac (setup builds a small MapKit helper). A Google
-  Maps key or an Apple Maps token also works, and is what an always-on server uses ([SERVER.md](SERVER.md)).
+* Ask: "Hey Siri, Argus" → "fastest way to the airport?" Argus asks Apple Maps, Google Maps and TomTom
+  (whichever are set up) at once, lines their routes up, checks accidents, closures, road works and road
+  news on each, tells you the best way and why, and your maps app opens with the trip. Ask "give me the
+  turns" for the steps.
+* Apple Maps' times come free from the Mac (setup builds a small MapKit helper). Add a Google Maps key for
+  Google's times and a free TomTom key for a third opinion and the accident list: run `./setup.sh` again
+  on the Mac and it asks. An always-on server uses keys only ([SERVER.md](SERVER.md)).
+* Waze's own times can't be read by other software (Waze offers no way, and forbids it), so Waze is one of
+  the apps the trip can open in. Its drivers' reports also show up in Google Maps' traffic.
+* The maps app opens with its own first choice of route. If Argus recommended another road, pick that one
+  on the app's route screen; Argus tells you which.
 * To be asked automatically when you start driving: Shortcuts → Automation → **+** → **CarPlay** (or
   **Bluetooth** with your car) → When Connects → Run Immediately → add **Ask for Input** ("Where are you
   headed?") and then the same steps as above, sending the text "Directions to " + **Provided Input**.

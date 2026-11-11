@@ -84,6 +84,53 @@ toml_get() {
     x && $0 ~ "^"k"[[:space:]]*=" {sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*#.*$/, ""); gsub(/"/, ""); print; exit}' "$1"
 }
 
+# choose_nav_apps PHONE GIVEN [MAIN]: which navigation apps are on the phone. Sets MAPS_APP (the one that opens
+# by default) and MAPS_APPS_TOML (the others, as a TOML list body like: "google", "waze").
+# GIVEN, like "apple, google,waze" (from ARGUS_MAPS_APPS or the settings file), is used as it is: its first app
+# opens by default. Without it, asks on a terminal; MAIN is then the app that opens (default: by phone).
+app_name() { case "$1" in apple) printf 'Apple Maps' ;; google) printf 'Google Maps' ;; waze) printf 'Waze' ;; esac; }
+
+choose_nav_apps() {
+  local phone="$1" given="$2" main="${3:-}" apps="" word
+  case "$main" in apple|google|waze) ;; *) if [ "$phone" = android ]; then main=google; else main=apple; fi ;; esac
+  for word in $(printf '%s' "$given" | tr '[:upper:]' '[:lower:]' | tr ',[]"' '     '); do
+    case "$word" in
+      apple|google|waze) case " $apps " in *" $word "*) ;; *) apps="$apps $word" ;; esac ;;
+    esac
+  done
+  if [ -z "$apps" ]; then
+    apps="$main"
+    if is_tty && [ "$ASSUME_YES" != 1 ]; then
+      echo "  Directions open in $(app_name "$main"). Argus can offer your other navigation apps too:"
+      if [ "$phone" != android ] && [ "$main" != google ]; then
+        if confirm "Is Google Maps on your iPhone?" n; then apps="$apps google"; fi
+      fi
+      if [ "$main" != waze ]; then
+        if confirm "Is Waze on your phone?" n; then apps="$apps waze"; fi
+      fi
+    fi
+  fi
+  apps="${apps# }"
+  MAPS_APP="${apps%% *}"
+  MAPS_APPS_TOML=""
+  for word in $apps; do
+    [ "$word" = "$MAPS_APP" ] || MAPS_APPS_TOML="${MAPS_APPS_TOML:+$MAPS_APPS_TOML, }\"$word\""
+  done
+}
+
+# ask_tomtom_key: sets TOMTOM_KEY (from ARGUS_TOMTOM_KEY, the saved key, or a question; empty = skipped).
+ask_tomtom_key() {
+  TOMTOM_KEY="${ARGUS_TOMTOM_KEY:-}"
+  if [ -z "$TOMTOM_KEY" ] && [ "${CHANGE_KEYS:-0}" = 0 ]; then TOMTOM_KEY="$(secret_get TOMTOM_API_KEY)"; fi
+  if [ -n "$TOMTOM_KEY" ]; then
+    ok "TomTom key: found (ending ...$(printf '%s' "$TOMTOM_KEY" | tail -c 4))"
+  elif is_tty; then
+    echo "  Accidents, closures and road works on each route, and one more opinion on the traffic, come from"
+    echo "  TomTom: a free key from developer.tomtom.com (2,500 requests a day, no card). Press Enter to skip."
+    ask_secret TOMTOM_KEY "TomTom API key (Enter to skip)" optional
+  fi
+}
+
 # normalize_phone ANSWER: "iphone" or "android" (from 1/2, iPhone, ios, Android...), or "" if unclear.
 normalize_phone() {
   case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d ' ')" in

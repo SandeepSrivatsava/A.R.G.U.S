@@ -82,7 +82,9 @@ class Settings:
     phone_port: int = 8765
     glasses_enabled: bool = True
     # maps and live traffic (maps.py)
-    maps_app: str = ""             # navigation links open in "apple" or "google" maps ("" = by phone type)
+    maps_app: str = ""             # the navigation app links open in: "apple", "google" or "waze" ("" = by phone type)
+    maps_apps: List[str] = field(default_factory=list)   # the other navigation apps on the phone, offered as well
+    maps_news: bool = True         # check the last day's news about the roads on a route
     maps_traffic: str = "auto"     # "auto", "google", "apple", "mapkit" or "off"
     maps_units: str = "imperial"   # or "metric"
     # push notifications to your phone (push.py), for when Argus can't say something out loud
@@ -170,6 +172,11 @@ class Settings:
         """Which maps app navigation links open in."""
         return self.maps_app or ("apple" if self.phone_type == "iphone" else "google")
 
+    @property
+    def maps_nav_apps(self) -> List[str]:
+        """Every navigation app on the phone, the preferred one first."""
+        return list(dict.fromkeys([self.maps_link_app] + list(self.maps_apps)))
+
     def all_variants(self) -> List[str]:
         learned: List[str] = []
         if self.learned_variants_path.exists():
@@ -192,7 +199,8 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
                                 "blocked_apps", "blocked_sites", "voice_approvals", "voice_approval_threshold")},
     "phone": {"type": "phone_type", "enabled": "phone_enabled", "host": "phone_host", "port": "phone_port"},
     "glasses": {"enabled": "glasses_enabled"},
-    "maps": {"app": "maps_app", "traffic": "maps_traffic", "units": "maps_units"},
+    "maps": {"app": "maps_app", "apps": "maps_apps", "traffic": "maps_traffic", "units": "maps_units",
+             "news": "maps_news"},
     "push": {"enabled": "push_enabled", "server": "push_server"},
     "android": {"messages": "android_messages", "notification_days": "android_notification_days",
                 "whatsapp_dir": "android_whatsapp_dir", "drive_assist": "android_drive_assist",
@@ -236,10 +244,12 @@ def _validate(s: "Settings") -> None:
         raise ValueError('voice.engine must be "piper" or "say"')
     if s.phone_type not in ("iphone", "android"):
         raise ValueError('phone.type must be "iphone" or "android"')
-    if s.maps_app not in ("", "apple", "google"):
-        raise ValueError('maps.app must be "apple" or "google"')
-    if s.maps_traffic not in ("auto", "google", "apple", "mapkit", "off"):
-        raise ValueError('maps.traffic must be "auto", "google", "apple", "mapkit" or "off"')
+    if s.maps_app not in ("", "apple", "google", "waze"):
+        raise ValueError('maps.app must be "apple", "google" or "waze"')
+    if any(app not in ("apple", "google", "waze") for app in s.maps_apps):
+        raise ValueError('maps.apps takes "apple", "google" and "waze"')
+    if s.maps_traffic not in ("auto", "google", "apple", "mapkit", "tomtom", "off"):
+        raise ValueError('maps.traffic must be "auto", "google", "apple", "mapkit", "tomtom" or "off"')
     if s.maps_units not in ("imperial", "metric"):
         raise ValueError('maps.units must be "imperial" or "metric"')
     if s.push_enabled:

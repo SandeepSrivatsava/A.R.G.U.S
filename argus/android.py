@@ -504,10 +504,10 @@ class MessageSearch:
 
 def contact_names(termux: Termux) -> Callable[[], Dict[str, str]]:
     """Last-10-digits -> name, from the phone's contacts (read at most every 10 minutes)."""
-    cache: Dict[str, Any] = {"at": 0.0, "names": {}}
+    cache: Dict[str, Any] = {"at": None, "names": {}}
 
     def names() -> Dict[str, str]:
-        if time.monotonic() - cache["at"] > 600:
+        if cache["at"] is None or time.monotonic() - cache["at"] > 600:
             mapping = {}
             for c in termux.contacts():
                 number, name = digits(str(c.get("number") or "")), str(c.get("name") or "").strip()

@@ -95,6 +95,11 @@ Nothing here is included in this repository; Argus only runs these programs.
   publishers.
 * Directions use, when set up with your own key or token: the **Google Routes API** (Google Maps Platform
   terms) or the **Apple Maps Server API** (Apple Developer Program); on the Mac, Apple's **MapKit**.
-  Navigation links open Apple Maps or Google Maps.
+  With your own free key, **TomTom**'s Routing, Geocoding and Traffic Incident Details APIs (TomTom's
+  developer terms) add a third set of times and the incidents on each route. Road news comes from a
+  Google News search feed. Each service is used under its own terms with your own key; Argus compares
+  their answers for you and shows no map.
+  Navigation links open Apple Maps, Google Maps or Waze. No Waze data is read: Waze has no public service
+  for routes or traffic, and its terms forbid automatic access.
 * Push notifications use [ntfy](https://ntfy.sh) (open source, Apache-2.0 / GPL-2.0), through its public
   web API: ntfy.sh or your own server. No ntfy code is included.

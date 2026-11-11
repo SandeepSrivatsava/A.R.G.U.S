@@ -97,6 +97,13 @@ if [ -z "$GOOGLE_KEY" ] && is_tty; then
   echo "  (switch on the Routes API). Press Enter to skip; directions then open Google Maps without times."
   ask_secret GOOGLE_KEY "Google Maps API key (Enter to skip)" optional
 fi
+ask_tomtom_key
+OLD_APPS=""; OLD_APP=""
+if [ -f "$CONFIG" ]; then
+  OLD_APP="$(toml_get "$CONFIG" maps app)"
+  if grep -q '^apps[[:space:]]*=' "$CONFIG"; then OLD_APPS="$OLD_APP $(toml_get "$CONFIG" maps apps)"; fi
+fi
+choose_nav_apps android "${ARGUS_MAPS_APPS:-$OLD_APPS}" "$OLD_APP"
 
 WA_KEY="${ARGUS_WHATSAPP_KEY:-}"
 [ "$CHANGE_KEYS" = 1 ] || WA_KEY="${WA_KEY:-$(secret_get WHATSAPP_BACKUP_KEY)}"
@@ -149,6 +156,7 @@ fi
 step "5/7  Saving keys and settings"
 printf '%s' "$ANTHROPIC_KEY" | secret_set ANTHROPIC_API_KEY
 [ -z "$GOOGLE_KEY" ] || printf '%s' "$GOOGLE_KEY" | secret_set GOOGLE_MAPS_API_KEY
+[ -z "$TOMTOM_KEY" ] || printf '%s' "$TOMTOM_KEY" | secret_set TOMTOM_API_KEY
 [ -z "$WA_KEY" ] || printf '%s' "$WA_KEY" | secret_set WHATSAPP_BACKUP_KEY
 ok "Keys saved to $SECRETS (private to Termux)"
 if [ "$DRY_RUN" = 1 ]; then
@@ -179,8 +187,10 @@ type = "android"                # this is Argus on the phone itself
 enabled = false                 # (the phone gateway is for the Mac and the server)
 
 [maps]
-app = "google"                  # navigation opens in Google Maps
-traffic = "auto"                # live traffic from Google (needs GOOGLE_MAPS_API_KEY) or Apple; "off"
+app = "$MAPS_APP"                  # the navigation app that opens: "google" or "waze"
+apps = [$MAPS_APPS_TOML]                       # your other navigation apps: "google", "waze"
+traffic = "auto"                # compares every traffic service that has a key (Google, TomTom); or one; "off"
+news = true                     # look for the last day's news about the roads on a route
 units = "imperial"              # or "metric"
 
 [glasses]

@@ -49,6 +49,14 @@ def test_gateway_passes_the_location_and_returns_the_link(tmp_path):
         assert post(server.server_port, "/ask", {"text": "hi", "location": {"lat": "nowhere"}}, "phone-secret-token") == \
             (200, {"reply": "Hello."})                                   # a bad location is ignored; odd links dropped
         assert asked[-1] == ("hi", None)
+        apps = {"Apple Maps": "https://maps.apple.com/?daddr=PDX&dirflg=d", "Waze": "https://waze.com/ul?q=PDX&navigate=yes",
+                "Odd": "http://plain.example/", "Worse": 7}
+        server.ask = lambda content, location=None: {"reply": "Going.", "open": apps["Apple Maps"], "links": apps}
+        status, body = post(server.server_port, "/ask", {"text": "to PDX"}, "phone-secret-token")
+        assert body == {"reply": "Going.", "open": apps["Apple Maps"],                 # one link per app on the phone
+                        "links": {"Apple Maps": apps["Apple Maps"], "Waze": apps["Waze"]}}
+        server.ask = lambda content, location=None: {"reply": "Going.", "links": {"Waze": apps["Waze"]}}
+        assert post(server.server_port, "/ask", {"text": "to PDX"}, "phone-secret-token")[1] == {"reply": "Going."}
         log = (tmp_path / "audit.jsonl").read_text()
         assert '"location": true' in log and "45.52" not in log           # where you are isn't written down
     finally:

@@ -24,7 +24,7 @@ from .lessons import Reflector
 from .hearing import Microphone, Segmenter, SherpaTranscriber, VoicePrint, model_paths
 from .listener import Listener
 from .llm import Claude
-from .maps import Router, route_tool
+from .maps import Router, phone_links, route_tool
 from .news import format_headlines
 from .phone import Gatekeeper, PhoneServer, bind_address, load_or_create_token
 from .policy import Policy
@@ -180,7 +180,7 @@ class App:
         session = self.store.session_for("phone", "iphone", 30)
         turn = self.agent.run(session_id=session, channel="phone", content=content, events=Events(), location=location)
         reply = turn.text.strip() or ("Sorry, " + turn.error if turn.error else "Done.")
-        return {"reply": reply, "open": turn.links[0] if turn.links else None}
+        return dict(phone_links(turn.links), reply=reply)
 
     # ---- start / stop ------------------------------------------------------------------------------
     def start_services(self) -> None:

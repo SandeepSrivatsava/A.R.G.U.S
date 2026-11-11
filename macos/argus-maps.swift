@@ -4,8 +4,10 @@
 //   argus-maps --from "45.52,-122.68" --to "Portland Airport, OR" [--mode drive|walk|transit]
 //              [--depart <seconds since 1970>] [--avoid-tolls] [--avoid-highways]
 //
-// and reads one line of JSON: {"routes":[{"name":"I-5 N","seconds":1440,"meters":19800,"notes":[]}]}
-// or {"error":"..."}. A place is "latitude,longitude" or an address / place name. Nothing is stored.
+// and reads one line of JSON: {"routes":[{"name":"I-5 N","seconds":1440,"meters":19800,"notes":[],
+// "steps":[{"text":"Turn right onto Main St","meters":320}],"path":[[45.52,-122.68],...]}]} or {"error":"..."}.
+// "path" is the route's shape (at most about 1,500 points), so Argus can tell which routes of different maps
+// services are the same road, and which incidents lie on it. A place is "latitude,longitude" or an address / place name. Nothing is stored.
 import Foundation
 import MapKit
 
@@ -73,6 +75,26 @@ func resolve(_ text: String, near: CLLocationCoordinate2D?, done: @escaping (MKM
     }
 }
 
+// The route's shape as [latitude, longitude] pairs, thinned to about `limit` points.
+func shape(_ line: MKPolyline, limit: Int = 1500) -> [[Double]] {
+    let count = line.pointCount
+    guard count > 0 else { return [] }
+    let points = line.points()
+    let stride = max(1, count / limit)
+    var found: [[Double]] = []
+    var i = 0
+    while i < count {
+        let c = points[i].coordinate
+        found.append([(c.latitude * 1e5).rounded() / 1e5, (c.longitude * 1e5).rounded() / 1e5])
+        i += stride
+    }
+    if (count - 1) % stride != 0 {                // always end exactly at the destination
+        let c = points[count - 1].coordinate
+        found.append([(c.latitude * 1e5).rounded() / 1e5, (c.longitude * 1e5).rounded() / 1e5])
+    }
+    return found
+}
+
 func directions(from source: MKMapItem, to destination: MKMapItem) {
     let request = MKDirections.Request()
     request.source = source
@@ -105,8 +127,11 @@ func directions(from source: MKMapItem, to destination: MKMapItem) {
         let found: [[String: Any]] = routes.prefix(3).map { route in
             var notes = route.advisoryNotices
             if #available(macOS 13.0, *), route.hasTolls { notes.append("has tolls") }
+            let steps: [[String: Any]] = route.steps.filter { !$0.instructions.isEmpty }.map {
+                ["text": $0.instructions, "meters": Int($0.distance)]
+            }
             return ["name": route.name, "seconds": Int(route.expectedTravelTime), "meters": Int(route.distance),
-                    "notes": notes]
+                    "notes": notes, "steps": steps, "path": shape(route.polyline)]
         }
         emit(["routes": found], code: 0)
     }

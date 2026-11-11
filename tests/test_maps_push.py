@@ -234,7 +234,9 @@ def test_the_traffic_service_follows_the_phone(tmp_path):
     assert router(tmp_path, traffic="off", secrets=both).service() is None
     assert router(tmp_path).describe() == "no live-traffic service set up (navigation links only)"
     assert router(tmp_path, mapkit=True).describe() == "live traffic from MapKit on this Mac"
-    assert router(tmp_path, phone="android", secrets=both).describe() == "live traffic from Google Routes API"
+    assert router(tmp_path, phone="android", secrets=both).describe() == \
+        "live traffic from Google Routes API and Apple Maps Server API"
+    assert router(tmp_path, traffic="google", secrets=both).describe() == "live traffic from Google Routes API"
 
 
 def test_route_tool_from_the_phone_location(tmp_path):
@@ -247,13 +249,15 @@ def test_route_tool_from_the_phone_location(tmp_path):
     out = r.tool({"destination": "Portland Airport, OR"}, c)
     assert not out.is_error
     text = out.content
-    assert text.startswith("Driving from your current location to Portland Airport, OR, leaving now (Google Maps, "
-                           "with live traffic):")
-    assert "1. via I-205 N: 25 min 14.9 mi. Fastest." in text
-    assert "2. via I-5 N: 35 min (13 min slower than usual because of traffic) 12.3 mi. This route has tolls." in text
+    assert text.startswith("Driving from your current location to Portland Airport, OR, leaving now. Checked: Google "
+                           "Maps (live traffic).\n")
+    assert "1. BEST: via I-205 N: 25 min, 14.9 mi." in text
+    assert "2. via I-5 N: 35 min, 12.3 mi. 13 min slower than usual because of traffic. This route has tolls." in text
+    assert "Why: route 1 is 10 min faster than the next best." in text
     assert "45.52" not in text                        # the location goes to Google, not into the conversation
     assert c.links == ["https://www.google.com/maps/dir/?api=1&destination=Portland+Airport%2C+OR&travelmode=driving"]
-    assert text.endswith("Navigation link (Google Maps): " + c.links[0])
+    assert "\nNavigation link (Google Maps): " + c.links[0] + "\n" in text
+    assert text.endswith("If it shows a different one, the user should pick the one via I-205 N.")
 
 
 def test_route_tool_asks_the_phone_where_it_is_or_explains(tmp_path):
@@ -285,7 +289,7 @@ def test_route_tool_checks_its_input(tmp_path):
     assert "already passed" in r.tool({"destination": "x", "depart_at": "2020-01-01T08:00"}, c).content
     out = r.tool({"destination": "Gresham", "origin": "12 Elm St, Portland", "depart_at": "2099-01-01T08:00"}, c)
     assert not out.is_error and "Driving from 12 Elm St, Portland to Gresham, leaving Thu 01 Jan 08:00" in out.content
-    assert "1. via via MapKit: 10 min 3.1 mi." in out.content     # one route: no "fastest"
+    assert "1. via via MapKit: 10 min, 3.1 mi." in out.content and "BEST" not in out.content     # one route: no "best"
     soon = time.strftime("%Y-%m-%dT%H:%M", time.localtime(time.time() + 60))
     assert "leaving now" in r.tool({"destination": "Gresham", "depart_at": soon}, ctx(tmp_path, location=HERE)).content
 

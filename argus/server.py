@@ -23,7 +23,7 @@ from .audit import Audit
 from .control import ControlServer
 from .lessons import Reflector
 from .llm import Claude
-from .maps import Router, route_tool
+from .maps import Router, phone_links, route_tool
 from .news import format_headlines
 from .phone import Gatekeeper, PhoneServer, bind_address, load_or_create_token
 from .policy import Policy
@@ -75,7 +75,7 @@ class ServerApp:
         session = self.store.session_for("phone", "phone", 30)
         turn = self.agent.run(session_id=session, channel="phone", content=content, events=Events(), location=location)
         reply = turn.text.strip() or ("Sorry, " + turn.error if turn.error else "Done.")
-        return {"reply": reply, "open": turn.links[0] if turn.links else None}
+        return dict(phone_links(turn.links), reply=reply)
 
     def ask_cli(self, text: str) -> str:
         session = self.store.session_for("cli", "server", 30)

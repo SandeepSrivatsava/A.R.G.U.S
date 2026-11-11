@@ -26,7 +26,7 @@ phone.
 * A **Claude API key**. Make a separate key for the server at platform.claude.com, so you can cancel it on
   its own.
 * The **ntfy** app on your phone (free, App Store or Google Play) for notifications.
-* Optional, for live traffic: a Google Maps API key and/or an Apple Maps token (below).
+* Optional, for live traffic: a Google Maps API key, an Apple Maps token and/or a TomTom key (below).
 
 ## Install
 
@@ -95,8 +95,11 @@ argusctl restart && argusctl push test
   setup (it asks for an Apple Maps token). Without `--print`, it's saved on the Mac instead. Tokens made
   directly in the developer portal also work but last only 7 days.
 
-`[maps] traffic = "auto"` uses the same maps company as your navigation links (Apple for an iPhone, Google
-for Android) when that one is set up, otherwise the other.
+* **TomTom:** a free key from developer.tomtom.com (2,500 requests a day, no card). A third opinion on
+  the times, and the accidents, closures and road works on each route. Setup asks for it.
+
+`[maps] traffic = "auto"` asks every service that has a key and compares their routes; a service name
+(`"google"`, `"apple"`, `"tomtom"`) uses just that one.
 
 ## Everyday commands
 

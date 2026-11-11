@@ -134,8 +134,14 @@ def test_setup_asks_which_phone_on_a_terminal(tmp_path, venv):
         os.write(master, b"blackberry\n")
         wait_for_text(b"Please type 1 for iPhone or 2 for Android.")
         os.write(master, b"2\n")
+        wait_for_text(b"Is Waze on your phone?")
+        assert b"Directions open in Google Maps." in seen and b"Is Google Maps on your iPhone" not in seen
+        os.write(master, b"y\n")
         wait_for_text(b"Google Maps API key")
         assert b"Live traffic on Android comes from Google Maps" in seen
+        os.write(master, b"\n")
+        wait_for_text(b"TomTom API key")
+        assert b"Accidents, closures and road works on each route" in seen
         os.write(master, b"\n")
         wait_for_text(b"Done.", timeout=60)
         proc.wait(30)
@@ -145,7 +151,53 @@ def test_setup_asks_which_phone_on_a_terminal(tmp_path, venv):
         os.close(master)
     assert proc.returncode == 0
     assert setting(tmp_path / "home" / "config.toml", "phone", "type") == "android"
-    assert "GOOGLE_MAPS_API_KEY" not in (tmp_path / "home" / "secrets.env").read_text()
+    assert setting(tmp_path / "home" / "config.toml", "maps", "apps") == "[waze]"
+    secrets = (tmp_path / "home" / "secrets.env").read_text()
+    assert "GOOGLE_MAPS_API_KEY" not in secrets and "TOMTOM_API_KEY" not in secrets
+
+
+def test_setup_saves_the_navigation_apps_and_the_tomtom_key(tmp_path, venv):
+    env = mac_env(tmp_path, venv, ARGUS_PHONE="iphone", ARGUS_MAPS_APPS="Apple, google,WAZE, bing",
+                  ARGUS_TOMTOM_KEY="tt-key-0123456789")
+    first = run("setup.sh", env)
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert "Directions open in Apple Maps (also offered: google, waze)" in first.stdout
+    cfg = tmp_path / "home" / "config.toml"
+    assert 'app = "apple"' in cfg.read_text() and 'apps = ["google", "waze"]' in cfg.read_text()
+    assert "TOMTOM_API_KEY=tt-key-0123456789" in (tmp_path / "home" / "secrets.env").read_text()
+    assert "tt-key" not in cfg.read_text() and "tt-key" not in first.stdout
+
+    def loaded():
+        out = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
+                              "from argus import config; s = config.load(); print(s.maps_nav_apps, s.maps_news)",
+                              str(REPO)], env=env, capture_output=True, text=True)
+        return out.stdout.strip()
+    assert loaded() == "['apple', 'google', 'waze'] True"
+    env.pop("ARGUS_MAPS_APPS")
+    env.pop("ARGUS_TOMTOM_KEY")
+    again = run("setup.sh", env)                                  # nothing given: the saved choices stay
+    assert again.returncode == 0 and "TomTom key: found (ending ...6789)" in again.stdout
+    assert loaded() == "['apple', 'google', 'waze'] True" and cfg.read_text().count("\napps = ") == 1
+    waze_first = run("setup.sh", dict(env, ARGUS_MAPS_APPS="waze,apple"))
+    assert waze_first.returncode == 0 and "Directions open in Waze (also offered: apple)" in waze_first.stdout
+    assert loaded() == "['waze', 'apple'] True"
+    # settings from before this question existed: the list is added, and the app that opened stays
+    cfg.write_text("".join(line for line in cfg.read_text().splitlines(True) if not line.startswith("apps = "))
+                   .replace('app = "waze"', 'app = "google"'))
+    old = run("setup.sh", env)
+    assert old.returncode == 0 and "Directions open in Google Maps" in old.stdout
+    assert 'app = "google"' in cfg.read_text() and "apps = []" in cfg.read_text() and loaded() == "['google'] True"
+
+
+def test_choosing_navigation_apps(tmp_path):
+    def chosen(phone, given="", main=""):
+        code = (f'. "{REPO}/scripts/lib.sh"; ASSUME_YES=0; choose_nav_apps "{phone}" "{given}" "{main}"; '
+                'printf "%s|%s" "$MAPS_APP" "$MAPS_APPS_TOML"')
+        return subprocess.run(["bash", "-c", code], capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL).stdout
+    assert chosen("iphone") == "apple|" and chosen("android") == "google|" and chosen("iphone", main="waze") == "waze|"
+    assert chosen("iphone", "google waze apple") == 'google|"waze", "apple"'
+    assert chosen("android", '[waze, "google"] waze') == 'waze|"google"' and chosen("iphone", "bing, mapquest") == "apple|"
+    assert chosen("iphone", "apple", main="nonsense") == "apple|"
 
 
 def test_calls_setup_refuses_on_android(tmp_path):

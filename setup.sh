@@ -58,7 +58,7 @@ Options:
   --dry-run                print the steps without changing anything
   --yes                    accept the default answer for yes/no questions
   --no-service             configure only; do not start anything in the background
-  --change-keys            ask for the Claude key (and the Google Maps key) again
+  --change-keys            ask for the Claude key (and the maps keys) again
   -h, --help               show this help
 EOF
 }
@@ -138,6 +138,14 @@ else
   MAPS_APP=apple; GLASSES=true
   ok "iPhone: Apple Maps, Siri Shortcuts, Meta glasses, calls from your number (optional)"
 fi
+# Which navigation apps are on the phone (Apple Maps, Google Maps, Waze): asked once, then kept in the settings.
+OLD_APPS=""; OLD_APP=""
+if [ -f "$CONFIG" ] && [ "$OLD_PHONE" = "$PHONE" ]; then
+  OLD_APP="$(toml_get "$CONFIG" maps app)"
+  if grep -q '^apps[[:space:]]*=' "$CONFIG"; then OLD_APPS="$OLD_APP $(toml_get "$CONFIG" maps apps)"; fi
+fi
+choose_nav_apps "$PHONE" "${ARGUS_MAPS_APPS:-$OLD_APPS}" "$OLD_APP"
+ok "Directions open in $(app_name "$MAPS_APP")${MAPS_APPS_TOML:+ (also offered: $(printf '%s' "$MAPS_APPS_TOML" | tr -d '"'))}"
 
 # =====================================================================
 step "2/10  Checking this Mac"
@@ -219,6 +227,7 @@ fi
 if [ -n "$GOOGLE_KEY" ] && ! printf '%s' "$GOOGLE_KEY" | grep -Eq '^AIza[0-9A-Za-z_-]{35}$'; then
   warn "That doesn't look like a Google Maps API key (they start with AIza and are 39 characters); saving it anyway."
 fi
+ask_tomtom_key
 
 if [ "${ARGUS_SKIP_VALIDATION:-0}" = 1 ]; then
   warn "Skipping live key checks (ARGUS_SKIP_VALIDATION=1)"
@@ -307,6 +316,7 @@ fi
 step "6/10  Saving keys and settings"
 printf '%s' "$ANTHROPIC_KEY" | secret_set ANTHROPIC_API_KEY
 [ -z "$GOOGLE_KEY" ] || printf '%s' "$GOOGLE_KEY" | secret_set GOOGLE_MAPS_API_KEY
+[ -z "$TOMTOM_KEY" ] || printf '%s' "$TOMTOM_KEY" | secret_set TOMTOM_API_KEY
 printf '' | secret_set TELEGRAM_BOT_TOKEN        # Telegram was removed: drop any token an older setup saved
 ok "Keys saved to $SECRETS (owner-only)"
 PHONE_IP=""
@@ -323,11 +333,12 @@ elif [ -f "$CONFIG" ] && [ "${ARGUS_REWRITE_CONFIG:-0}" != 1 ]; then
   [ -z "$SITES_TOML" ] || warn "To change blocked sites, edit blocked_sites in $CONFIG, then: argusctl restart"
   if [ "$OLD_PHONE" != "$PHONE" ]; then            # a different phone: switch the phone-specific settings
     toml_set "$CONFIG" phone type "\"$PHONE\""
-    toml_set "$CONFIG" maps app "\"$MAPS_APP\""
     toml_set "$CONFIG" glasses enabled "$GLASSES"
     [ "$PHONE" = iphone ] || toml_set "$CONFIG" calls enabled false
     ok "Switched the phone settings to $PHONE (maps: $MAPS_APP)"
   fi
+  toml_set "$CONFIG" maps app "\"$MAPS_APP\""
+  toml_set "$CONFIG" maps apps "[$MAPS_APPS_TOML]"
 else
   umask 077
   cat > "$CONFIG" <<EOF
@@ -380,8 +391,11 @@ enabled = $PHONE_ENABLED                 # the phone's shortcut (and the Argus i
 port = 8765
 
 [maps]
-app = "$MAPS_APP"                 # navigation links open in "apple" or "google" Maps
-traffic = "auto"                # live traffic: Apple Maps on this Mac (free) or Google (with a key); "off"
+app = "$MAPS_APP"                 # the navigation app that opens: "apple", "google" or "waze"
+apps = [$MAPS_APPS_TOML]                       # your other navigation apps, offered too: "apple", "google", "waze"
+traffic = "auto"                # compares every traffic service that is set up: Apple Maps on this Mac (free),
+                                # Google and TomTom (with keys). Or just one: "mapkit", "apple", "google", "tomtom"; "off"
+news = true                     # look for the last day's news about the roads on a route
 units = "imperial"              # or "metric"
 
 [push]

@@ -56,8 +56,14 @@ MIRRORING = ("Apps that only live on {user}'s iPhone (WhatsApp's full history, f
 
 COMMON = """\
 Travel: when {user} is going somewhere or asks about traffic or how long a trip takes, use the route tool. \
-It knows where {user} is only when their phone shares its location. If another route is clearly faster, \
-say so and how much time it saves.
+It knows where {user} is only when their phone shares its location. It compares the maps services that are \
+set up and checks accidents, closures, road works and road news on each route. Say which way is best in a \
+sentence or two: the main road, the time, and the reason when there is one (an accident on the other route, \
+a closure, how much time it saves). When the services disagree by more than a few minutes, say so. Mention a \
+news headline only when it is clearly about this trip's roads and area. Give the turn-by-turn steps only \
+when asked; the maps app speaks them while driving. Waze's own times can't be read (Waze has no public \
+service), but the phone can open the trip in Waze. When the tool says it is opening a different maps \
+app than usual, say which one and why in a few words.
 
 Remember lasting facts and preferences {user} tells you with the remember tool. When {user} corrects you \
 or says how to do something from now on, save it with the learn tool as one short, general rule, and \

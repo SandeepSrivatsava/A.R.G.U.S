@@ -136,6 +136,13 @@ if [ -z "$GOOGLE_KEY" ] && [ -z "$APPLE_TOKEN" ] && is_tty; then
   ask_secret GOOGLE_KEY "Google Maps API key" optional
   ask_secret APPLE_TOKEN "Apple Maps token" optional
 fi
+ask_tomtom_key
+OLD_APPS=""; OLD_APP=""
+if [ -f "$CONFIG" ] && [ "$OLD_PHONE" = "$PHONE" ]; then
+  OLD_APP="$(toml_get "$CONFIG" maps app)"
+  if grep -q '^apps[[:space:]]*=' "$CONFIG"; then OLD_APPS="$OLD_APP $(toml_get "$CONFIG" maps apps)"; fi
+fi
+choose_nav_apps "$PHONE" "${ARGUS_MAPS_APPS:-$OLD_APPS}" "$OLD_APP"
 
 TOPIC="${ARGUS_NTFY_TOPIC:-$(secret_get NTFY_TOPIC)}"
 [ -n "$TOPIC" ] || TOPIC="$("$PYTHON" -I -c 'import secrets; print("argus-" + secrets.token_urlsafe(24))')"
@@ -184,13 +191,15 @@ run chmod 700 "$STATE_DIR" "$ARGUS_HOME"
 printf '%s' "$ANTHROPIC_KEY" | secret_set ANTHROPIC_API_KEY
 [ -z "$GOOGLE_KEY" ] || printf '%s' "$GOOGLE_KEY" | secret_set GOOGLE_MAPS_API_KEY
 [ -z "$APPLE_TOKEN" ] || printf '%s' "$APPLE_TOKEN" | secret_set APPLE_MAPS_TOKEN
+[ -z "$TOMTOM_KEY" ] || printf '%s' "$TOMTOM_KEY" | secret_set TOMTOM_API_KEY
 printf '%s' "$TOPIC" | secret_set NTFY_TOPIC
 if [ "$DRY_RUN" = 1 ]; then
   printf '  [dry-run] write %s\n' "$CONFIG"
 elif [ -f "$CONFIG" ] && [ "${ARGUS_REWRITE_CONFIG:-0}" != 1 ]; then
   toml_set "$CONFIG" phone type "\"$PHONE\""
   toml_set "$CONFIG" phone host "\"$TS_IP\""
-  [ "$OLD_PHONE" = "$PHONE" ] || toml_set "$CONFIG" maps app "\"$MAPS_APP\""
+  toml_set "$CONFIG" maps app "\"$MAPS_APP\""
+  toml_set "$CONFIG" maps apps "[$MAPS_APPS_TOML]"
   ok "Kept your settings in $CONFIG (phone: $PHONE, address $TS_IP)"
 else
   umask 077
@@ -216,8 +225,11 @@ host = "$TS_IP"
 port = $PORT
 
 [maps]
-app = "$MAPS_APP"                 # navigation links open in "apple" or "google" Maps
-traffic = "auto"                # Google (GOOGLE_MAPS_API_KEY) or Apple (APPLE_MAPS_TOKEN); "off"
+app = "$MAPS_APP"                 # the navigation app that opens: "apple", "google" or "waze"
+apps = [$MAPS_APPS_TOML]                       # your other navigation apps, offered too
+traffic = "auto"                # compares every traffic service that has a key: Google (GOOGLE_MAPS_API_KEY),
+                                # Apple (APPLE_MAPS_TOKEN), TomTom (TOMTOM_API_KEY); or one of them; "off"
+news = true                     # look for the last day's news about the roads on a route
 units = "imperial"              # or "metric"
 
 [push]
