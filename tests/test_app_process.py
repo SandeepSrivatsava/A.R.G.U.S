@@ -29,7 +29,8 @@ def argus_home(tmp_path):
     mock = ClaudeMock(rules).start()
     (home / "config.toml").write_text(
         f'user_name = "Test"\n[brain]\napi_base = "{mock.url}"\nworkspace = "{tmp_path / "ws"}"\n'
-        '[schedule]\nmorning_headlines = ""\n')
+        '[schedule]\nmorning_headlines = ""\n'
+        f'[logs]\nfolder = "{tmp_path / "Downloads" / "Logs"}"\n')
     secrets = home / "secrets.env"
     secrets.write_text("ANTHROPIC_API_KEY=sk-ant-test\n")
     secrets.chmod(0o600)
@@ -74,6 +75,8 @@ def test_argus_starts_answers_refuses_a_second_copy_and_stops_cleanly(argus_home
     assert '"stopped", "signal": 15' in log and '"started", "name": "Argus", "version"' in log
     assert not sock.exists()
     assert json.loads((argus_home / "run" / "startup.json").read_text())["phase"] == "stopped"
+    kept = list((argus_home.parent / "Downloads" / "Logs").glob("*/audit.jsonl"))
+    assert kept and '"stopped"' in kept[0].read_text()               # the last lines too, on stop
 
 
 def test_a_restart_right_after_a_stop_comes_back(argus_home):

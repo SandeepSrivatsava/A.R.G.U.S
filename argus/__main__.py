@@ -208,6 +208,23 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_logs(args) -> int:
+    from . import logkeeper
+    settings = config_mod.load()
+    keeper = logkeeper.from_settings(settings)
+    if keeper is None:
+        print('Keeping the logs in a folder is off. Switch it on: folder = "~/Downloads/Logs" under [logs] in '
+              "~/.argus/config.toml")
+        return 1
+    day = keeper.sync()
+    if day is None:
+        print(f"Couldn't write to {keeper.folder}. If macOS asked whether Argus may use the Downloads folder, "
+              "allow it (System Settings > Privacy & Security > Files and Folders).")
+        return 1
+    print(f"Logs are in {day} (a folder per day; days older than {keeper.keep_days} are deleted by themselves).")
+    return 0
+
+
 def cmd_google(args, *, ask=input, ask_secret=None, open_browser=None, request=None) -> int:
     """Connect your Google account (read-only), check it, or disconnect it."""
     import getpass
@@ -737,6 +754,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     s = sub.add_parser("errors", help="recent problems in plain words (--watch shows new ones as they happen)")
     s.add_argument("n", nargs="?", type=int, default=15)
     s.add_argument("--watch", action="store_true")
+    sub.add_parser("logs", help="copy the logs to the logs folder now (~/Downloads/Logs) and show where it is")
     s = sub.add_parser("report", help="write a problem report to the Desktop that is safe to share")
     s.add_argument("--show", action="store_true", help="print it instead of writing a file")
     s = sub.add_parser("google", help="connect your Google account, read-only (Gmail, Drive, Calendar)")
@@ -836,6 +854,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_errors(args)
     if args.cmd == "report":
         return cmd_report(args)
+    if args.cmd == "logs":
+        return cmd_logs(args)
     if args.cmd == "doctor":
         return cmd_doctor(args)
 

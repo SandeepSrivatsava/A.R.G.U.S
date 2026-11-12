@@ -233,7 +233,14 @@ argusctl status            # what Argus is doing right now, in plain words
 argusctl errors            # recent problems in plain words
 argusctl errors --watch    # leave this open in a Terminal window: new problems appear as they happen
 argusctl report            # writes argus-report.txt to your Desktop: problems, timings, settings
+argusctl logs              # every log, in ~/Downloads/Logs (a folder per day, deleted after 30 days)
 ```
+
+* **All the logs, in one folder.** Argus copies everything new in each of its logs (activity, app log, what it
+  printed when starting, crashes) to `~/Downloads/Logs/<date>/` every 10 minutes and when it stops, and deletes
+  day folders older than 30 days by itself. Change it under `[logs]` (`folder`, `keep_days`; `folder = ""`
+  turns it off). The first time, macOS may ask whether Argus may use the Downloads folder: allow it. The
+  activity log includes what you asked, so keep that folder to yourself; send `argusctl report` instead.
 
 * `argusctl restart` waits until Argus really answers again and says so ("Argus is back and listening"), or
   says why it didn't: where the start stopped, how it ended and what it printed. `argusctl restart --force`
@@ -573,7 +580,7 @@ made on the Mac (Kokoro, American); `argusctl voice` changes it, and `argusctl v
 
 ## How this was tested
 
-* **925 automated tests**: restarting (a new copy waiting for the old one, a stuck copy stopped and only ever
+* **930 automated tests**: the logs folder (each line once, a folder per day, old days deleted and nothing else);  restarting (a new copy waiting for the old one, a stuck copy stopped and only ever
   Argus's own, stopping while the main thread and the shutdown are stuck, a native crash and a hang leaving a
   trace, two failed starts bringing a safe one, `argusctl restart` saying whether Argus came back or why not,
   against a stand-in launchd), talking over Argus without a voiceprint (only its name stops it, and the echo of

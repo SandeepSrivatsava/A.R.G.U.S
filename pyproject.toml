@@ -1,6 +1,6 @@
 [project]
 name = "argus-assistant"
-version = "2.10.0"
+version = "2.10.1"
 description = "Argus: an always-listening, speaking assistant for your Mac, iPhone and Meta glasses, with its own Claude-powered brain"
 requires-python = ">=3.11"
 license = "MIT"

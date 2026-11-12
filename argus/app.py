@@ -25,6 +25,7 @@ from .listener import Listener
 from .llm import Claude
 from . import flights as flights_mod
 from . import followups as followups_mod
+from . import logkeeper as logkeeper_mod
 from . import sightings as sightings_mod
 from . import google as google_mod
 from . import council as council_mod
@@ -232,6 +233,9 @@ class App:
     # ---- start / stop ------------------------------------------------------------------------------
     def start_services(self) -> None:
         s = self.settings
+        self.logkeeper = logkeeper_mod.from_settings(s)   # every log, also in ~/Downloads/Logs, 30 days
+        if self.logkeeper is not None:
+            self.logkeeper.start()
         sync_default_jobs(self.store, s.morning_headlines, s.morning_briefing, s.timezone or None)
         self.scheduler.start()
         if s.phone_enabled:
@@ -249,6 +253,8 @@ class App:
         self.store.prune_sessions(older_than_days=45)
 
     def stop(self) -> None:
+        if getattr(self, "logkeeper", None) is not None:
+            self.logkeeper.stop()                         # the last lines too
         self.scheduler.stop()
         self.llm.close()
         if self.phone is not None:
@@ -378,8 +384,8 @@ def main(headless: bool = False) -> int:
             parts["control"].stop()               # first, so a new copy doesn't take this one for a working one
         quit_event.set()
         if "app" in parts:
+            parts["app"].audit.log("stopped", signal=signum)   # first, so the log folder gets it too
             parts["app"].stop()
-            parts["app"].audit.log("stopped", signal=signum)
         if "guard" in parts:
             parts["guard"].stop()
 
@@ -440,7 +446,7 @@ def main(headless: bool = False) -> int:
         return 0
     finally:
         startup.stopped()
+        app.audit.log("stopped")
         app.stop()
         guard.stop()
         control.stop()
-        app.audit.log("stopped")

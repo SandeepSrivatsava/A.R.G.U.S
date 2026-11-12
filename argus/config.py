@@ -50,6 +50,9 @@ class Settings:
     council: List[str] = field(default_factory=list)
     council_paid_per_day: int = 40     # questions a day for each pay-per-use brain (ChatGPT, Grok)
     council_wait: float = 12.0         # seconds before going with the answers that are in
+    # A copy of every log in one folder you can open, a sub-folder per day, deleted after keep_days ("" = off)
+    logs_folder: str = "~/Downloads/Logs"
+    logs_keep_days: int = 30
     web_search: bool = True
     session_idle_minutes: float = 30.0
     max_steps: int = 30
@@ -231,6 +234,7 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
     "android": {"messages": "android_messages", "notification_days": "android_notification_days",
                 "whatsapp_dir": "android_whatsapp_dir", "drive_assist": "android_drive_assist",
                 "speak": "android_speak"},
+    "logs": {"folder": "logs_folder", "keep_days": "logs_keep_days"},
     "council": {"extra": "council", "paid_per_day": "council_paid_per_day", "wait_seconds": "council_wait"},
     "mail": {"enabled": "mail_enabled", "days": "mail_days"},
     "calls": {"enabled": "calls_enabled", "model": "call_model", "max_minutes": "call_max_minutes",
@@ -283,6 +287,8 @@ def _validate(s: "Settings") -> None:
             raise ValueError('council.extra entries look like "Name | https://.../chat/completions | model | KEY_NAME"')
     if not 0 <= s.council_paid_per_day <= 1000:
         raise ValueError("council.paid_per_day must be between 0 and 1000")
+    if not 1 <= s.logs_keep_days <= 3650:
+        raise ValueError("logs.keep_days must be between 1 and 3650")
     if not 3 <= s.council_wait <= 60:
         raise ValueError("council.wait_seconds must be between 3 and 60")
     if s.routing not in ("auto", "off"):
