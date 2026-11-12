@@ -47,8 +47,8 @@ def spoken_error(error: str) -> str:
         return "Claude is overloaded at the moment. Please ask again in a minute."
     if "error 400" in text:
         return ("Claude didn't accept that request, so I've started a fresh conversation. Please ask again. "
-                "The details are in argusctl log.")
-    return "Sorry, that didn't work. The details are in argusctl log."
+                "The details are in argusctl errors.")
+    return "Sorry, that didn't work. The details are in argusctl errors."
 
 
 def refused(error: Optional[str]) -> bool:
@@ -82,6 +82,10 @@ class _VoiceEvents(Events):
         self.answered = True
         for sentence in self.buffer.feed(delta):
             self.say(sentence)
+
+    def working(self, tier: str) -> None:
+        if tier == "heavy" and not self.spoke:
+            self.say("Let me think that through properly.")
 
     def tool_started(self, name: str, description: str) -> None:
         if not self.spoke and time.monotonic() - self.started > self.brain.progress_after:

@@ -620,6 +620,12 @@ def describe_call(name: str, args: Dict[str, Any]) -> str:
         return f"phone {args.get('business') or args.get('number')}: {str(args.get('goal'))[:120]}"
     if name == "route":
         return f"directions to {str(args.get('destination'))[:120]}"
+    if name == "mail_search":
+        return f"search mail: {', '.join(str(w) for w in (args.get('words') or []))[:120]}"
+    if name == "mail_read":
+        return f"read email {args.get('id')}"
+    if name == "flight_history":
+        return f"flight history: {str(args.get('flight'))[:20]}"
     if name == "search_messages":
         return f"search messages: {str(args.get('query'))[:120]}"
     if name == "send_text":

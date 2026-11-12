@@ -12,7 +12,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from .approvals import DENY, ONCE, TASK, ApprovalRequest
 from .audit import Audit
@@ -22,6 +22,7 @@ from .llm import Claude, LLMError, StreamAccumulator
 from .policy import ASK, BLOCK, Policy
 from .prompts import system_blocks
 from .store import Store
+from . import tiers
 from .toolbox import Context, Tool, ToolOutput, describe_call, web_search_spec
 
 log = logging.getLogger("argus.agent")
@@ -55,6 +56,7 @@ class Events:
     def text(self, delta: str) -> None: ...
     def tool_started(self, name: str, description: str) -> None: ...
     def tool_finished(self, name: str, ok: bool) -> None: ...
+    def working(self, tier: str) -> None: ...          # which kind of model took the request (tiers.py)
     def approve(self, request: ApprovalRequest) -> str:
         return DENY
 
@@ -69,6 +71,7 @@ class Turn:
     steps: List[Dict[str, Any]] = field(default_factory=list)    # what each tool call did (for lessons)
     links: List[str] = field(default_factory=list)               # for the phone to open (e.g. navigation)
     timings: Dict[str, Any] = field(default_factory=dict)        # seconds: each Claude request, each tool
+    model: str = ""                                              # the Claude model that answered
 
 
 # How much Claude thinks before answering. Spoken answers should start quickly: low effort, and on Sonnet 5.5 no
@@ -79,10 +82,12 @@ _EFFORT_MODELS = re.compile(r"^claude-(fable|mythos|opus|sonnet|haiku)-5|^claude
 THINKING_TYPES = ("thinking", "redacted_thinking")
 
 
-def reasoning(model: str, channel: str, settings) -> Dict[str, Any]:
+def reasoning(model: str, channel: str, settings, tier: str = tiers.MAIN) -> Dict[str, Any]:
     """The output_config / thinking fields for a request on this channel."""
     spoken = channel in SPOKEN_CHANNELS
     effort = getattr(settings, "voice_effort" if spoken else "effort", "medium")
+    if tier == tiers.HEAVY:                  # hard work: worth the wait, also when spoken
+        effort = getattr(settings, "heavy_effort", "high")
     found: Dict[str, Any] = {}
     if _EFFORT_MODELS.match(model):
         found["output_config"] = {"effort": effort}
@@ -231,6 +236,7 @@ class Agent:
         # Argus's own keys and tokens: never shown to Claude, never sent anywhere by a tool.
         self.secrets = sorted({str(v) for v in secrets if v and len(str(v)) >= 8}, key=len, reverse=True)
         self._lock = threading.Lock()
+        self._last_tier: Dict[str, Tuple[str, float]] = {}     # per conversation: which kind of model answered last
 
     def add_secret(self, value: str) -> None:
         if value and len(value) >= 8 and value not in self.secrets:
@@ -253,12 +259,14 @@ class Agent:
         return any(value in text for value in self.secrets)
 
     # ---- request building --------------------------------------------------------------------------
-    def _tools_for(self, channel: str) -> List[Dict[str, Any]]:
+    def _tools_for(self, channel: str, model: str = "", tier: str = tiers.MAIN) -> List[Dict[str, Any]]:
         specs = [t.spec() for t in self.tools.values() if channel in t.channels]
+        if tier == tiers.LIGHT:
+            specs.append(dict(tiers.HAND_OVER))
         if self.settings.web_search:
             specs.append(web_search_spec(self.settings.blocked_sites, self.settings.city, self.settings.timezone))
         desktop = channel == "voice"
-        if self.computer is not None and (desktop or channel == "phone"):
+        if self.computer is not None and (desktop or channel == "phone") and tier != tiers.LIGHT:
             toolset = dict(TOOLSET)
             if not desktop:   # from the phone: look, never touch
                 toolset["configs"] = {m: {"enabled": False} for m in SCREEN_MEMBERS if m not in READ_ONLY_SCREEN}
@@ -267,7 +275,9 @@ class Agent:
             specs[-1] = dict(specs[-1], cache_control={"type": "ephemeral"})
         return specs
 
-    def _body(self, channel: str, system: List[Dict[str, Any]], messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _body(self, channel: str, system: List[Dict[str, Any]], messages: List[Dict[str, Any]],
+              model: str = "", tier: str = tiers.MAIN) -> Dict[str, Any]:
+        model = model or self.settings.model
         prepared = without_old_thinking(prune_images(messages))
         last = prepared[-1]
         if isinstance(last["content"], str):
@@ -276,8 +286,9 @@ class Agent:
             if isinstance(block, dict) and block.get("type") in ("text", "tool_result", "image"):
                 block["cache_control"] = {"type": "ephemeral"}
                 break
-        return dict({"model": self.settings.model, "max_tokens": 8192, "system": system, "messages": prepared,
-                     "tools": self._tools_for(channel)}, **reasoning(self.settings.model, channel, self.settings))
+        return dict({"model": model, "max_tokens": 8192, "system": system, "messages": prepared,
+                     "tools": self._tools_for(channel, model, tier)},
+                    **reasoning(model, channel, self.settings, tier))
 
     # ---- conversation upkeep -----------------------------------------------------------------------
     def _compact(self, session_id: str, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -373,6 +384,9 @@ class Agent:
             log.exception("tool %s crashed", name)
             out = ToolOutput.error(f"{name} failed: {exc}")
         events.tool_finished(name, not out.is_error)
+        if out.is_error:
+            detail = out.content if isinstance(out.content, str) else "error"
+            self.audit.log("tool_failed", channel=channel, tool=name, error=self._redact(detail)[:300])
         if time.monotonic() - started > 5:
             self.audit.log("tool_slow", tool=name, seconds=round(time.monotonic() - started, 1))
         result["content"] = self._redact(out.content)
@@ -405,6 +419,14 @@ class Agent:
                       location=None if guest else location, locate=None if guest else locate)
         grants: Set[str] = set()
         spent = 0
+        tier, model = tiers.choose(content, channel, self.settings)
+        before = self._last_tier.get(session_id)
+        if (tier == tiers.LIGHT and before and time.monotonic() - before[1] < tiers.STICKY_SECONDS
+                and len(str(content).split()) <= tiers.SHORT_REPLY):
+            tier = before[0]          # "yes", "do it", "and tomorrow?": the answer to what a bigger model just said
+            model = tiers.model_for(tier, self.settings)
+        turn.model = model
+        getattr(events, "working", lambda _tier: None)(tier)
         resumes, said_before = 0, ""
         for _ in range(self.settings.max_steps):
             if cancel.is_set():
@@ -414,7 +436,7 @@ class Agent:
             acc = StreamAccumulator()
             asked_at, first_at = time.monotonic(), None
             try:
-                for event in self.llm.stream(self._body(channel, system, messages), cancel):
+                for event in self.llm.stream(self._body(channel, system, messages, model, tier), cancel):
                     if first_at is None and event.get("type") == "content_block_delta":
                         first_at = time.monotonic()
                         turn.timings.setdefault("claude_first_s", []).append(round(first_at - asked_at, 2))
@@ -432,7 +454,7 @@ class Agent:
                     resumes += 1
                     for key, value in acc.usage.items():          # the broken request still cost something
                         turn.usage[key] = turn.usage.get(key, 0) + value
-                    turn.cost += request_cost(self.settings.model, acc.usage)
+                    turn.cost += request_cost(model, acc.usage)
                     spent += budget_tokens(acc.usage)
                     said = "".join(b.get("text", "") for b in acc.content if b.get("type") == "text").strip()
                     if said:
@@ -448,9 +470,24 @@ class Agent:
             turn.timings.setdefault("claude_s", []).append(round(time.monotonic() - asked_at, 2))
             for key, value in acc.usage.items():
                 turn.usage[key] = turn.usage.get(key, 0) + value
-            turn.cost += request_cost(self.settings.model, acc.usage)
+            turn.cost += request_cost(model, acc.usage)
             spent += budget_tokens(acc.usage)
             blocks = [b for b in acc.content if not (b.get("type") == "text" and not b.get("text"))]
+            wanted = next((b for b in blocks if b.get("type") == "tool_use" and b.get("name") == "hand_over"), None)
+            if wanted is not None and tier == tiers.LIGHT and not cancel.is_set():
+                # The quick model says this is beyond it. Its message is dropped and a stronger model takes over.
+                level = (wanted.get("input") or {}).get("level")
+                tier = tiers.HEAVY if level == tiers.HEAVY and self.settings.heavy_model else tiers.MAIN
+                model = tiers.model_for(tier, self.settings)
+                turn.model = model
+                self.audit.log("handed_over", channel=channel, to=model)
+                if not _is_plain_user(messages[-1]):          # it had already used tools: start a clean exchange
+                    for role, text in zip(("assistant", "user"), tiers.BRIDGE):
+                        block = [{"type": "text", "text": text}]
+                        messages.append({"role": role, "content": block})
+                        self.store.append(session_id, role, block)
+                getattr(events, "working", lambda _tier: None)(tier)
+                continue
             if cancel.is_set():
                 turn.stopped = True
                 text_only = [b for b in blocks if b.get("type") == "text"]
@@ -490,10 +527,12 @@ class Agent:
         else:
             turn.error = "stopped after too many steps"
         self.audit.log("turn", channel=channel, session=session_id, stopped=turn.stopped or None, error=turn.error,
+                       model=turn.model,
                        input_tokens=turn.usage.get("input_tokens"), output_tokens=turn.usage.get("output_tokens"),
                        cache_read=turn.usage.get("cache_read_input_tokens"),
                        web_searches=turn.usage.get("web_search_requests"), cost_usd=round(turn.cost, 4),
                        timings=turn.timings or None)
+        self._last_tier[session_id] = (tier, time.monotonic())
         turn.links = list(dict.fromkeys(ctx.links))
         if self.reflector is not None and channel in ("voice", "phone", "cli", "android") and not turn.stopped:
             self.reflector.learn_later(asked, turn.steps, turn.text)

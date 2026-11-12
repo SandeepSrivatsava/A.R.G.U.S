@@ -16,7 +16,7 @@ improved, with credit in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Ideas
 could stand for (and other names): [docs/NAMES.md](docs/NAMES.md).
 
 ```
-microphone ─► voice detection ─► speech-to-text ─► "for Argus?" ─► brain ◄──► Claude API (Sonnet 5.5)
+microphone ─► voice detection ─► speech-to-text ─► "for Argus?" ─► brain ◄──► Claude API (Haiku, Sonnet or Opus 5.5 by the request)
 double clap ────────────────────────────────────────►    │ no: dropped,  │
                                                           never stored    ▼ every tool call
                                                 policy: allow · ask you (Touch ID, or your voice + a code word) · block
@@ -59,6 +59,9 @@ Android: the same brain runs on the phone (Termux). Mac off: an always-on server
 | "Argus, find the address Ravi sent me on WhatsApp" | Searches WhatsApp on the Mac, or your iPhone's apps through iPhone Mirroring (slow, but it can see everything there). On Android, Argus searches your texts, WhatsApp's full history and your notifications on the phone itself. |
 | "Hey Siri, Argus" → "fastest way to the airport?" | Live traffic for up to three routes from where your phone is, which one is faster and by how much, and your maps app opens with it. |
 | "Argus, what am I looking at?" | Looks through your Meta glasses if they're connected (Argus Eye app), otherwise at the screen. Only when asked. |
+| "Argus, I'm flying to Chicago on Friday" | If you let it read your mail: finds the booking, tells you the airline, flight and time, and asks whether you want the details (confirmation code, terminal, seat). |
+| "Has that flight been late or cancelled in the last two weeks?" | Day by day: on time, late by how much, cancelled or diverted, and a summary (FlightAware key; otherwise it searches the web). |
+| "Argus, write a Python script that renames my photos by date" | Hard work goes to the heavy model ("Let me think that through properly"); everyday questions go to the quick one. |
 | "Argus, remember that my sister's birthday is 12 March" | Remembers across conversations. "What do you remember?" / "Forget number 3." |
 | "Argus, remind me at 6 to call Mom" / "every weekday at 8, check the weather" | Reminders and scheduled tasks, spoken at the Mac. If you're away (Mac locked or microphone off), Argus keeps them and tells you when you're back. |
 | "Argus, stop" | Stops talking and cancels the current task, even mid-sentence. |
@@ -108,6 +111,47 @@ The full list is in [SECURITY.md](SECURITY.md). The short version:
 * **Keys never in the repo.** They live in `~/.argus/secrets.env` (owner-only), are typed with hidden
   input, never appear on a command line, and are removed from the environment of commands Argus runs.
   Your Claude Pro subscription is never used; Argus uses its own pay-per-use API key.
+
+## The right model for each request
+
+Argus picks the Claude model by what you ask, on the Mac, before anything is sent (so it costs no time):
+
+| Kind of request | Model | Price next to the main model |
+|---|---|---|
+| Everyday: the time, weather, traffic, news, timers, small talk | Haiku 5.5 (quickest) | about a twentieth |
+| Using the Mac, mail and flights, feelings and advice, longer requests, photos | Sonnet 5.5 (main) | 1× |
+| Coding, analysis, reports, long writing | Opus 5.5 (heavy) | about 2× |
+
+* If the quick model sees that a request is beyond it, it hands the request up by itself; you hear one answer.
+* A short reply ("yes", "and tomorrow?") stays with the model that asked.
+* The activity log and `argusctl report` show which model answered each request. Change the models under `[brain]`
+  (`light_model`, `model`, `heavy_model`; for example `heavy_model = "claude-fable-5-2"` for the strongest,
+  at about 4×), or set `routing = "off"` to always use the main model.
+
+## Your mail (read-only) and your flights
+
+* **Mail** is off until you say yes in setup (`[mail] enabled`). Argus asks the Mac's **Mail app**, which
+  already has your accounts, so no mail password or key is stored. It can only search subjects and senders
+  and read one message; there is no way for it to send, delete, move or mark mail. Security-code and
+  password mails, and mail from your never-touch sites (your bank), are left out before Claude sees
+  anything. The first time, macOS asks "Argus wants to control Mail": click Allow. If your Gmail isn't in
+  the Mail app yet: System Settings → Internet Accounts → Google → switch on Mail, then open Mail once.
+* **Flight history** uses FlightAware's AeroAPI with your own key (setup asks; flightaware.com/aeroapi,
+  Personal plan). One question costs about one to three cents and the plan includes free use each month.
+  It covers the last 14 days and the next two. Without a key, Argus searches the web instead.
+
+## Seeing what went wrong
+
+```bash
+argusctl errors            # recent problems in plain words
+argusctl errors --watch    # leave this open in a Terminal window: new problems appear as they happen
+argusctl report            # writes argus-report.txt to your Desktop: problems, timings, settings
+```
+
+* The report never contains what you said or what Argus answered, and keys, tokens, email addresses and
+  your home folder's name are removed. Read it, then send it when you ask for help.
+* When a request fails, Argus says why in a sentence, a notification shows the reason, and the menu bar
+  has **Show recent problems**.
 
 ## Fast answers, and second tries
 
@@ -350,6 +394,8 @@ lessons are kept either way. `./setup.sh --change-keys` asks for the keys again.
 ```bash
 argusctl status            # what Argus is doing
 argusctl log               # recent activity (requests, tools, approvals, blocks)
+argusctl errors [--watch]  # recent problems in plain words (or live)
+argusctl report            # a problem report on your Desktop that is safe to share
 argusctl timing [n]        # how long the last spoken answers took, step by step
 argusctl usage             # estimated Claude spend today and this month
 argusctl ask "any news?"   # type a request instead of saying it (Argus answers out loud)
@@ -378,7 +424,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 * **"Bootstrap failed: 5: Input/output error" at step 8.** macOS hadn't finished stopping the old Argus.
   Setup now waits and tries again; if it still fails, run `launchctl bootout gui/$(id -u)/com.argus.voice`,
   wait a few seconds, and run `./setup.sh` again.
-* **It says "that didn't work" to everything.** Run `argusctl log` and look at the last `llm_error` line.
+* **It says "that didn't work" to everything.** Run `argusctl errors` (or `argusctl report` and send the file).
   If Claude refuses a conversation (error 400), Argus now starts a fresh one and asks again by itself.
 * **It's slow to answer.** Run `argusctl timing` right after a slow answer. "Claude ... to start" is time
   waiting on Claude; a big number there usually means a higher `voice_effort` or a slow network. A tool
@@ -410,7 +456,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **788 automated tests**: starting at login when macOS is slow to stop the old Argus, a conversation Claude refuses being replaced and the question asked again;: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **832 automated tests**: picking the model for a request and handing it up, mail search with a stand-in Mail app (codes and blocked senders left out, scripts that can only read), a flight's two-week history against a stand-in FlightAware, `argusctl errors` and the report (nothing private in it); starting at login when macOS is slow to stop the old Argus, a conversation Claude refuses being replaced and the question asked again;: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed
@@ -457,7 +503,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
   dialog with Touch ID, lock detection, real screen control, the live Claude API with the computer
   tools, spotting Buy buttons through the Mac's accessibility interface, a real phone call (placing it,
   pressing the Call button, hearing the other side, being heard), the iPhone app (not yet compiled), the
-  MapKit helper and the call helper (Swift, built on the Mac), how much faster spoken answers really are, the live Google and Apple maps services, a real Android phone
+  MapKit helper and the call helper (Swift, built on the Mac), the Mail app scripts (AppleScript) and how fast they are on a big mailbox, live FlightAware answers, how much faster spoken answers really are, the live Google and Apple maps services, a real Android phone
   with Termux, and a real cloud server with systemd.
 
 ## What's next

@@ -24,6 +24,8 @@ from .lessons import Reflector
 from .hearing import Microphone, Segmenter, SherpaTranscriber, VoicePrint, model_paths
 from .listener import Listener
 from .llm import Claude
+from . import flights as flights_mod
+from . import mail as mail_mod
 from . import weather as weather_mod
 from .maps import Router, phone_links, route_tool
 from .news import format_headlines
@@ -89,6 +91,8 @@ class App:
         self.router = Router(settings, secrets)
         tools["route"] = route_tool(self.router)
         self.weather, self.recent = weather_mod.attach(settings, self.router, tools)
+        self.flights = flights_mod.attach(secrets, tools)                    # needs a FlightAware key
+        self.mail = mail_mod.attach(settings, tools) if IS_MAC else None     # read-only; off until switched on
         self.push = push_from(settings, secrets, self.audit)    # reminders reach the phone while you're away
         self.agent = Agent(self.llm, self.store, self.policy, tools,
                            settings=settings, audit=self.audit, computer=computer, glasses=self.glasses,
@@ -226,6 +230,7 @@ def run_menubar(app: App, quit_event: threading.Event) -> None:
     class ArgusMenu(rumps.App):
         def __init__(self):
             super().__init__("Argus", title="◉", quit_button=None)
+            self.told = None
             self.status_item = rumps.MenuItem("Starting…")
             self.mic_item = rumps.MenuItem("Microphone", callback=self.toggle_mic)
             self.conversation_item = rumps.MenuItem("Conversation mode (no name needed)", callback=self.toggle_conversation)
@@ -235,7 +240,8 @@ def run_menubar(app: App, quit_event: threading.Event) -> None:
                          self.screen_item, None,
                          rumps.MenuItem("Stop talking / cancel task", callback=lambda _: argus.brain.cancel()),
                          rumps.MenuItem("New conversation", callback=lambda _: argus.brain.sessions.rotate()),
-                         rumps.MenuItem("Open activity log", callback=self.open_log), None,
+                         rumps.MenuItem("Open activity log", callback=self.open_log),
+                         rumps.MenuItem("Show recent problems", callback=self.show_problems), None,
                          rumps.MenuItem("Quit Argus", callback=self.quit)]
 
         @rumps.timer(1)
@@ -248,6 +254,13 @@ def run_menubar(app: App, quit_event: threading.Event) -> None:
             self.conversation_item.state = int(st["conversation"])
             self.sleep_item.state = int(st["asleep"])
             self.screen_item.state = int(not st["screen_private"])
+            problem = argus.brain.last_error
+            if problem and problem != self.told:          # a failed request also shows as a notification
+                try:
+                    rumps.notification("Argus", "A request failed", str(problem)[:180] + "  (argusctl errors)")
+                except Exception:
+                    pass
+            self.told = problem
 
         def toggle_mic(self, _):
             argus.set_mic(not argus.mic_wanted)
@@ -263,6 +276,14 @@ def run_menubar(app: App, quit_event: threading.Event) -> None:
 
         def open_log(self, _):
             subprocess.run(["open", "-a", "Console", str(settings.audit_path)], check=False)
+
+        def show_problems(self, _):
+            from . import diagnose
+            try:
+                text = diagnose.build_report(settings, config_mod.read_secrets(settings.secrets_path))
+                subprocess.run(["open", "-e", str(diagnose.write_report(text, settings.run_dir))], check=False)
+            except Exception:
+                log.exception("couldn't build the problem report")
 
         def quit(self, _):
             quit_event.set()

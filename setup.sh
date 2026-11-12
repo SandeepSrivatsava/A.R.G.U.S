@@ -158,6 +158,8 @@ show_saved_answers() {
   saved_line "Blocked sites:" "${sites:-none}"
   saved_line "Google Maps key:" "$(saved_key GOOGLE_MAPS_API_KEY google_key)"
   saved_line "TomTom key:" "$(saved_key TOMTOM_API_KEY tomtom_key)"
+  saved_line "FlightAware key:" "$(saved_key FLIGHTAWARE_API_KEY flight_key)"
+  saved_line "Read your mail:" "$(m="$(answer_get mail)"; echo "${m:-not asked yet (new question)}")"
   saved_line "Weekday briefing:" "$(if [ -n "$brief" ]; then echo on; else echo off; fi)"
   saved_line "Keep Mac awake:" "${awake:-not asked yet (new question)}"
 }
@@ -318,6 +320,38 @@ if [ -n "$GOOGLE_KEY" ] && ! printf '%s' "$GOOGLE_KEY" | grep -Eq '^AIza[0-9A-Za
 fi
 ask_tomtom_key
 
+# Flight delays and cancellations (optional): FlightAware. Without a key Argus looks on the web instead.
+FLIGHT_KEY="${ARGUS_FLIGHTAWARE_KEY:-}"
+FLIGHT_ASKED=0
+optional_key FLIGHT_KEY FLIGHTAWARE_API_KEY flight_key "FlightAware key"
+if [ "$KEY_ASK" = 1 ]; then
+  echo "  \"Has my flight been late or cancelled these two weeks?\" is answered from FlightAware: an AeroAPI key"
+  echo "  from flightaware.com/aeroapi (Personal plan; a question costs about a cent, with free use each month)."
+  echo "  Press Enter to skip; Argus then searches the web for it."
+  ask_secret FLIGHT_KEY "FlightAware AeroAPI key (Enter to skip)" optional
+  FLIGHT_ASKED=1
+fi
+
+# Your mail, read-only (optional, Mac only): for "find my flight booking" and the like.
+MAIL="${ARGUS_MAIL:-}"
+if [ -z "$MAIL" ]; then
+  saved_mail="$(answer_get mail)"
+  if [ -n "$saved_mail" ] && [ "$KEEP" = 1 ]; then
+    MAIL="$saved_mail"
+    ok "Reading your mail: $MAIL (saved)"
+  elif is_tty; then
+    echo "  Argus can look things up in your mail when you ask (\"I'm flying on Friday\": it finds the booking)."
+    echo "  It goes through the Mac's Mail app, so no password is stored, and it can only search and read:"
+    echo "  never send, delete or change. Security-code and password mails, and your blocked sites, are left out."
+    mail_default=n; [ "$saved_mail" != yes ] || mail_default=y
+    if confirm "Let Argus search and read your mail?" "$mail_default"; then MAIL=yes; else MAIL=no; fi
+  else
+    MAIL="${saved_mail:-no}"
+  fi
+fi
+[ "$MAIL" = yes ] || MAIL=no
+MAIL_TOML=false; [ "$MAIL" = no ] || MAIL_TOML=true
+
 if [ "${ARGUS_SKIP_VALIDATION:-0}" = 1 ]; then
   warn "Skipping live key checks (ARGUS_SKIP_VALIDATION=1)"
 else
@@ -413,9 +447,12 @@ step "6/10  Saving keys and settings"
 printf '%s' "$ANTHROPIC_KEY" | secret_set ANTHROPIC_API_KEY
 [ -z "$GOOGLE_KEY" ] || printf '%s' "$GOOGLE_KEY" | secret_set GOOGLE_MAPS_API_KEY
 [ -z "$TOMTOM_KEY" ] || printf '%s' "$TOMTOM_KEY" | secret_set TOMTOM_API_KEY
+[ -z "$FLIGHT_KEY" ] || printf '%s' "$FLIGHT_KEY" | secret_set FLIGHTAWARE_API_KEY
 answer_set claude_key saved
 if [ -n "$GOOGLE_KEY" ]; then answer_set google_key saved; elif [ "$GOOGLE_ASKED" = 1 ]; then answer_set google_key skipped; fi
 if [ -n "$TOMTOM_KEY" ]; then answer_set tomtom_key saved; elif [ "$TOMTOM_ASKED" = 1 ]; then answer_set tomtom_key skipped; fi
+if [ -n "$FLIGHT_KEY" ]; then answer_set flight_key saved; elif [ "$FLIGHT_ASKED" = 1 ]; then answer_set flight_key skipped; fi
+answer_set mail "$MAIL"
 printf '' | secret_set TELEGRAM_BOT_TOKEN        # Telegram was removed: drop any token an older setup saved
 ok "Keys saved to $SECRETS (owner-only)"
 PHONE_IP=""
@@ -440,6 +477,7 @@ elif [ -f "$CONFIG" ] && [ "${ARGUS_REWRITE_CONFIG:-0}" != 1 ]; then
     warn "To change blocked sites, edit blocked_sites in $CONFIG, then: argusctl restart"
   fi
   [ "$BRIEF_ASKED" = 0 ] || toml_set "$CONFIG" schedule morning_briefing "\"$BRIEF_CRON\""
+  toml_set "$CONFIG" mail enabled "$MAIL_TOML"
   if [ "$KEEP" = 0 ] && [ -n "$SAVED_NAME$SAVED_CITY" ]; then
     toml_set "$CONFIG" "" user_name "$(toml_str "$NAME")"
     toml_set "$CONFIG" "" city "$(toml_str "$CITY")"
@@ -464,6 +502,9 @@ timezone = $(toml_str "$TZ_NAME")
 [brain]
 model = "$MAIN_MODEL"           # conversations and tasks
 small_model = "claude-haiku-5-5" # summarising long conversations
+routing = "auto"                # pick the model by the request; "off" = always use model
+light_model = "claude-haiku-5-5" # everyday questions: quickest and cheapest
+heavy_model = "claude-opus-5-5"  # coding, analysis, long writing (about twice the price of the main model)
 web_search = true               # Claude's web search (\$10 per 1,000 searches)
 workspace = $(toml_str "$WORKSPACE")
 max_turn_tokens = 400000        # stop a single request before it gets expensive
@@ -510,6 +551,9 @@ traffic = "auto"                # compares every traffic service that is set up:
                                 # Google and TomTom (with keys). Or just one: "mapkit", "apple", "google", "tomtom"; "off"
 news = true                     # look for the last day's news about the roads on a route
 units = "imperial"              # or "metric"
+
+[mail]
+enabled = $MAIL_TOML                 # search and read your mail through the Mail app (never send or delete)
 
 [push]
 enabled = false                 # reminders on your phone while you're away from the Mac (docs/SERVER.md)
@@ -645,6 +689,7 @@ if [ "$IS_MAC" = 1 ] && [ "$NO_SERVICE" = 0 ] && [ "$DRY_RUN" = 0 ]; then
   echo "    Speech is processed on this Mac; only what you say to Argus is sent to Claude."
   echo "  • Screen Recording and Accessibility: lets Argus see and use apps when you ask. macOS opens"
   echo "    System Settings; switch Argus on in both lists, then run: argusctl restart"
+  [ "$MAIL" != yes ] || echo "  • Mail: the first time Argus looks in your mail, macOS asks \"Argus wants to control Mail\" → Allow."
   echo "  • Approvals: when Argus wants to click, type or delete, a box appears; Allow asks for Touch ID."
 else
   ok "Skipped here"

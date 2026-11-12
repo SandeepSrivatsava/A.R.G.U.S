@@ -3,7 +3,7 @@
 Where Argus stands, what would make phase 1 solid, and what phase 2 could add. Nothing here is promised;
 it's the order that looks most useful.
 
-## Phase 1: what exists (version 2.5)
+## Phase 1: what exists (version 2.6)
 
 Argus on the Mac (always listening, speaks, uses the screen with approvals), reachable from an iPhone
 through a Siri Shortcut and from Meta glasses; Argus on an Android phone; an always-on server for when the
@@ -41,8 +41,9 @@ In rough order of value:
    `argusctl timing`, and pausing during calls at the Mac. Next: noticing calls on the iPhone by itself
    (needs the phase 2 app), interrupt Argus by speaking while it talks, start speaking sooner on long answers, a
    custom-trained wake word for fewer misses, and more languages.
-9. **Calendar, mail and reminders, read-only first.** "What's on today?", "did the landlord reply?",
-   without the right to send or delete until that has earned trust.
+9. **Calendar, mail and reminders, read-only first.** Mail search and reading is done (2.6, through the
+   Mail app), with flight bookings and a flight's delay history. Next: the calendar
+   ("what's on today?"), still without the right to send or delete until that has earned trust.
 10. **Security upkeep.** An outside review, hash-pinned installs for every dependency (WhatsApp's reader
     already is), a command that replaces all keys and tokens at once, and signed releases.
 

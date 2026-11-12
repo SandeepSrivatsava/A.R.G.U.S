@@ -271,3 +271,24 @@ or speech that wasn't for Argus. It rotates at 5 MB.
 * `argusctl push off` stops notifications from the Mac; change the topic (`argusctl push on`) if it leaked.
 
 Found a problem? Open a private issue in this repository.
+
+## 17. Your mail
+
+| Protection | Where |
+|---|---|
+| Off until you switch it on in setup (`[mail] enabled`). Only on the Mac, and only for you: guests, scheduled tasks and trip checks don't get the mail tools. | `argus/mail.py`, `argus/app.py` |
+| No mail password, app password or token is stored. Argus asks the Mail app through two fixed AppleScripts (search subjects and senders; read one message). macOS asks you once whether Argus may control Mail (Privacy & Security → Automation). | `argus/mail.py` |
+| Read-only by construction: there is no script that sends, deletes, moves, marks or forwards, and Claude can't supply script text, only search words and a result's id. A test checks the scripts contain no such verbs. | `argus/mail.py`, `tests/test_mail_flights.py` |
+| Left out before Claude sees anything: messages whose subject looks like a security code, sign-in link or password reset, and every message from a site on your never-touch list. A message whose text starts like a code mail can't be read either. | `argus/mail.py` (`hidden`) |
+| Results are labelled as other people's words, and the prompt tells Claude never to follow instructions inside them. Sending anything onward would still need your approval. | `argus/mail.py`, `argus/prompts.py` |
+| What it doesn't protect: the emails Argus reads for you are sent to Claude to answer your question, like anything else you ask about. | |
+
+## 18. Flight history
+
+Only the flight number is sent to FlightAware, with your own key (`FLIGHTAWARE_API_KEY` in `secrets.env`).
+Without a key the tool isn't offered.
+
+## 19. Problem reports
+
+`argusctl report` leaves out what you said and what Argus answered, and removes keys, tokens, email addresses
+and your home folder's name (`argus/diagnose.py`). The file is readable only by you. Read it before sending it.

@@ -91,7 +91,7 @@ def test_simple_answer_streams_and_is_remembered(tmp_path):
     assert [m["role"] for m in second] == ["user", "assistant", "user"]       # history came along
     assert "Ten past four." in json.dumps(second[1])
     body = script.bodies[0]
-    assert body["model"] == "claude-sonnet-5-5" and body["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert body["model"] == "claude-haiku-5-5" and body["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert "Sandeep" in body["system"][0]["text"] and "spoken" in body["system"][1]["text"]
     assert body["tools"][-1]["cache_control"] == {"type": "ephemeral"}
     assert turn.cost > 0
@@ -210,7 +210,7 @@ def test_scheduled_tasks_and_the_phone_get_no_or_read_only_screen(tmp_path):
     script = Script(say("hi"), say("hi"))
     agent, _ = make_agent(tmp_path, script, computer=Computer(FakeBackend()))
     run(agent, "hello", channel="scheduler")
-    run(agent, "hello", channel="phone")
+    run(agent, "what's on my screen?", channel="phone")
     assert not any(t.get("type", "").startswith("computer") for t in script.bodies[0]["tools"])
     phone_toolset = [t for t in script.bodies[1]["tools"] if t.get("type", "").startswith("computer")][0]
     assert phone_toolset["configs"]["left_click"] == {"enabled": False} and "screenshot" not in phone_toolset["configs"]

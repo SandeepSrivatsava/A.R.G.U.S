@@ -106,3 +106,6 @@ Nothing here is included in this repository; Argus only runs these programs.
   government data). Used through their public web APIs; no code from either is included.
 * Push notifications use [ntfy](https://ntfy.sh) (open source, Apache-2.0 / GPL-2.0), through its public
   web API: ntfy.sh or your own server. No ntfy code is included.
+
+Flight history, with your own key: **FlightAware AeroAPI** (flightaware.com/aeroapi), under FlightAware's terms.
+Mail is read through Apple's Mail app on your Mac; nothing of Apple's is included in Argus.

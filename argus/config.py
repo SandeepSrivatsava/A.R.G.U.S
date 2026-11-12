@@ -41,6 +41,10 @@ class Settings:
     voice_effort: str = "low"       # how hard Claude works on spoken answers: low = quickest (see agent.reasoning)
     effort: str = "medium"          # for scheduled tasks and the command line
     small_model: str = "claude-haiku-5-5"
+    routing: str = "auto"           # "auto": pick the model by the request (tiers.py); "off": always `model`
+    light_model: str = "claude-haiku-5-5"   # everyday questions ("" = use `model`)
+    heavy_model: str = "claude-opus-5-5"    # coding, analysis, long writing ("" = use `model`)
+    heavy_effort: str = "high"
     web_search: bool = True
     session_idle_minutes: float = 30.0
     max_steps: int = 30
@@ -91,6 +95,9 @@ class Settings:
     maps_news: bool = True         # check the last day's news about the roads on a route
     maps_traffic: str = "auto"     # "auto", "google", "apple", "mapkit" or "off"
     maps_units: str = "imperial"   # or "metric"
+    # your mail, read-only, through the Mac's Mail app (mail.py); off until you say yes in setup
+    mail_enabled: bool = False
+    mail_days: int = 90            # how far back a search looks unless asked otherwise
     # push notifications to your phone (push.py), for when Argus can't say something out loud
     push_enabled: bool = False
     push_server: str = "https://ntfy.sh"
@@ -193,7 +200,8 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # config.toml layout: top-level keys plus these sections. (section, key) -> Settings field.
 _TOP = ("name", "user_name", "city", "timezone")
 _SECTIONS: Dict[str, Dict[str, str]] = {
-    "brain": {"model": "model", "small_model": "small_model", "voice_effort": "voice_effort", "effort": "effort", "web_search": "web_search",
+    "brain": {"model": "model", "small_model": "small_model", "voice_effort": "voice_effort", "effort": "effort", "routing": "routing",
+              "light_model": "light_model", "heavy_model": "heavy_model", "heavy_effort": "heavy_effort", "web_search": "web_search",
               "session_idle_minutes": "session_idle_minutes", "max_steps": "max_steps",
               "max_turn_tokens": "max_turn_tokens", "context_tokens": "context_tokens", "self_learning": "self_learning",
               "history_messages": "history_messages", "workspace": "workspace_dir", "api_base": "api_base"},
@@ -212,6 +220,7 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
     "android": {"messages": "android_messages", "notification_days": "android_notification_days",
                 "whatsapp_dir": "android_whatsapp_dir", "drive_assist": "android_drive_assist",
                 "speak": "android_speak"},
+    "mail": {"enabled": "mail_enabled", "days": "mail_days"},
     "calls": {"enabled": "calls_enabled", "model": "call_model", "max_minutes": "call_max_minutes",
               "monitor": "call_monitor", "international": "call_international", "per_hour": "calls_per_hour",
               "input_device": "call_input_device", "tap": "call_tap"},
@@ -249,7 +258,10 @@ def _validate(s: "Settings") -> None:
         raise ValueError('listening.guests must be "ask" or "never"')
     if s.voice_engine not in ("piper", "say"):
         raise ValueError('voice.engine must be "piper" or "say"')
-    for name, value in (("brain.voice_effort", s.voice_effort), ("brain.effort", s.effort)):
+    if s.routing not in ("auto", "off"):
+        raise ValueError('brain.routing must be "auto" or "off"')
+    for name, value in (("brain.voice_effort", s.voice_effort), ("brain.effort", s.effort),
+                        ("brain.heavy_effort", s.heavy_effort)):
         if value not in EFFORTS:
             raise ValueError(f'{name} must be one of {", ".join(EFFORTS)}')
     if s.phone_type not in ("iphone", "android"):

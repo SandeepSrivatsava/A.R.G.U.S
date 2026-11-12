@@ -362,7 +362,7 @@ def test_spoken_errors_are_short_and_plain():
     assert "getting long" in spoken_error("stopped after too many steps")
     assert "internet" in spoken_error("couldn't reach the Claude API (timed out)")
     assert "partway" in spoken_error("the reply from the Claude API was cut off")
-    assert spoken_error("weird") == "Sorry, that didn't work. The details are in argusctl log."
+    assert spoken_error("weird") == "Sorry, that didn't work. The details are in argusctl errors."
 
 
 def test_approval_answers_from_the_brain_are_used(tmp_path):

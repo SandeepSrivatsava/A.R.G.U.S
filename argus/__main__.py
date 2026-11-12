@@ -142,6 +142,53 @@ def cmd_log(args) -> int:
     return 0
 
 
+def cmd_errors(args) -> int:
+    from . import diagnose
+    settings = config_mod.load()
+    found = diagnose.problems(diagnose.read_entries(settings.audit_path))[-args.n:]
+    for line in found:
+        print(line)
+    if not found:
+        print("No problems in the activity log.")
+    if args.watch:
+        print("Watching for new problems (Ctrl-C to stop)...", flush=True)
+        try:
+            for line in diagnose.follow(settings.audit_path):
+                print(line, flush=True)
+        except KeyboardInterrupt:
+            pass
+    else:
+        print("Live view: argusctl errors --watch    A file to send for help: argusctl report")
+    return 0
+
+
+def argus_version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("argus")
+    except Exception:
+        try:
+            import re
+            from pathlib import Path
+            text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+            return re.search(r'^version = "([^"]+)"', text, re.M).group(1)
+        except Exception:
+            return ""
+
+
+def cmd_report(args) -> int:
+    from . import diagnose
+    settings = config_mod.load()
+    text = diagnose.build_report(settings, config_mod.read_secrets(settings.secrets_path), argus_version())
+    if args.show:
+        print(text, end="")
+        return 0
+    path = diagnose.write_report(text)
+    print(f"Wrote {path}")
+    print("It has recent problems, timings and settings, but not what you said, and no keys. Read it, then send it.")
+    return 0
+
+
 def describe_timing(entry: dict, end_of_speech: float = 0.6) -> str:
     """One line per spoken request: where the seconds between your last word and Argus's first word went."""
     bits = []
@@ -376,6 +423,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("new", help="start a new conversation")
     s = sub.add_parser("log", help="recent activity")
     s.add_argument("n", nargs="?", type=int, default=20)
+    s = sub.add_parser("errors", help="recent problems in plain words (--watch shows new ones as they happen)")
+    s.add_argument("n", nargs="?", type=int, default=15)
+    s.add_argument("--watch", action="store_true")
+    s = sub.add_parser("report", help="write a problem report to the Desktop that is safe to share")
+    s.add_argument("--show", action="store_true", help="print it instead of writing a file")
     s = sub.add_parser("timing", help="how long recent spoken answers took, step by step")
     s.add_argument("n", nargs="?", type=int, default=10)
     s = sub.add_parser("enroll", help="teach Argus your voice (voice lock) and how you say its name")
@@ -435,6 +487,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_log(args)
     if args.cmd == "timing":
         return cmd_timing(args)
+    if args.cmd == "errors":
+        return cmd_errors(args)
+    if args.cmd == "report":
+        return cmd_report(args)
     if args.cmd == "doctor":
         return cmd_doctor(args)
 

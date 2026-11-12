@@ -173,6 +173,11 @@ def test_setup_asks_which_phone_on_a_terminal(tmp_path, venv):
         wait_for_text(b"TomTom API key")
         assert b"Accidents, closures and road works on each route" in seen
         os.write(master, b"\n")
+        wait_for_text(b"FlightAware AeroAPI key")
+        os.write(master, b"\n")
+        wait_for_text(b"Let Argus search and read your mail? [y/N]")
+        assert b"it can only search and read" in seen
+        os.write(master, b"\n")
         wait_for_text(b"Done.", timeout=60)
         proc.wait(30)
     finally:
@@ -374,10 +379,13 @@ def talk(env, steps, args=(), timeout=60):
 def test_setup_again_keeps_saved_answers_and_asks_only_new_ones(tmp_path, venv):
     env = mac_env(tmp_path, venv)
     first, code = talk(env, [("Type 1 or 2", "1"), ("Is Google Maps on your iPhone?", "y"), ("Is Waze on your phone?", "n"),
-                             ("Google Maps API key", ""), ("TomTom API key", "")])
+                             ("Google Maps API key", ""), ("TomTom API key", ""), ("FlightAware AeroAPI key", ""),
+                             ("search and read your mail? [y/N]", "y")])
     assert code == 0 and "You've set up Argus on this Mac before" not in first
     answers = tmp_path / "home" / "setup-answers"
-    assert answers.read_text().splitlines() == ["claude_key=saved", "google_key=skipped", "tomtom_key=skipped"]
+    assert answers.read_text().splitlines() == ["claude_key=saved", "google_key=skipped", "tomtom_key=skipped",
+                                                "flight_key=skipped", "mail=yes"]
+    assert setting(tmp_path / "home" / "config.toml", "mail", "enabled") == "true"
     assert oct(answers.stat().st_mode & 0o777) == "0o600"
 
     again, code = talk(env, [("Keep these answers and only ask what's new?", "")])
@@ -386,13 +394,15 @@ def test_setup_again_keeps_saved_answers_and_asks_only_new_ones(tmp_path, venv):
     for line in ("Phone:             iPhone", "Maps apps:         Apple Maps, Google Maps",
                  "Claude API key:    saved (ending ...test)", "Your name:         Sandeep", "Home city:         Portland, OR",
                  "Blocked sites:     none", "Google Maps key:   skipped", "TomTom key:        skipped",
+                 "FlightAware key:   skipped", "Read your mail:    yes",
                  "Weekday briefing:  off", "Keep Mac awake:    not asked yet (new question)"):
         assert line in summary, line
     for question in ("Type 1 or 2", "Is Google Maps on your iPhone?", "Is Waze on your phone?", "Google Maps API key (",
-                     "TomTom API key ("):
+                     "TomTom API key (", "FlightAware AeroAPI key (", "search and read your mail?"):
         assert question not in again, question                   # all answered before: not asked again
     assert "iPhone: Apple Maps, Siri Shortcuts, Meta glasses, calls from your number (optional) (saved)" in again
     assert "Google Maps key: skipped before" in again and "TomTom key: skipped before" in again
+    assert "FlightAware key: skipped before" in again and "Reading your mail: yes (saved)" in again
 
     review = {k: v for k, v in env.items() if k not in ("ARGUS_NAME", "ARGUS_CITY", "ARGUS_BLOCKED_SITES",
                                                         "ARGUS_AI_BRIEFING", "ARGUS_ANTHROPIC_API_KEY")}
@@ -402,6 +412,7 @@ def test_setup_again_keeps_saved_answers_and_asks_only_new_ones(tmp_path, venv):
         ("New Claude API key (Enter keeps the saved one)", ""), ("What should Argus call you? [Sandeep]", ""),
         ("[Portland, OR]", "Fremont, CA"), ("Sites to block, comma-separated [none]", "mybank.com"),
         ("Google Maps API key", ""), ("TomTom API key", "tt-new-key-12345"),
+        ("FlightAware AeroAPI key", "fa-new-key-67890"), ("search and read your mail? [Y/n]", "n"),
         ("weekday briefing at 7:30 (weather + news; roughly $1-3 a month)? [y/N]", "y")])
     assert code == 0 and "Each question now shows your saved answer" in changed
     cfg = tmp_path / "home" / "config.toml"
@@ -411,6 +422,8 @@ def test_setup_again_keeps_saved_answers_and_asks_only_new_ones(tmp_path, venv):
     secrets = (tmp_path / "home" / "secrets.env").read_text()
     assert "ANTHROPIC_API_KEY=sk-ant-test" in secrets and "TOMTOM_API_KEY=tt-new-key-12345" in secrets
     assert "tomtom_key=saved" in answers.read_text() and "google_key=skipped" in answers.read_text()
+    assert "FLIGHTAWARE_API_KEY=fa-new-key-67890" in secrets and "flight_key=saved" in answers.read_text()
+    assert setting(cfg, "mail", "enabled") == "false" and "mail=no" in answers.read_text()
     assert cfg.read_text().count("city = ") == 1 and "\n[]\n" not in cfg.read_text()
     loaded = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
                              "from argus import config; s = config.load(); print(s.city, s.blocked_sites)", str(REPO)],

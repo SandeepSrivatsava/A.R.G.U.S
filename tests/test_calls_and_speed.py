@@ -136,7 +136,8 @@ def test_a_spoken_answer_records_its_timings(tmp_path):
     turn = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines() if '"turn"' in line][-1]
     assert turn["timings"]["claude_s"] == entry["claude_s"]
     body = script.bodies[-1]
-    assert body["output_config"] == {"effort": "low"} and body["thinking"] == {"type": "between_tools"}
+    assert body["model"] == "claude-haiku-5-5"            # an everyday question: the quick model, no thinking
+    assert body["output_config"] == {"effort": "low"} and body["thinking"] == {"type": "disabled"}
 
 
 def test_argusctl_timing(tmp_path, monkeypatch, capsys):
@@ -180,4 +181,4 @@ def test_spoken_errors_say_what_happened():
     assert "fresh conversation" in spoken_error("Claude API error 400: messages.3: bad")
     assert "overloaded" in spoken_error("Claude API error 529: Overloaded")
     assert "too many requests" in spoken_error("Claude API error 429: rate_limit_error")
-    assert spoken_error("weird") == "Sorry, that didn't work. The details are in argusctl log."
+    assert spoken_error("weird") == "Sorry, that didn't work. The details are in argusctl errors."

@@ -13,5 +13,7 @@
   <key>LSUIElement</key><true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>Argus listens for its name so you can talk to it. Speech is processed on this Mac; nothing is recorded, and only what you say to Argus is sent to the AI.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Argus reads your mail through the Mail app when you ask it to (for example to find a flight booking). It can only search and read; it never sends, deletes or changes mail.</string>
 </dict>
 </plist>
