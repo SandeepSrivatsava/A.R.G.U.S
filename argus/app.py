@@ -301,6 +301,12 @@ def main(headless: bool = False) -> int:
     guard = Guard(settings.state_path, extra_state=argus.guard_state,
                   on_lock_change=lambda locked: settings.pause_when_locked and argus.set_locked(locked))
     guard.start()
+    watcher = None
+    if settings.pause_during_calls:                  # a call at the Mac: Argus keeps out of it (micwatch.py)
+        from .micwatch import MicWatch
+        watcher = MicWatch(settings.bin_dir / "argus-mic", argus.set_on_call, ignore=settings.ignore_mic_apps)
+        if not watcher.start():
+            log.info("the microphone watcher isn't built; calls at the Mac aren't noticed")
     if app.computer is not None:
         from .computer import request_permissions
         app.audit.log("permissions", **request_permissions())

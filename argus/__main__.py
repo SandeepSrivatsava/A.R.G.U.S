@@ -142,6 +142,37 @@ def cmd_log(args) -> int:
     return 0
 
 
+def describe_timing(entry: dict, end_of_speech: float = 0.6) -> str:
+    """One line per spoken request: where the seconds between your last word and Argus's first word went."""
+    bits = []
+    if entry.get("speech_to_text_s") is not None:
+        bits.append(f"pause to notice you'd finished {end_of_speech:.1f} s")
+        bits.append(f"speech to text {entry['speech_to_text_s']:.1f} s")
+    firsts, totals = entry.get("claude_first_s") or [], entry.get("claude_s") or []
+    for i, first in enumerate(firsts):
+        total = totals[i] if i < len(totals) else first
+        bits.append(f"Claude #{i + 1} {first:.1f} s to start ({total:.1f} s in all)")
+    for name, took in entry.get("tools") or []:
+        bits.append(f"{name} {took:.1f} s")
+    first_word = float(entry.get("first_word_s") or 0)
+    total = first_word + float(entry.get("speech_to_text_s") or 0) + (end_of_speech if "speech_to_text_s" in entry else 0)
+    when = str(entry.get("ts", ""))[11:19]
+    return f"{when}  first word {total:.1f} s after you stopped talking: " + "; ".join(bits)
+
+
+def cmd_timing(args) -> int:
+    from .audit import Audit
+    settings = config_mod.load()
+    entries = [e for e in Audit(settings.audit_path).tail(500) if e.get("event") == "timing"][-args.n:]
+    if not entries:
+        print("No timed answers yet. Ask Argus something out loud, then run: argusctl timing")
+        return 0
+    for entry in entries:
+        print(describe_timing(entry, settings.end_of_speech_seconds))
+    print("Claude's numbers include thinking and the network; tools are the lookups (weather, maps...).")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     from pathlib import Path
     from .llm import Claude, LLMError
@@ -345,6 +376,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("new", help="start a new conversation")
     s = sub.add_parser("log", help="recent activity")
     s.add_argument("n", nargs="?", type=int, default=20)
+    s = sub.add_parser("timing", help="how long recent spoken answers took, step by step")
+    s.add_argument("n", nargs="?", type=int, default=10)
     s = sub.add_parser("enroll", help="teach Argus your voice (voice lock) and how you say its name")
     s.add_argument("--no-voiceprint", action="store_true", help="only learn how you say the name")
     s = sub.add_parser("transcribe", help="test speech recognition on a WAV file")
@@ -400,6 +433,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_transcribe(args)
     if args.cmd == "log":
         return cmd_log(args)
+    if args.cmd == "timing":
+        return cmd_timing(args)
     if args.cmd == "doctor":
         return cmd_doctor(args)
 

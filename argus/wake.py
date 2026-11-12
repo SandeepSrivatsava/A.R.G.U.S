@@ -199,8 +199,10 @@ _COMMANDS: Tuple[Tuple[Command, re.Pattern], ...] = tuple((c, re.compile(p)) for
     (Command.STOP, r"(stop|cancel|never ?mind|nevermind|quiet|be quiet|shut up|enough|that'?s enough|hold on|"
                    r"stop talking|stop it|cancel that|cancel it|forget it|stop that)( now)?"),
     (Command.SLEEP, r"(go to sleep|sleep|stop listening|pause listening|take a break|don'?t listen|"
-                    r"go to sleep now|stop listening to me|pause)"),
-    (Command.WAKE, r"(wake up|start listening|resume listening|resume|i'?m back|you can listen( now)?)"),
+                    r"go to sleep now|stop listening to me|pause|i'?m (on|taking) (a|the|my) (phone )?call|"
+                    r"i'?m on the phone|(i'?ve got|i have|i got) a call)"),
+    (Command.WAKE, r"(wake up|start listening|resume listening|resume|i'?m back|you can listen( now)?|"
+                   r"i'?m (off|done with) the (phone|call)|the call('s| is) (over|done)|call('s| is) over)"),
     (Command.MIC_OFF, r"((turn|switch) off|disable|mute) (the |your )?(mic|microphone)|(mic|microphone) off|"
                       r"mute yourself"),
     (Command.CONVERSATION_ON, r"((turn on|start|enable) )?(conversation|chat|talk) mode( on)?|let'?s (talk|chat)|"
@@ -215,7 +217,7 @@ _COMMANDS: Tuple[Tuple[Command, re.Pattern], ...] = tuple((c, re.compile(p)) for
 
 def command_of(rest: str) -> Optional[Command]:
     """A local command if the whole (name-stripped) sentence is one, else None."""
-    rest = rest.strip()
+    rest = " ".join(words(rest))
     if not rest or len(rest) > 60:
         return None
     for command, pattern in _COMMANDS:

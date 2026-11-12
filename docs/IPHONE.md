@@ -112,6 +112,9 @@ Once it's running and linked to your glasses:
 
 ## Good to know
 
+* While you talk on the iPhone, Argus on the Mac can't tell (the call happens on the phone). Say "Argus,
+  I'm on a call" and it stops listening; "Argus, I'm off the phone" or a double clap brings it back.
+  Calls at the Mac (FaceTime, Zoom, Teams, a phone call handed to the Mac) pause it by themselves.
 * Long jobs can take longer than Shortcuts likes to wait. Ask for those at the Mac.
 * "Argus couldn't answer right now" usually means the Mac is asleep. Run `./scripts/stay-awake.sh on`
   to keep it awake while it's plugged in, or set up an always-on server ([SERVER.md](SERVER.md)).

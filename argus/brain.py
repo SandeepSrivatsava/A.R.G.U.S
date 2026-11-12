@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional
 
 from .agent import Agent, Events
 from .approvals import ApprovalRequest, Approver, DenyAll
@@ -51,9 +51,12 @@ class _VoiceEvents(Events):
         self.buffer = SentenceBuffer()
         self.spoke = False
         self.started = time.monotonic()
+        self.first_word_at: Optional[float] = None
 
     def say(self, sentence: str) -> None:
         if not self.cancelled.is_set():
+            if self.first_word_at is None:
+                self.first_word_at = time.monotonic()
             self.brain.speaker.say(sentence)
             self.spoke = True
 
@@ -83,7 +86,7 @@ class _VoiceEvents(Events):
 
 class Brain:
     def __init__(self, agent: Agent, speaker: Speaker, approver: Approver, audit: Audit, sessions: Sessions, *,
-                 on_reply_finished: Callable[[], None] = lambda: None, progress_after: float = 3.0,
+                 on_reply_finished: Callable[[], None] = lambda: None, progress_after: float = 1.5,
                  guest_sessions: Optional[Sessions] = None):
         self.agent = agent
         self.speaker = speaker
@@ -102,7 +105,7 @@ class Brain:
     def busy(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def ask(self, text: str, guest: bool = False) -> None:
+    def ask(self, text: str, guest: bool = False, heard: Optional[Dict[str, float]] = None) -> None:
         """Handle a request in the background (cancelling any request still running).
         guest=True: someone other than the owner, whom the owner allowed: no personal context, no Mac."""
         with self._lock:
@@ -110,8 +113,8 @@ class Brain:
                 self.cancel()                       # cancelling also cuts the old request's connection,
                 self._thread.join(timeout=3)        # so the old turn ends almost at once
             self._cancelled = flag = threading.Event()
-            self._thread = threading.Thread(target=self._handle, args=(text, flag, guest), name="argus-brain",
-                                            daemon=True)
+            self._thread = threading.Thread(target=self._handle, args=(text, flag, guest, heard or {}),
+                                            name="argus-brain", daemon=True)
             self._thread.start()
 
     def cancel(self) -> None:
@@ -129,7 +132,8 @@ class Brain:
         if thread is not None:
             thread.join(timeout)
 
-    def _handle(self, text: str, cancelled: threading.Event, guest: bool = False) -> None:
+    def _handle(self, text: str, cancelled: threading.Event, guest: bool = False,
+                heard: Optional[Dict[str, float]] = None) -> None:
         events = _VoiceEvents(self, cancelled, DenyAll() if guest else None)
         sessions = self.guest_sessions if guest else self.sessions
         try:
@@ -141,6 +145,9 @@ class Brain:
             events.say(spoken_error(str(exc)))
             turn = None
         events.flush()
+        if events.first_word_at is not None:      # where the wait went: `argusctl timing` shows these
+            self.audit.log("timing", **dict(heard or {}), first_word_s=round(events.first_word_at - events.started, 2),
+                           **(turn.timings if turn is not None else {}))
         if turn is not None:
             self.last_error = turn.error
             if turn.error and not cancelled.is_set():

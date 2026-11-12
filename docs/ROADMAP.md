@@ -3,7 +3,7 @@
 Where Argus stands, what would make phase 1 solid, and what phase 2 could add. Nothing here is promised;
 it's the order that looks most useful.
 
-## Phase 1: what exists (version 2.3)
+## Phase 1: what exists (version 2.5)
 
 Argus on the Mac (always listening, speaks, uses the screen with approvals), reachable from an iPhone
 through a Siri Shortcut and from Meta glasses; Argus on an Android phone; an always-on server for when the
@@ -37,7 +37,9 @@ In rough order of value:
    of `~/.argus`, also for moving to a new Mac.
 7. **One memory.** The Mac, the server and the Android phone each keep their own memory and lessons today.
    Sync them over Tailscale so a fact told to one is known to all.
-8. **Voice polish.** Interrupt Argus by speaking while it talks, start speaking sooner on long answers, a
+8. **Voice polish.** Done in 2.5: quicker spoken answers (low effort, thinking only between steps),
+   `argusctl timing`, and pausing during calls at the Mac. Next: noticing calls on the iPhone by itself
+   (needs the phase 2 app), interrupt Argus by speaking while it talks, start speaking sooner on long answers, a
    custom-trained wake word for fewer misses, and more languages.
 9. **Calendar, mail and reminders, read-only first.** "What's on today?", "did the landlord reply?",
    without the right to send or delete until that has earned trust.

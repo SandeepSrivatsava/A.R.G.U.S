@@ -111,6 +111,17 @@ The full list is in [SECURITY.md](SECURITY.md). The short version:
 
 ## Fast answers, and second tries
 
+* **Spoken answers skip the long think.** For anything you say out loud, Argus asks Claude for a quick
+  answer (`voice_effort = "low"` under `[brain]`) and lets it think only between steps, such as after a
+  weather lookup, not before the first word. Typed and harder jobs use `effort = "medium"`. Raise either
+  (`"medium"`, `"high"`) if you'd rather wait for more careful answers.
+* **Weather is quick the second time.** The forecast and the warnings are fetched at the same time, and a
+  forecast is reused for 10 minutes, so "what about tomorrow?" doesn't fetch it again.
+* **"One moment."** If a tool takes more than a second and a half, Argus says so, so silence never means
+  it didn't hear you.
+* **See where the time goes:** `argusctl timing` shows, for your last few spoken questions, how long it took
+  from the end of your sentence to Argus's first word, split into the pause, speech to text, each Claude
+  request and each tool.
 * **It starts talking while Claude is still writing.** Replies are spoken sentence by sentence as they
   stream in, and a long first sentence starts at its first comma.
 * **No waiting for a connection.** Argus keeps its connection to Claude open between requests and opens
@@ -339,6 +350,7 @@ lessons are kept either way. `./setup.sh --change-keys` asks for the keys again.
 ```bash
 argusctl status            # what Argus is doing
 argusctl log               # recent activity (requests, tools, approvals, blocks)
+argusctl timing [n]        # how long the last spoken answers took, step by step
 argusctl usage             # estimated Claude spend today and this month
 argusctl ask "any news?"   # type a request instead of saying it (Argus answers out loud)
 argusctl say "Hello"       # speak something
@@ -363,6 +375,18 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## Troubleshooting
 
+* **It's slow to answer.** Run `argusctl timing` right after a slow answer. "Claude ... to start" is time
+  waiting on Claude; a big number there usually means a higher `voice_effort` or a slow network. A tool
+  name with a big number (weather, route) is that service being slow.
+* **It stopped listening during a call.** That's on purpose: while FaceTime, Zoom, Teams, WhatsApp or any
+  other app uses a microphone, Argus closes its own and the menu says "paused (on a call: ...)". It
+  listens again a few seconds after the call. For calls on the iPhone itself, which the Mac can't see,
+  say "Argus, I'm on a call", then "Argus, I'm off the phone" (or clap twice). If an app that isn't a call
+  (a voice recorder, say) pauses Argus, add it to `ignore_mic_apps` under `[listening]`, or set
+  `pause_during_calls = false`.
+* **"Tailscale isn't connected" during setup.** Not an error: setup finished. It only means the iPhone
+  can't reach the Mac yet. Install Tailscale on both, sign in with the same account, then `argusctl restart`
+  ([docs/IPHONE.md](docs/IPHONE.md)).
 * **It doesn't react to its name.** Check the menu bar icon (◌ means the microphone is off or the Mac is
   locked). Run `argusctl enroll` so it learns how you say "Argus". Or clap twice and talk.
 * **It answers the TV.** Run `argusctl enroll` so it knows your voice (voice lock), or put it to sleep.
@@ -381,7 +405,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **771 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **783 automated tests**: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed
@@ -428,7 +452,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
   dialog with Touch ID, lock detection, real screen control, the live Claude API with the computer
   tools, spotting Buy buttons through the Mac's accessibility interface, a real phone call (placing it,
   pressing the Call button, hearing the other side, being heard), the iPhone app (not yet compiled), the
-  MapKit helper (Swift, built on the Mac), the live Google and Apple maps services, a real Android phone
+  MapKit helper and the call helper (Swift, built on the Mac), how much faster spoken answers really are, the live Google and Apple maps services, a real Android phone
   with Termux, and a real cloud server with systemd.
 
 ## What's next

@@ -338,3 +338,55 @@ def test_images_from_the_phone_reach_the_model(tmp_path):
     run(agent, [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png}},
                 {"type": "text", "text": "what is this?"}], channel="phone")
     assert script.bodies[0]["messages"][-1]["content"][0]["type"] == "image"
+
+
+# ---- answering quickly: effort, thinking, timings -------------------------------------------------------------
+def test_spoken_answers_ask_for_low_effort_and_no_thinking_up_front(tmp_path):
+    from argus.agent import reasoning
+    from fakes import make_settings
+    s = make_settings(tmp_path)
+    assert reasoning("claude-sonnet-5-5", "voice", s) == {"output_config": {"effort": "low"},
+                                                          "thinking": {"type": "between_tools"}}
+    for channel in ("phone", "android", "guest", "trip"):
+        assert reasoning("claude-sonnet-5-5", channel, s)["thinking"] == {"type": "between_tools"}
+    assert reasoning("claude-sonnet-5-5", "scheduler", s) == {"output_config": {"effort": "medium"}}
+    assert reasoning("claude-sonnet-5-5", "cli", s) == {"output_config": {"effort": "medium"}}
+    assert reasoning("claude-haiku-5-5", "voice", s) == {"output_config": {"effort": "low"},
+                                                         "thinking": {"type": "disabled"}}
+    assert reasoning("claude-opus-5-5", "voice", s) == {"output_config": {"effort": "low"}}   # always thinks
+    assert reasoning("claude-fable-5-2", "cli", s) == {"output_config": {"effort": "medium"}}
+    assert reasoning("claude-3-old-model", "voice", s) == {}
+    s.voice_effort = "xhigh"
+    assert reasoning("claude-sonnet-5-5", "voice", s) == {"output_config": {"effort": "xhigh"}}    # thinks again
+
+
+def test_effort_settings_are_checked(tmp_path):
+    from argus import config
+    path = tmp_path / "config.toml"
+    path.write_text('[brain]\nvoice_effort = "medium"\neffort = "high"\n')
+    s = config.load(path)
+    assert (s.voice_effort, s.effort) == ("medium", "high")
+    path.write_text('[brain]\nvoice_effort = "turbo"\n')
+    with pytest.raises(ValueError, match="brain.voice_effort must be one of low, medium, high, xhigh, max"):
+        config.load(path)
+
+
+def test_thinking_from_earlier_requests_is_left_out():
+    from argus.agent import without_old_thinking
+    think = {"type": "thinking", "thinking": "", "signature": "sig"}
+    history = [
+        {"role": "user", "content": "weather?"},
+        {"role": "assistant", "content": [think, {"type": "tool_use", "id": "t1", "name": "weather", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "sunny"}]},
+        {"role": "assistant", "content": [think, {"type": "text", "text": "Sunny."}]},
+        {"role": "assistant", "content": [think]},                       # nothing else in it: left as it is
+        {"role": "user", "content": "and tomorrow?"},
+        {"role": "assistant", "content": [think, {"type": "tool_use", "id": "t2", "name": "weather", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "rain"}]},
+    ]
+    out = without_old_thinking(history)
+    assert out[1]["content"][0]["type"] == "tool_use" and out[3]["content"] == [{"type": "text", "text": "Sunny."}]
+    assert out[4]["content"] == [think]
+    assert out[6]["content"][0] is think                                  # this request's own thinking stays
+    assert history[1]["content"][0] is think                              # the stored history isn't changed
+    assert without_old_thinking([]) == []

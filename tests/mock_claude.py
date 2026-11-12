@@ -82,6 +82,29 @@ def validate(body: Dict[str, Any]) -> str:
         return "messages: at least one message is required"
     if messages[0].get("role") != "user":
         return "messages: the first message must use the user role"
+    output_config = body.get("output_config")
+    effort = None
+    if output_config is not None:
+        effort = output_config.get("effort") if isinstance(output_config, dict) else None
+        if effort not in ("low", "medium", "high", "xhigh", "max"):
+            return "output_config.effort: must be low, medium, high, xhigh or max"
+    thinking = body.get("thinking")
+    if thinking is not None:
+        kind = thinking.get("type") if isinstance(thinking, dict) else None
+        if kind not in ("adaptive", "between_tools", "disabled", "enabled"):
+            return "thinking.type: unknown"
+        sonnet55 = str(body["model"]).startswith("claude-sonnet-5-5")
+        if kind == "disabled" and sonnet55:
+            return "thinking: on claude-sonnet-5-5 use {\"type\": \"between_tools\"} instead of disabled"
+        if kind == "between_tools" and (not sonnet55 or len(thinking) > 1 or effort in ("xhigh", "max")):
+            return "thinking: between_tools needs claude-sonnet-5-5, no other fields, and effort high or below"
+    last_question = max((i for i, m in enumerate(body["messages"]) if m.get("role") == "user" and (
+        isinstance(m.get("content"), str) or not any(isinstance(b, dict) and b.get("type") == "tool_result"
+                                                     for b in m["content"]))), default=0)
+    for m in body["messages"][:last_question]:     # Argus never replays thinking from an earlier request
+        if m.get("role") == "assistant" and isinstance(m.get("content"), list) and any(
+                isinstance(b, dict) and b.get("type") in ("thinking", "redacted_thinking") for b in m["content"]):
+            return "thinking blocks from an earlier request were replayed after the system prompt changed"
     breakpoints = 0
     for block in (body.get("system") or []) if isinstance(body.get("system"), list) else []:
         breakpoints += "cache_control" in block

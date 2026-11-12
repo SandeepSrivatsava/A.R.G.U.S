@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import logging
 import threading
 import time
@@ -67,6 +68,46 @@ class Turn:
     cost: float = 0.0
     steps: List[Dict[str, Any]] = field(default_factory=list)    # what each tool call did (for lessons)
     links: List[str] = field(default_factory=list)               # for the phone to open (e.g. navigation)
+    timings: Dict[str, Any] = field(default_factory=dict)        # seconds: each Claude request, each tool
+
+
+# How much Claude thinks before answering. Spoken answers should start quickly: low effort, and on Sonnet 5.5 no
+# thinking up front ("between_tools": it may still think between tool calls). The API docs recommend low or
+# medium for chat and other latency-sensitive work. Scheduled tasks and the command line get more effort.
+SPOKEN_CHANNELS = frozenset({"voice", "phone", "android", "guest", "trip"})
+_EFFORT_MODELS = re.compile(r"^claude-(fable|mythos|opus|sonnet|haiku)-5|^claude-opus-4-[5-8]|^claude-sonnet-4-6")
+THINKING_TYPES = ("thinking", "redacted_thinking")
+
+
+def reasoning(model: str, channel: str, settings) -> Dict[str, Any]:
+    """The output_config / thinking fields for a request on this channel."""
+    spoken = channel in SPOKEN_CHANNELS
+    effort = getattr(settings, "voice_effort" if spoken else "effort", "medium")
+    found: Dict[str, Any] = {}
+    if _EFFORT_MODELS.match(model):
+        found["output_config"] = {"effort": effort}
+    if spoken and effort in ("low", "medium", "high"):
+        if model.startswith("claude-sonnet-5-5"):
+            found["thinking"] = {"type": "between_tools"}        # Sonnet 5.5's "no thinking up front"
+        elif model.startswith("claude-haiku-5-5"):
+            found["thinking"] = {"type": "disabled"}
+    return found
+
+
+def without_old_thinking(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Thinking blocks from earlier requests are left out: the API refuses to replay them once anything before
+    them changed (the system prompt's clock line changes every minute), and earlier answers don't need them.
+    The current request's own blocks (after its question) are kept, as tool use requires."""
+    start = max((i for i, m in enumerate(messages) if _is_plain_user(m)), default=0)
+    out = []
+    for i, m in enumerate(messages):
+        content = m.get("content")
+        if i < start and m.get("role") == "assistant" and isinstance(content, list):
+            kept = [b for b in content if not (isinstance(b, dict) and b.get("type") in THINKING_TYPES)]
+            if kept and len(kept) != len(content):
+                m = dict(m, content=kept)
+        out.append(m)
+    return out
 
 
 def request_cost(model: str, usage: Dict[str, int]) -> float:
@@ -227,7 +268,7 @@ class Agent:
         return specs
 
     def _body(self, channel: str, system: List[Dict[str, Any]], messages: List[Dict[str, Any]]) -> Dict[str, Any]:
-        prepared = prune_images(messages)
+        prepared = without_old_thinking(prune_images(messages))
         last = prepared[-1]
         if isinstance(last["content"], str):
             last["content"] = [{"type": "text", "text": last["content"]}]
@@ -235,8 +276,8 @@ class Agent:
             if isinstance(block, dict) and block.get("type") in ("text", "tool_result", "image"):
                 block["cache_control"] = {"type": "ephemeral"}
                 break
-        return {"model": self.settings.model, "max_tokens": 8192, "system": system, "messages": prepared,
-                "tools": self._tools_for(channel)}
+        return dict({"model": self.settings.model, "max_tokens": 8192, "system": system, "messages": prepared,
+                     "tools": self._tools_for(channel)}, **reasoning(self.settings.model, channel, self.settings))
 
     # ---- conversation upkeep -----------------------------------------------------------------------
     def _compact(self, session_id: str, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -371,8 +412,12 @@ class Agent:
                 break
             messages = self._compact(session_id, messages)
             acc = StreamAccumulator()
+            asked_at, first_at = time.monotonic(), None
             try:
                 for event in self.llm.stream(self._body(channel, system, messages), cancel):
+                    if first_at is None and event.get("type") == "content_block_delta":
+                        first_at = time.monotonic()
+                        turn.timings.setdefault("claude_first_s", []).append(round(first_at - asked_at, 2))
                     delta = acc.feed(event)
                     if delta:
                         events.text(delta)
@@ -400,6 +445,7 @@ class Agent:
                     continue
                 turn.error = str(exc)
                 break
+            turn.timings.setdefault("claude_s", []).append(round(time.monotonic() - asked_at, 2))
             for key, value in acc.usage.items():
                 turn.usage[key] = turn.usage.get(key, 0) + value
             turn.cost += request_cost(self.settings.model, acc.usage)
@@ -427,8 +473,11 @@ class Agent:
             results: List[Dict[str, Any]] = []
             screen_failed = False
             for block in uses:
+                began = time.monotonic()
                 res = self._call(block, channel=channel, session_id=session_id, events=events, ctx=ctx,
                                  grants=grants, earlier_screen_failure=screen_failed)
+                took = round(time.monotonic() - began, 2)
+                turn.timings.setdefault("tools", []).append([str(block.get("name") or "tool"), took])
                 if block.get("toolset_name") == "computer" and res.get("is_error"):
                     screen_failed = True
                 results.append(res)
@@ -443,7 +492,8 @@ class Agent:
         self.audit.log("turn", channel=channel, session=session_id, stopped=turn.stopped or None, error=turn.error,
                        input_tokens=turn.usage.get("input_tokens"), output_tokens=turn.usage.get("output_tokens"),
                        cache_read=turn.usage.get("cache_read_input_tokens"),
-                       web_searches=turn.usage.get("web_search_requests"), cost_usd=round(turn.cost, 4))
+                       web_searches=turn.usage.get("web_search_requests"), cost_usd=round(turn.cost, 4),
+                       timings=turn.timings or None)
         turn.links = list(dict.fromkeys(ctx.links))
         if self.reflector is not None and channel in ("voice", "phone", "cli", "android") and not turn.stopped:
             self.reflector.learn_later(asked, turn.steps, turn.text)

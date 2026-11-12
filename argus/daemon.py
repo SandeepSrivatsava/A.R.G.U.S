@@ -12,6 +12,7 @@ import numpy as np
 from .audit import Audit
 from .brain import Brain
 from .hearing import SAMPLE_RATE, Segmenter, Transcriber, VoicePrint
+from .micwatch import friendly
 from .listener import ACK, ASK, COMMAND, IGNORE, Listener
 from .voice import Speaker
 from .approvals import close_word
@@ -56,6 +57,7 @@ class Argus:
         self.clap = clap                # ClapDetector: a double clap wakes Argus / starts listening
         self.mic_wanted = True          # the user's choice (menu / voice / argusctl)
         self.locked = False             # Mac screen locked: microphone closed
+        self.on_call: List[str] = []    # other apps holding a microphone (a call at the Mac): microphone closed
         self.screen_private = False     # "don't look at my screen" switch, enforced by the hook
         self.ignored = 0                # how many sentences were not for Argus (counted, never stored)
         self.last_heard: Optional[str] = None
@@ -82,12 +84,14 @@ class Argus:
 
     def voice_approvals_available(self) -> bool:
         """A spoken yes only counts when Argus can tell it's the owner's voice."""
-        return self.gate is not None and self.voice_lock_active and self.mic_wanted and not self.locked
+        return self.gate is not None and self.voice_lock_active and self.mic_wanted and not self.closed
 
     # ---- state shown in the menu bar / `argusctl status` -------------------------------------------
     def status(self) -> Dict[str, Any]:
         if self.locked:
             mode = "paused (Mac locked)"
+        elif self.closed:
+            mode = f"paused (on a call: {', '.join(friendly(a) for a in self.on_call)})"
         elif not self.mic_wanted:
             mode = "microphone off"
         elif self.speaker.speaking:
@@ -114,7 +118,7 @@ class Argus:
     # ---- reminders and scheduled results -------------------------------------------------------------
     def present(self) -> bool:
         """Is someone at the Mac to hear it? Not while it's locked or the microphone is switched off."""
-        return self.mic_wanted and not self.locked
+        return self.mic_wanted and not self.closed
 
     def announce(self, text: str) -> None:
         """Say a reminder or a scheduled result now, or keep it until you're back at the Mac."""
@@ -141,7 +145,7 @@ class Argus:
 
     # ---- microphone control ------------------------------------------------------------------------
     def _sync_mic(self) -> None:
-        want_open = self.mic_wanted and not self.locked
+        want_open = self.mic_wanted and not self.closed
         if want_open and not self.source.is_open:
             self.source.open()
         elif not want_open and self.source.is_open:
@@ -163,6 +167,23 @@ class Argus:
             self.brain.cancel()
             self.listener.set_conversation(False)
         self.audit.log("screen_lock", locked=locked)
+        self._sync_mic()
+        self._speak_held()
+
+    @property
+    def closed(self) -> bool:
+        """Not listening: the Mac is locked, or you're on a call at the Mac (not one Argus is making for you)."""
+        own_call = self.calls is not None and self.calls.active
+        return self.locked or (bool(self.on_call) and not own_call)
+
+    def set_on_call(self, apps: List[str]) -> None:
+        """Another app took a microphone (FaceTime, Zoom...): stop talking and listening until it's done."""
+        was = self.closed
+        self.on_call = list(apps)
+        if self.closed and not was:
+            self.brain.cancel()
+            self.listener.set_conversation(False)
+        self.audit.log("on_call", apps=[friendly(a) for a in apps] or None)
         self._sync_mic()
         self._speak_held()
 
@@ -200,7 +221,7 @@ class Argus:
 
     def on_clap(self) -> None:
         """Clap clap: wake up from sleep, or listen for the next sentence without needing the name."""
-        if self.speaker.speaking or self.brain.busy or not self.mic_wanted or self.locked:
+        if self.speaker.speaking or self.brain.busy or not self.mic_wanted or self.closed:
             return
         self.audit.log("clap")
         if self.listener.sleeping:
@@ -228,9 +249,12 @@ class Argus:
             self.listener.reply_finished()
 
     def handle_utterance(self, samples: np.ndarray) -> None:
-        if samples.size < self.min_samples or not self.mic_wanted or self.locked:
+        if samples.size < self.min_samples or not self.mic_wanted or self.closed:
             return
+        began = time.monotonic()
         text = self.transcriber.transcribe(samples)
+        self._heard = {"speech_to_text_s": round(time.monotonic() - began, 2),
+                       "spoken_s": round(samples.size / SAMPLE_RATE, 1)}
         heard = self.listener.matcher.hear(text)
         if self.gate is not None and self.gate.pending:
             # Waiting for "yes, <code word>": no name needed. The answer repeats words from Argus's own
@@ -272,7 +296,7 @@ class Argus:
         elif decision.kind == ASK:
             if decision.interrupt:
                 self.brain.cancel()
-            self.brain.ask(text)
+            self.brain.ask(text, heard=getattr(self, "_heard", None))
         self.on_change()
 
     # ---- spoken approvals ----------------------------------------------------------------------------

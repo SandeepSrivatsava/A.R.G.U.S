@@ -562,6 +562,18 @@ if [ "$IS_MAC" = 1 ]; then
   else
     warn "Couldn't build the Apple Maps helper; directions open the maps app without times unless there's a Google key"
   fi
+  # Noticing calls at the Mac (FaceTime, Zoom...), so Argus keeps quiet during them: macos/argus-mic.swift.
+  mic_sum="$(shasum -a 256 "$REPO_DIR/macos/argus-mic.swift" | cut -d' ' -f1)"
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '  [dry-run] build %s\n' "$ARGUS_HOME/bin/argus-mic"
+  elif [ -x "$ARGUS_HOME/bin/argus-mic" ] && [ "$(cat "$ARGUS_HOME/bin/argus-mic.sha256" 2>/dev/null)" = "$mic_sum" ]; then
+    ok "Call helper is up to date"
+  elif swiftc -O -swift-version 5 -o "$ARGUS_HOME/bin/argus-mic" "$REPO_DIR/macos/argus-mic.swift" > /dev/null 2>&1; then
+    printf '%s\n' "$mic_sum" > "$ARGUS_HOME/bin/argus-mic.sha256"
+    ok "Built the call helper (Argus keeps quiet while you're on a call at the Mac)"
+  else
+    warn "Couldn't build the call helper; say \"Argus, I'm on a call\" to pause it during calls"
+  fi
 else
   ok "Skipped (not a Mac)"
 fi

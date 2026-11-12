@@ -33,6 +33,7 @@ FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 ALERTS_URL = "https://api.weather.gov/alerts/active"
 MAX_DAYS = 16                      # how far ahead Open-Meteo forecasts
+FORECAST_FRESH = 600               # seconds a fetched forecast is reused
 RECENT_FOR_WEATHER = 3 * 3600      # at the Mac, the phone's last location counts as "here" for this long
 HOURLY = ("temperature_2m,apparent_temperature,precipitation_probability,precipitation,snowfall,weather_code,"
           "wind_speed_10m,wind_gusts_10m")
@@ -173,6 +174,9 @@ class Weather:
                  geocode_url: str = GEOCODE_URL, alerts_url: str = ALERTS_URL):
         self.units, self.request, self.extra_geocode, self.clock = units, request, geocode, clock
         self.forecast_url, self.geocode_url, self.alerts_url = forecast_url, geocode_url, alerts_url
+        self._places: Dict[str, Tuple[Point, str]] = {}                 # a place, once found, isn't looked up again
+        self._forecasts: Dict[Point, Tuple[float, int, "Forecast"]] = {}  # (when fetched, days, forecast)
+        self._lock = threading.Lock()
 
     @property
     def degrees(self) -> str:
@@ -189,6 +193,18 @@ class Weather:
     # ---- finding a place ----
     def locate(self, text: str) -> Tuple[Point, str]:
         """(point, name) for "lat,lon", a city like "Howell, MI", or (with a TomTom key) a street address."""
+        key = " ".join(text.lower().split())
+        with self._lock:
+            if key in self._places:
+                return self._places[key]
+        found = self._locate(text)
+        with self._lock:
+            if len(self._places) > 200:
+                self._places.clear()
+            self._places[key] = found
+        return found
+
+    def _locate(self, text: str) -> Tuple[Point, str]:
         point = parse_latlon(text)
         if point:
             return point, text
@@ -232,6 +248,21 @@ class Weather:
 
     # ---- the forecast ----
     def forecast(self, point: Point, days: int = 7) -> Forecast:
+        """The forecast for a place, kept for 10 minutes (forecasts change hourly at most)."""
+        key = rounded(point)
+        days = max(1, min(MAX_DAYS, days))
+        with self._lock:
+            cached = self._forecasts.get(key)
+        if cached and cached[1] >= days and self.clock() - cached[0] < FORECAST_FRESH:
+            return cached[2]
+        found = self._fetch_forecast(key, days)
+        with self._lock:
+            if len(self._forecasts) > 100:
+                self._forecasts.clear()
+            self._forecasts[key] = (self.clock(), days, found)
+        return found
+
+    def _fetch_forecast(self, point: Point, days: int) -> Forecast:
         lat, lon = rounded(point)
         params = {"latitude": f"{lat:.2f}", "longitude": f"{lon:.2f}", "hourly": HOURLY, "daily": DAILY,
                   "current": CURRENT, "timezone": "auto", "timeformat": "unixtime",
@@ -340,6 +371,11 @@ class Weather:
             raise WeatherError(f"that's more than {MAX_DAYS} days away, past what forecasts cover; watch_trip can "
                                "check again closer to the time")
         need = MAX_DAYS if start is None else max(2, min(MAX_DAYS, int((start - now) // 86400) + 2))
+        warnings: Dict[str, Any] = {}
+        fetcher = None
+        if start is None or start - now < 4 * 86400:                 # today's warnings, fetched meanwhile
+            fetcher = threading.Thread(target=lambda: warnings.update(found=self.alerts(point)), daemon=True)
+            fetcher.start()
         fc = self.forecast(point, days=need if start is not None else 3)
         lines = [f"Weather for {name} (Open-Meteo forecast; local times there):"]
         if start is None:
@@ -367,9 +403,9 @@ class Weather:
             lines += ["After that: " + " ".join(self.hour_line(h, fc) for h in around)] if around else []
             day = fc.day_of(start)
             lines += ["The whole day " + self.day_line(day, fc)] if day else []
-        if start is None or start - now < 4 * 86400:
-            alerts = self.alerts(point)
-            for alert in alerts:
+        if fetcher is not None:
+            fetcher.join(timeout=8)
+            for alert in warnings.get("found") or []:
                 ends = ""
                 try:
                     ends = " until " + datetime.fromisoformat(alert.ends).strftime("%a %H:%M") if alert.ends else ""
@@ -496,7 +532,7 @@ class WeatherTools:
             raise WeatherError("give 'when' as 2026-11-25 or 2026-11-25T15:00") from None
         if local.tzinfo is not None:
             return local.timestamp(), whole
-        offset = self.weather.forecast(point, days=1).offset            # the place's own clock
+        offset = self.weather.forecast(point, days=MAX_DAYS).offset     # the place's own clock (kept for the report)
         epoch = local.replace(tzinfo=timezone.utc).timestamp() - offset
         if epoch < self.clock() - 3 * 3600 and not (whole and epoch > self.clock() - 86400):
             raise WeatherError("that time has already passed")

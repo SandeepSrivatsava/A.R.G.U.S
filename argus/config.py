@@ -38,6 +38,8 @@ class Settings:
     timezone: str = ""
     # brain
     model: str = "claude-sonnet-5-5"
+    voice_effort: str = "low"       # how hard Claude works on spoken answers: low = quickest (see agent.reasoning)
+    effort: str = "medium"          # for scheduled tasks and the command line
     small_model: str = "claude-haiku-5-5"
     web_search: bool = True
     session_idle_minutes: float = 30.0
@@ -59,6 +61,8 @@ class Settings:
     guest_minutes: float = 60.0    # "talk to everyone" lasts this long
     mic_device: str = ""
     vad_threshold: float = 0.5
+    pause_during_calls: bool = True      # stop listening while another app uses a microphone (a call at the Mac)
+    ignore_mic_apps: List[str] = field(default_factory=list)   # apps that don't count as a call (names or IDs)
     end_of_speech_seconds: float = 0.6   # how long a pause ends a sentence (shorter = snappier)
     clap: str = "double"            # "double", "single" or "off": clapping wakes Argus up
     # voice
@@ -184,16 +188,19 @@ class Settings:
         return [v.lower() for v in self.extra_variants] + learned
 
 
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
 # config.toml layout: top-level keys plus these sections. (section, key) -> Settings field.
 _TOP = ("name", "user_name", "city", "timezone")
 _SECTIONS: Dict[str, Dict[str, str]] = {
-    "brain": {"model": "model", "small_model": "small_model", "web_search": "web_search",
+    "brain": {"model": "model", "small_model": "small_model", "voice_effort": "voice_effort", "effort": "effort", "web_search": "web_search",
               "session_idle_minutes": "session_idle_minutes", "max_steps": "max_steps",
               "max_turn_tokens": "max_turn_tokens", "context_tokens": "context_tokens", "self_learning": "self_learning",
               "history_messages": "history_messages", "workspace": "workspace_dir", "api_base": "api_base"},
     "listening": {k: k for k in ("followup_seconds", "conversation_idle_seconds", "extra_variants", "soft_variants",
                                  "voice_lock", "voice_lock_threshold", "mic_device", "vad_threshold", "clap",
-                                 "end_of_speech_seconds", "guests", "guest_minutes")},
+                                 "end_of_speech_seconds", "guests", "guest_minutes",
+                                 "pause_during_calls", "ignore_mic_apps")},
     "voice": {"engine": "voice_engine", "say_voice": "say_voice", "rate": "rate", "speed": "speed", "greeting": "greeting"},
     "security": {k: k for k in ("approval_needs_touch_id", "pause_when_locked", "screen_control",
                                 "blocked_apps", "blocked_sites", "voice_approvals", "voice_approval_threshold")},
@@ -242,6 +249,9 @@ def _validate(s: "Settings") -> None:
         raise ValueError('listening.guests must be "ask" or "never"')
     if s.voice_engine not in ("piper", "say"):
         raise ValueError('voice.engine must be "piper" or "say"')
+    for name, value in (("brain.voice_effort", s.voice_effort), ("brain.effort", s.effort)):
+        if value not in EFFORTS:
+            raise ValueError(f'{name} must be one of {", ".join(EFFORTS)}')
     if s.phone_type not in ("iphone", "android"):
         raise ValueError('phone.type must be "iphone" or "android"')
     if s.maps_app not in ("", "apple", "google", "waze"):
