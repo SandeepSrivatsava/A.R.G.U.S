@@ -432,3 +432,20 @@ def test_toml_set_writes_top_level_settings(tmp_path):
     flat.write_text('name = "Argus"\n')
     subprocess.run(["bash", "-c", f'. "{REPO}/scripts/lib.sh"; toml_set "$1" "" city \'"X"\'', "_", str(flat)], check=True)
     assert flat.read_text() == 'name = "Argus"\ncity = "X"\n'
+
+
+def test_the_package_install_builds_only_rumps_from_source():
+    """Every pinned package must be a ready-built wheel except rumps, which PyPI has only as source; it's
+    built with a hash-pinned setuptools that is installed first (no build isolation, so nothing unpinned)."""
+    import re
+    lock = (REPO / "requirements-macos.lock").read_text()
+    assert re.search(r"^rumps==0\.4\.0 \\\n    --hash=sha256:17fb33c2", lock, re.M)
+    build = (REPO / "requirements-build.lock").read_text()
+    assert re.search(r"^setuptools==[\d.]+ --hash=sha256:[0-9a-f]{64}$", build, re.M)
+    for script in ("setup.sh", "scripts/update.sh"):
+        text = (REPO / script).read_text()
+        first, second = text.index("requirements-build.lock\""), text.index("requirements-macos.lock\"", text.index("--no-binary rumps"))
+        assert first < second, script                                      # setuptools goes in first
+        install = text[text.rindex("pip install", 0, second):second]
+        for flag in ("--require-hashes", "--only-binary :all:", "--no-binary rumps", "--no-build-isolation"):
+            assert flag in install, (script, flag)

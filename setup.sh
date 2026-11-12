@@ -339,7 +339,9 @@ find_uv() {
 if [ "$DRY_RUN" = 1 ]; then
   run curl -fsSL "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-aarch64-apple-darwin.tar.gz" "(sha256 ${UV_SHA256:0:12}...)"
   run uv venv --python 3.12 --seed "$VENV"
-  run "$VENV/bin/python3" -m pip install --require-hashes -r "$REPO_DIR/requirements-macos.lock"
+  run "$VENV/bin/python3" -m pip install --require-hashes --only-binary :all: -r "$REPO_DIR/requirements-build.lock"
+  run "$VENV/bin/python3" -m pip install --require-hashes --only-binary :all: --no-binary rumps --no-build-isolation \
+    -r "$REPO_DIR/requirements-macos.lock"
 else
   mkdir -p "$ARGUS_HOME"/{bin,models,logs,run}
   chmod 700 "$ARGUS_HOME" "$ARGUS_HOME"/{bin,models,logs,run}
@@ -359,8 +361,13 @@ else
   if [ "${ARGUS_SKIP_DEPS:-0}" = 1 ]; then
     warn "Skipping Python packages (ARGUS_SKIP_DEPS=1)"
   else
+    # Every package is a ready-built wheel except rumps (the menu bar), which PyPI has only as source. It's
+    # built here with a hash-pinned setuptools installed first, so the build downloads nothing unchecked.
     "$VENV/bin/python3" -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: \
-      -r "$REPO_DIR/requirements-macos.lock" || die "Installing Argus's Python packages failed."
+      -r "$REPO_DIR/requirements-build.lock" || die "Installing the build tool (setuptools) failed."
+    "$VENV/bin/python3" -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: \
+      --no-binary rumps --no-build-isolation -r "$REPO_DIR/requirements-macos.lock" \
+      || die "Installing Argus's Python packages failed."
     ok "Python packages installed (every file checked against its pinned hash)"
   fi
   site="$("$VENV/bin/python3" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"

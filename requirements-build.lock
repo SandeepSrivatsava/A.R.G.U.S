@@ -1,0 +1,3 @@
+# Needed only to build rumps (the menu bar), which PyPI publishes as source only. Checked against its PyPI hash,
+# and installed before requirements-macos.lock so building rumps downloads nothing else.
+setuptools==80.9.0 --hash=sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922

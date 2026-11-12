@@ -128,7 +128,10 @@ There is no text chat (Telegram was removed): you talk to Argus by voice, at the
 
 * Python comes from `uv`, which setup downloads at a pinned version and checks against a pinned SHA-256.
 * Argus's Python packages are installed from `requirements-macos.lock` with `--require-hashes
-  --only-binary :all:`: every file is checked against a pinned SHA-256 and nothing is compiled from source.
+  --only-binary :all:`: every file is checked against a pinned SHA-256, and all of them are ready-built
+  except one. `rumps` (the menu bar, pure Python) exists on PyPI only as source, so it is built on your Mac
+  from its hash-checked source with a hash-pinned `setuptools` (`requirements-build.lock`) installed first,
+  without build isolation, so the build downloads nothing unchecked.
 * The speech and voice models are downloaded from the sherpa-onnx GitHub releases and checked against
   SHA-256 hashes pinned in `setup.sh`; a mismatch stops the install.
 * `Argus.app` is compiled on your Mac from `macos/launcher.c` (about 50 lines) and signed locally, so

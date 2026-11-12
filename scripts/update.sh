@@ -12,7 +12,9 @@ git -C "$REPO_DIR" pull --ff-only
 
 echo "Updating Argus's Python packages (hash-checked)..."
 "$VENV/bin/python3" -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: \
-  -r "$REPO_DIR/requirements-macos.lock"
+  -r "$REPO_DIR/requirements-build.lock"
+"$VENV/bin/python3" -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: \
+  --no-binary rumps --no-build-isolation -r "$REPO_DIR/requirements-macos.lock"
 
 "$REPO_DIR/bin/argusctl" restart
 echo "Done."
