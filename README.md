@@ -375,6 +375,11 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## Troubleshooting
 
+* **"Bootstrap failed: 5: Input/output error" at step 8.** macOS hadn't finished stopping the old Argus.
+  Setup now waits and tries again; if it still fails, run `launchctl bootout gui/$(id -u)/com.argus.voice`,
+  wait a few seconds, and run `./setup.sh` again.
+* **It says "that didn't work" to everything.** Run `argusctl log` and look at the last `llm_error` line.
+  If Claude refuses a conversation (error 400), Argus now starts a fresh one and asks again by itself.
 * **It's slow to answer.** Run `argusctl timing` right after a slow answer. "Claude ... to start" is time
   waiting on Claude; a big number there usually means a higher `voice_effort` or a slow network. A tool
   name with a big number (weather, route) is that service being slow.
@@ -405,7 +410,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **783 automated tests**: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **788 automated tests**: starting at login when macOS is slow to stop the old Argus, a conversation Claude refuses being replaced and the question asked again;: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed

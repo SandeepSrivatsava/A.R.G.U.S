@@ -583,6 +583,27 @@ if [ "$DRY_RUN" = 0 ]; then
 fi
 ok "Command-line control: argusctl (try: argusctl status)"
 
+# bootout returns before macOS has finished stopping the old Argus; starting it again too soon fails with
+# "Bootstrap failed: 5: Input/output error". So wait until it's gone, and try a few times.
+start_argus() {
+  local label="gui/$UID_NUM/com.argus.voice" i
+  for i in $(seq 1 20); do
+    launchctl print "$label" > /dev/null 2>&1 || break
+    sleep 0.5
+  done
+  for i in 1 2 3 4 5; do
+    if launchctl bootstrap "gui/$UID_NUM" "$LAUNCH_AGENTS/com.argus.voice.plist" 2> "$ARGUS_HOME/logs/launchctl.err"; then
+      return 0
+    fi
+    if launchctl print "$label" > /dev/null 2>&1; then    # already loaded after all: just restart it
+      launchctl kickstart -k "$label" > /dev/null 2>&1 && return 0
+    fi
+    sleep "$i"
+  done
+  cat "$ARGUS_HOME/logs/launchctl.err" >&2
+  return 1
+}
+
 # =====================================================================
 step "8/10  Starting Argus at login"
 if [ "$NO_SERVICE" = 1 ]; then
@@ -596,7 +617,7 @@ else
   launchctl bootout "gui/$UID_NUM/com.argus.voice" > /dev/null 2>&1 || true
   launchctl bootout "gui/$UID_NUM/com.argus.phone" > /dev/null 2>&1 || true   # older versions ran it separately
   rm -f "$LAUNCH_AGENTS/com.argus.phone.plist"
-  launchctl bootstrap "gui/$UID_NUM" "$LAUNCH_AGENTS/com.argus.voice.plist" || die "Couldn't start Argus"
+  start_argus || die "Couldn't start Argus. Try: launchctl bootout gui/$UID_NUM/com.argus.voice; then run ./setup.sh again"
   ok "Argus is running (menu bar ◉) and starts when you log in"
   if [ "$PHONE_ENABLED" = true ]; then
     ok "Phone gateway on Tailscale: http://$PHONE_IP:8765"

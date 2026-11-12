@@ -5,6 +5,7 @@ import json
 import time
 
 import numpy as np
+import pytest
 
 from argus.micwatch import MicWatch, friendly, on_a_call
 from argus.wake import Command, command_of
@@ -156,3 +157,27 @@ def test_argusctl_timing(tmp_path, monkeypatch, capsys):
     assert main(["timing", "5"]) == 0
     out = capsys.readouterr().out
     assert "first word 2.1 s after you stopped talking" in out and "include thinking and the network" in out
+
+
+# ---- a conversation Claude won't accept any more --------------------------------------------------------------
+@pytest.mark.invalid_requests_ok
+def test_a_conversation_claude_refuses_is_replaced_and_the_question_asked_again(tmp_path):
+    from fakes import Script, say
+    script = Script(say("It's 18 degrees and sunny."))
+    argus, voice, _ = make_argus(tmp_path, ["Argus, how's the weather?"], script=script)
+    old = argus.brain.sessions.current()
+    store = argus.brain.agent.store              # a saved message the API refuses (made with a different key setup)
+    store.append(old, "user", [{"type": "text", "text": "earlier"}])
+    store.append(old, "assistant", [{"type": "image_url", "url": "x"}])
+    argus.handle_utterance(SPEECH)
+    assert wait_for(lambda: voice.spoken[-1:] == ["It's 18 degrees and sunny."])
+    assert argus.brain.sessions.current() != old
+    assert "fresh_session_after_refusal" in (tmp_path / "audit.jsonl").read_text()
+
+
+def test_spoken_errors_say_what_happened():
+    from argus.brain import spoken_error
+    assert "fresh conversation" in spoken_error("Claude API error 400: messages.3: bad")
+    assert "overloaded" in spoken_error("Claude API error 529: Overloaded")
+    assert "too many requests" in spoken_error("Claude API error 429: rate_limit_error")
+    assert spoken_error("weird") == "Sorry, that didn't work. The details are in argusctl log."

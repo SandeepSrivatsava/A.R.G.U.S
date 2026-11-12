@@ -41,7 +41,20 @@ def spoken_error(error: str) -> str:
         return "I lost the connection partway through. Please ask again."
     if "reach" in text or "connection" in text or "quiet" in text:
         return "I can't reach my brain right now. Check the internet connection."
-    return "Sorry, something went wrong with that."
+    if "error 429" in text or "rate limit" in text or "rate_limit" in text:
+        return "Claude is getting too many requests from me right now. Give it a minute and ask again."
+    if "overloaded" in text or "error 529" in text or "error 5" in text:
+        return "Claude is overloaded at the moment. Please ask again in a minute."
+    if "error 400" in text:
+        return ("Claude didn't accept that request, so I've started a fresh conversation. Please ask again. "
+                "The details are in argusctl log.")
+    return "Sorry, that didn't work. The details are in argusctl log."
+
+
+def refused(error: Optional[str]) -> bool:
+    """Claude turned the request itself down (400): usually something in the saved conversation, which a fresh
+    conversation fixes."""
+    return bool(error) and "error 400" in str(error).lower()
 
 
 class _VoiceEvents(Events):
@@ -50,6 +63,7 @@ class _VoiceEvents(Events):
         self.approver = approver or brain.approver
         self.buffer = SentenceBuffer()
         self.spoke = False
+        self.answered = False              # Claude started an answer (text arrived)
         self.started = time.monotonic()
         self.first_word_at: Optional[float] = None
 
@@ -65,6 +79,7 @@ class _VoiceEvents(Events):
             self.say(sentence)
 
     def text(self, delta: str) -> None:
+        self.answered = True
         for sentence in self.buffer.feed(delta):
             self.say(sentence)
 
@@ -137,8 +152,16 @@ class Brain:
         events = _VoiceEvents(self, cancelled, DenyAll() if guest else None)
         sessions = self.guest_sessions if guest else self.sessions
         try:
-            turn = self.agent.run(session_id=sessions.current(), channel="guest" if guest else "voice", content=text,
+            channel = "guest" if guest else "voice"
+            turn = self.agent.run(session_id=sessions.current(), channel=channel, content=text,
                                   events=events, cancel=cancelled)
+            if refused(turn.error) and not events.answered and not cancelled.is_set():
+                # One bad message in the saved conversation makes Claude refuse every later request in it.
+                # Start a fresh conversation and ask once more, instead of failing until the 30-minute reset.
+                self.audit.log("fresh_session_after_refusal", error=str(turn.error)[:300])
+                sessions.rotate()
+                turn = self.agent.run(session_id=sessions.current(), channel=channel, content=text,
+                                      events=events, cancel=cancelled)
         except Exception as exc:  # never let one request take the voice loop down
             log.exception("request failed")
             self.last_error = str(exc)
