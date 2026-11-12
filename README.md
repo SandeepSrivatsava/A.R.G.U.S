@@ -47,7 +47,8 @@ Android: the same brain runs on the phone (Termux). Mac off: an always-on server
 
 | You say (or do) | Argus |
 |---|---|
-| "Argus, what's the news today?" / "What's the weather, Argus?" | Answers out loud. The name can be anywhere in the sentence. |
+| "Argus, what's the news today?" / "What's the weather, Argus?" | Answers out loud. The name can be anywhere in the sentence. The weather is for where your phone is. |
+| "Argus, I'm going to Tahoe Saturday to ski" | The forecast there for when you arrive, whether it suits skiing, and an offer to check again the evening before and an hour before you leave. |
 | *clap clap*, then "what time is my flight?" | Two sharp claps (less than a second apart) open listening without the name. Single claps, applause and speech are ignored. |
 | (right after a reply) "And tomorrow?" | Follow-ups within 8 seconds don't need the name. |
 | "Argus, let's chat" … "that's all" | Conversation mode: no name needed until you say "that's all" (or 2 minutes of quiet). |
@@ -223,6 +224,23 @@ services for that trip only, never to Claude or the activity log.
   least five minutes faster. On iPhone, a CarPlay/Bluetooth automation can ask the same question
   ([docs/IPHONE.md](docs/IPHONE.md)).
 
+## Weather where you are, and where you're going
+
+* **"What's the weather?"** is answered for where your phone is (it sends its location with the request;
+  at the Mac, Argus uses where your phone was in the last few hours). Only if neither is known does it
+  use the home city you gave setup, and it says so.
+* **Going somewhere:** "I'm driving to Tahoe on Saturday at 8" gets the forecast for Tahoe for when you
+  arrive. If Argus doesn't know what you're going for, it asks ("skiing?") and then says plainly whether
+  the weather suits it and what to bring. The route answer always includes the weather when you arrive,
+  halfway on long drives, and any official US weather warning at the destination.
+* **A heads-up before you leave:** Argus offers to keep an eye on the trip. It checks again the evening
+  before and an hour before you leave (then with live traffic too), and tells you out loud at the Mac, or
+  on your phone if you're away: "Still good for skiing: fresh snow overnight, chains may be required on
+  I-80, leave ten minutes early."
+* **Where it comes from:** the forecast from [Open-Meteo](https://open-meteo.com) (free, no key, up to 16
+  days ahead) and official warnings from the US National Weather Service (weather.gov). Places are sent
+  rounded to about a kilometre.
+
 ## When the Mac is off
 
 * **Android:** Argus runs on the phone, so nothing changes.
@@ -349,7 +367,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **744 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **768 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed

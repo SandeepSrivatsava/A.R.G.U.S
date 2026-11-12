@@ -31,6 +31,7 @@ from .audit import Audit
 from .control import ControlServer, send
 from .lessons import Reflector
 from .llm import Claude
+from . import weather as weather_mod
 from .maps import MapsError, Place, Router, minutes, nav_link, route_tool
 from .news import format_headlines
 from .policy import Policy
@@ -72,6 +73,7 @@ class AndroidApp:
         tools = build_tools(mac=False, glasses=False, commands=False)
         self.router = router or Router(settings, secrets)
         tools["route"] = route_tool(self.router)
+        self.weather, self.recent = weather_mod.attach(settings, self.router, tools)
         self.notes: Optional[NotificationLog] = None
         self.whatsapp: Optional[WhatsAppBackup] = None
         search = None
@@ -89,7 +91,8 @@ class AndroidApp:
         self.agent = Agent(self.llm, self.store, self.policy, tools, settings=settings, audit=self.audit,
                            secrets=[v for v in secrets.values() if v], reflector=reflector, device="android")
         self.scheduler = Scheduler(self.store, deliver=self.deliver, run_task=self.run_task,
-                                   headlines=format_headlines, tz=settings.timezone or None)
+                                   headlines=format_headlines, tz=settings.timezone or None,
+                                   trip_check=weather_mod.make_trip_check(self.agent, self.store, settings.user_name))
         self.busy = threading.Lock()
         self._stop = threading.Event()
         self.trip: Optional[Dict[str, Any]] = None

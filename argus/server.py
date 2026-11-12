@@ -23,6 +23,7 @@ from .audit import Audit
 from .control import ControlServer
 from .lessons import Reflector
 from .llm import Claude
+from . import weather as weather_mod
 from .maps import Router, phone_links, route_tool
 from .news import format_headlines
 from .phone import Gatekeeper, PhoneServer, bind_address, load_or_create_token
@@ -49,13 +50,15 @@ class ServerApp:
         tools = build_tools(mac=False, glasses=False, commands=False)
         self.router = router or Router(settings, secrets)
         tools["route"] = route_tool(self.router)
+        self.weather, self.recent = weather_mod.attach(settings, self.router, tools)
         self.push = push if push is not None else push_from(settings, secrets, self.audit)
         reflector = Reflector(self.llm, self.store, model=settings.small_model, audit=self.audit,
                               cost=request_cost) if settings.self_learning else None
         self.agent = Agent(self.llm, self.store, self.policy, tools, settings=settings, audit=self.audit,
                            secrets=[v for v in secrets.values() if v], reflector=reflector, device="server")
         self.scheduler = Scheduler(self.store, deliver=self.deliver, run_task=self.run_task,
-                                   headlines=format_headlines, tz=settings.timezone or None)
+                                   headlines=format_headlines, tz=settings.timezone or None,
+                                   trip_check=weather_mod.make_trip_check(self.agent, self.store, settings.user_name))
         self.phone: Optional[PhoneServer] = None
         self._stop = threading.Event()
 
@@ -73,6 +76,7 @@ class ServerApp:
 
     def ask_phone(self, content: Any, location: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         session = self.store.session_for("phone", "phone", 30)
+        self.recent.note(location)          # in memory: lets 'here' at the Mac mean where the phone is
         turn = self.agent.run(session_id=session, channel="phone", content=content, events=Events(), location=location)
         reply = turn.text.strip() or ("Sorry, " + turn.error if turn.error else "Done.")
         return dict(phone_links(turn.links), reply=reply)

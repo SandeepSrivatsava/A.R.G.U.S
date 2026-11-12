@@ -464,8 +464,9 @@ def schedule(args: Dict[str, Any], ctx: Context) -> ToolOutput:
         tasks = ctx.store.tasks()
         if not tasks:
             return ToolOutput("nothing scheduled")
+        from .weather import describe_trip
         return ToolOutput("\n".join(
-            f"#{t['id']} [{t['mode']}] {t['text']} — " + (f"repeats {t['cron']}" if t["cron"] else "") +
+            f"#{t['id']} [{t['mode']}] {describe_trip(t['text']) if t['mode'] == 'trip' else t['text']} — " + (f"repeats {t['cron']}" if t["cron"] else "") +
             (f" next {datetime.fromtimestamp(t['next_run']).strftime('%a %d %b %H:%M')}" if t["next_run"] else "")
             for t in tasks))
     if action == "cancel":

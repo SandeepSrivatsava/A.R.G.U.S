@@ -28,6 +28,8 @@ In rough order of value:
    * Official road reports (the state's 511 / transport department feeds) as a second incident source
      next to TomTom, and tolls in dollars.
    * Learn which routes you actually take, and prefer them when times are close.
+   * Weather (done in 2.4): forecasts for where you are and where you're going, official warnings, and
+     spoken checks before a trip. Next: weather along the whole route, hourly, for long drives.
    * Reroute warnings while driving on iPhone (today only Android's drive assist does this; on iPhone it
      needs the phase 2 app).
 5. **A ready-made Shortcut.** One link that installs the "Argus" Shortcut, instead of building it by hand.

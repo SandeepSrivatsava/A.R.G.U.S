@@ -217,7 +217,7 @@ default_name="$( { id -F 2>/dev/null || getent passwd "$ME" 2>/dev/null | cut -d
 NAME="${ARGUS_NAME:-}"
 ask NAME "What should Argus call you?" "${default_name:-$ME}"
 CITY="${ARGUS_CITY:-}"
-ask CITY "Your city, for weather (e.g. Portland, OR)" ""
+ask CITY "Your home city, used when your phone has not shared where you are (e.g. Portland, OR)" ""
 TZ_NAME="${ARGUS_TIMEZONE:-$(readlink /etc/localtime 2>/dev/null | sed 's#.*zoneinfo/##' || true)}"
 [ -n "$TZ_NAME" ] || TZ_NAME="UTC"
 ok "Time zone: $TZ_NAME"

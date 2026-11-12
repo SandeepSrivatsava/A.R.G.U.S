@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from .cron import Cron, CronError
 from .store import Store
@@ -13,7 +13,7 @@ from .store import Store
 log = logging.getLogger("argus.scheduler")
 
 HEADLINES_JOB = "Morning headlines"
-BRIEFING_JOB = ("Morning briefing: today's weather where I live, the 5 most important headlines (use get_news), "
+BRIEFING_JOB = ("Morning briefing: today's weather (the weather tool, for 'here'), the 5 most important headlines (use get_news), "
                 "and anything I asked you to remind me about today. Under 150 words, friendly, no preamble.")
 
 
@@ -37,8 +37,10 @@ def sync_default_jobs(store: Store, headlines_cron: str, briefing_cron: str, tz:
 
 class Scheduler:
     def __init__(self, store: Store, *, deliver: Callable[[str], None], run_task: Callable[[str], str],
-                 headlines: Callable[[], str], tz: Optional[str] = None, interval: float = 20.0):
+                 headlines: Callable[[], str], tz: Optional[str] = None, interval: float = 20.0,
+                 trip_check: Optional[Callable[[Dict[str, Any]], str]] = None):
         self.store = store
+        self.trip_check = trip_check
         self.deliver = deliver
         self.run_task = run_task
         self.headlines = headlines
@@ -57,6 +59,11 @@ class Scheduler:
                     self.deliver(f"Reminder: {task['text']}{note}")
                 elif task["mode"] == "news":
                     self.deliver(self.headlines())
+                elif task["mode"] == "trip":
+                    from .weather import read_trip
+                    trip = read_trip(task["text"])
+                    if trip is not None and self.trip_check is not None and trip["leave"] > now - 1800:
+                        self.deliver(self.trip_check(trip))
                 else:
                     self.deliver(self.run_task(task["text"]))
             except Exception as exc:

@@ -55,6 +55,12 @@ The location goes only to the Mac (over Tailscale), and from there to the maps s
 asked about. Claude doesn't see it, and it isn't written to the activity log. Leave step 2 out if you don't
 want directions from where you are.
 
+### Weather where you are
+
+The same **Get Current Location** step also makes "Hey Siri, Argus, what's the weather?" answer for where
+you are. Asked at the Mac, Argus uses where your iPhone was the last time it asked something (within a few
+hours), then your home city.
+
 ### Directions and "where are you headed?" in the car
 
 * Ask: "Hey Siri, Argus" → "fastest way to the airport?" Argus asks Apple Maps, Google Maps and TomTom

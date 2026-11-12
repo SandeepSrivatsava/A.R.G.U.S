@@ -74,7 +74,8 @@ def http_json(method: str, url: str, headers: Dict[str, str], body: Optional[Dic
     parts = urlsplit(url)
     path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
     data = json.dumps(body).encode() if body is not None else None
-    sent = dict(headers, **{"Accept": "application/json", "User-Agent": "Argus/2"})
+    sent = {"Accept": "application/json", "User-Agent": "Argus/2"}
+    sent.update(headers)
     if data is not None:
         sent["Content-Type"] = "application/json"
     conn = connect(url, timeout)
@@ -520,8 +521,8 @@ class MapKitHelper:
 ROUTE_DESCRIPTION = (
     "The best way to drive, walk or ride somewhere: asks every maps service that is set up (Apple Maps, Google "
     "Maps, TomTom) for live-traffic times, lines their routes up, checks accidents, closures and road works on "
-    "each one and recent news about those roads, and names the best route with the reason, its turn-by-turn "
-    "steps, and a link that opens navigation in the user's maps app (the phone opens it by itself). Use it "
+    "each one and recent news about those roads, the weather on arrival (and halfway on long drives), and "
+    "names the best route with the reason, its turn-by-turn steps, and a link that opens navigation in the user's maps app (the phone opens it by itself). Use it "
     "whenever the user is going somewhere, asks about traffic, how long it takes, or the best way. origin "
     "'here' is where the user's phone is right now, when the phone shared it.")
 ROUTE_SCHEMA = {
@@ -548,6 +549,7 @@ class Comparison:
     notes: List[str] = field(default_factory=list)
     incidents_from: str = ""                             # "TomTom" when incidents were checked
     news_checked: bool = False
+    weather: List[str] = field(default_factory=list)     # the weather where you arrive (and halfway)
 
 
 def _listed(words: Sequence[str]) -> str:
@@ -592,6 +594,7 @@ def _offline_news() -> Optional[Callable[[str], bytes]]:
     return (lambda url: Path(saved).read_bytes()) if saved else None
 
 
+RECENT_FOR_ROUTES = 20 * 60     # at the Mac, the phone's last location counts as "here" for a route this long
 STAGE_SECONDS = 18.0            # how long the maps services get to answer, together
 EXTRAS_SECONDS = 9.0            # and the incident and news checks after them
 SWITCH_APP_SECONDS = 180        # open another navigation app only when the usual one's route is this much worse
@@ -602,10 +605,13 @@ SERVICE_NAMES = {"google": "Google Routes API", "apple": "Apple Maps Server API"
 class Router:
     def __init__(self, settings, secrets: Dict[str, str], *, request: Requester = http_json,
                  mapkit_exe: Optional[Path] = None, run: Callable[..., Any] = subprocess.run,
-                 clock: Callable[[], float] = time.time, fetch: Optional[Callable[[str], bytes]] = None):
+                 clock: Callable[[], float] = time.time, fetch: Optional[Callable[[str], bytes]] = None,
+                 weather: Any = None, recent: Any = None):
         from .traffic import TomTom
         self.settings = settings
         self.clock = clock
+        self.weather = weather              # weather.Weather: the forecast where you arrive (and halfway)
+        self.recent = recent                # weather.RecentPlace: the phone's last location, for "here" at the Mac
         self.fetch = fetch or _offline_news()
         self.services: Dict[str, Any] = {}
         if secrets.get("GOOGLE_MAPS_API_KEY"):
@@ -700,8 +706,8 @@ class Router:
         found.answered = [name for name, _ in kept]
         options = traffic.rank(traffic.group(kept))[:4]
         live = mode == "drive" and (depart is None or depart - self.clock() < 45 * 60)
+        jobs: Dict[str, Callable[[], Any]] = {}
         if extras and live:
-            jobs: Dict[str, Callable[[], Any]] = {}
             shapes = [option.index.points for option in options if option.index is not None]
             tomtom = self.services.get("tomtom")
             if tomtom is not None and shapes:
@@ -709,11 +715,14 @@ class Router:
             roads = traffic.news_roads([route for option in options for route in option.routes])
             if self.settings.maps_news and roads:
                 jobs["news"] = lambda: traffic.road_news(roads, fetch=self.fetch, now=self.clock())
-            checked = self._together(jobs, EXTRAS_SECONDS)
+        if extras and self.weather is not None and options:
+            jobs["weather"] = lambda: self._weather_on_the_way(options[0], destination, depart)
+        checked = self._together(jobs, EXTRAS_SECONDS)
+        if extras and live:
             incidents, headlines = [], []
             if isinstance(checked.get("incidents"), tuple):
                 incidents, cut_short = checked["incidents"]
-                found.incidents_from = tomtom.name
+                found.incidents_from = self.services["tomtom"].name
                 if cut_short:
                     found.notes.append("incidents were checked for the first part of the trip only (it's a long one)")
             elif "incidents" in checked:
@@ -721,8 +730,31 @@ class Router:
             if isinstance(checked.get("news"), list):
                 headlines, found.news_checked = checked["news"], True
             traffic.attach(options, incidents, headlines)
+        if isinstance(checked.get("weather"), list):
+            found.weather = checked["weather"]
         found.options = traffic.rank(options)[:3]
         return found
+
+    def _weather_on_the_way(self, option: Any, destination: Place, depart: Optional[float]) -> List[str]:
+        """The forecast where you arrive, and halfway on a long trip, for the times you'd be there."""
+        from .weather import WeatherError
+        start = depart or self.clock()
+        arrive = start + option.seconds
+        points = option.index.points if option.index is not None else []
+        end = points[-1] if points else (destination.lat, destination.lon) if destination.has_point else None
+        lines: List[str] = []
+        try:
+            if end is None:
+                end, _ = self.weather.locate(destination.text)
+            lines.append(self.weather.on_the_way(end, arrive, "Weather when you arrive"))
+            if option.seconds >= 75 * 60 and option.index is not None:
+                middle = option.index.samples(3)[1]
+                lines.append(self.weather.on_the_way(middle, start + option.seconds / 2, "Weather halfway"))
+            for alert in self.weather.alerts(end) if arrive - self.clock() < 2 * 86400 else []:
+                lines.append(f"Official warning at the destination (US National Weather Service): {alert.event}.")
+        except (WeatherError, MapsError) as exc:
+            log.info("no weather for the route: %s", exc)
+        return [line for line in lines if line]
 
     def plan(self, origin: Place, destination: Place, mode: str = "drive", depart: Optional[float] = None,
              avoid: Sequence[str] = ()) -> Tuple[str, List[Route]]:
@@ -792,6 +824,7 @@ class Router:
         for name, reason in found.failed.items():
             lines.append(f"Not included: {name} ({reason}).")
         lines += [f"Note: {note}." for note in found.notes]
+        lines += found.weather
         if found.options:
             source, steps = found.options[0].steps
             after = ""
@@ -851,6 +884,8 @@ class Router:
                 except Exception as exc:          # GPS off, permission missing: say so, don't crash
                     log.info("couldn't get the phone's location: %s", exc)
                     location = None
+            if not location and self.recent is not None and getattr(ctx, "channel", "") != "guest":
+                location = self.recent.get(RECENT_FOR_ROUTES)     # at the Mac: where the phone was minutes ago
             if not location:
                 return ToolOutput.error("The user's current location isn't available here (only their phone shares "
                                         "it, with a request). Ask where they're starting from, or use their saved "
@@ -962,4 +997,4 @@ def route_tool(router: Router):
     """The route tool, for any kind of Argus (the Mac, the server, Android)."""
     from .toolbox import Tool
     return Tool("route", ROUTE_DESCRIPTION, ROUTE_SCHEMA, router.tool,
-                frozenset({"voice", "phone", "scheduler", "cli", "android"}))
+                frozenset({"voice", "phone", "scheduler", "cli", "android", "trip"}))

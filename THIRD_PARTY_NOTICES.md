@@ -101,5 +101,8 @@ Nothing here is included in this repository; Argus only runs these programs.
   their answers for you and shows no map.
   Navigation links open Apple Maps, Google Maps or Waze. No Waze data is read: Waze has no public service
   for routes or traffic, and its terms forbid automatic access.
+* Weather data: [Open-Meteo](https://open-meteo.com) (free for non-commercial use; data licensed CC BY 4.0,
+  "Weather data by Open-Meteo.com") and the US National Weather Service API (api.weather.gov, US
+  government data). Used through their public web APIs; no code from either is included.
 * Push notifications use [ntfy](https://ntfy.sh) (open source, Apache-2.0 / GPL-2.0), through its public
   web API: ntfy.sh or your own server. No ntfy code is included.

@@ -24,6 +24,7 @@ from .lessons import Reflector
 from .hearing import Microphone, Segmenter, SherpaTranscriber, VoicePrint, model_paths
 from .listener import Listener
 from .llm import Claude
+from . import weather as weather_mod
 from .maps import Router, phone_links, route_tool
 from .news import format_headlines
 from .phone import Gatekeeper, PhoneServer, bind_address, load_or_create_token
@@ -87,13 +88,15 @@ class App:
         tools = build_tools(mac=IS_MAC or computer is not None, glasses=settings.glasses_enabled)
         self.router = Router(settings, secrets)
         tools["route"] = route_tool(self.router)
+        self.weather, self.recent = weather_mod.attach(settings, self.router, tools)
         self.push = push_from(settings, secrets, self.audit)    # reminders reach the phone while you're away
         self.agent = Agent(self.llm, self.store, self.policy, tools,
                            settings=settings, audit=self.audit, computer=computer, glasses=self.glasses,
                            glasses_status=(self.glasses.describe if self.glasses else lambda: None),
                            secrets=self._secret_values(secrets), reflector=reflector, device="mac")
         self.scheduler = Scheduler(self.store, deliver=self.deliver, run_task=self.run_task, headlines=format_headlines,
-                                   tz=settings.timezone or None)
+                                   tz=settings.timezone or None,
+                                   trip_check=weather_mod.make_trip_check(self.agent, self.store, settings.user_name))
         self.phone: Optional[PhoneServer] = None
         if voice:
             self.argus = self._build_voice(transcriber, source, speaker_voice, approver)
@@ -178,6 +181,7 @@ class App:
 
     def ask_phone(self, content: Any, location: Optional[dict] = None) -> dict:
         session = self.store.session_for("phone", "iphone", 30)
+        self.recent.note(location)          # in memory: lets 'here' at the Mac mean where the phone is
         turn = self.agent.run(session_id=session, channel="phone", content=content, events=Events(), location=location)
         reply = turn.text.strip() or ("Sorry, " + turn.error if turn.error else "Done.")
         return dict(phone_links(turn.links), reply=reply)
