@@ -63,7 +63,13 @@ secret_set() {  # usage: printf '%s' "$value" | secret_set KEY
 # VALUE is written as TOML (true, 8765, "apple"). The rest of the file, comments included, is kept.
 toml_set() {
   local file="$1" section="$2" key="$3" value="$4"
-  if grep -q "^\[$section\]" "$file"; then
+  if [ -z "$section" ]; then                       # a top-level setting, before the first [section]
+    awk -v k="$key" -v v="$value" 'BEGIN{done=0; top=1}
+      top && /^\[/ {if (!done) print k " = " v; done=1; top=0}
+      top && $0 ~ "^"k"[[:space:]]*=" {if (!done) print k " = " v; done=1; next}
+      {print} END{if (!done) print k " = " v}' "$file" > "$file.tmp"
+    mv "$file.tmp" "$file"
+  elif grep -q "^\[$section\]" "$file"; then
     if awk -v s="[$section]" -v k="$key" '$0==s{x=1;next} /^\[/{x=0} x && $0 ~ "^"k"[[:space:]]*=" {f=1} END{exit !f}' "$file"; then
       awk -v s="[$section]" -v k="$key" -v v="$value" \
         '$0==s{x=1;print;next} /^\[/{x=0} x && $0 ~ "^"k"[[:space:]]*=" {print k " = " v; next} {print}' "$file" > "$file.tmp"
@@ -84,14 +90,52 @@ toml_get() {
     x && $0 ~ "^"k"[[:space:]]*=" {sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*#.*$/, ""); gsub(/"/, ""); print; exit}' "$1"
 }
 
-# choose_nav_apps PHONE GIVEN [MAIN]: which navigation apps are on the phone. Sets MAPS_APP (the one that opens
+# The answers file remembers which questions were answered, including keys you chose to skip, so a later run
+# can leave them alone. One "id=value" per line, owner-only. (Settings live in config.toml, keys in secrets.env.)
+answer_get() { if [ -n "${ANSWERS:-}" ] && [ -f "$ANSWERS" ]; then sed -n "s/^$1=//p" "$ANSWERS" | tail -1; fi; }
+answer_set() {  # answer_set ID VALUE
+  [ -n "${ANSWERS:-}" ] && [ "$DRY_RUN" != 1 ] || return 0
+  mkdir -p "$(dirname "$ANSWERS")"
+  touch "$ANSWERS" && chmod 600 "$ANSWERS"
+  { grep -v "^$1=" "$ANSWERS" || true; printf '%s=%s\n' "$1" "$2"; } > "$ANSWERS.tmp"
+  mv "$ANSWERS.tmp" "$ANSWERS" && chmod 600 "$ANSWERS"
+}
+
+# optional_key VAR SECRET_NAME ID LABEL: an optional key (Google Maps, TomTom). Takes VAR as given, else the saved
+# key. KEEP=1 (keep saved answers) also leaves a key alone that was skipped before; KEEP=0 (reviewing) offers to
+# replace a saved key. Sets KEY_ASK=1 when the caller should ask for it (it explains what the key is for first).
+optional_key() {
+  local var="$1" secret="$2" id="$3" label="$4" value new
+  eval "value=\${$var:-}"
+  KEY_ASK=0
+  if [ -z "$value" ] && [ "${CHANGE_KEYS:-0}" = 0 ]; then
+    value="$(secret_get "$secret")"
+    if [ -n "$value" ] && [ "${KEEP:-1}" = 0 ] && is_tty; then
+      ok "$label: saved (ending ...$(printf '%s' "$value" | tail -c 4))"
+      read -r -s -p "  New $label (Enter keeps the saved one): " new; echo
+      [ -z "$new" ] || value="$new"
+      eval "$var=\$value"
+      return
+    fi
+  fi
+  if [ -n "$value" ]; then
+    eval "$var=\$value"
+    ok "$label: found (ending ...$(printf '%s' "$value" | tail -c 4))"
+  elif [ "${KEEP:-0}" = 1 ] && [ "$(answer_get "$id")" = skipped ]; then
+    ok "$label: skipped before (to add one, run ./setup.sh and choose to change your answers)"
+  elif is_tty; then
+    KEY_ASK=1
+  fi
+}
+
+# choose_nav_apps PHONE GIVEN [MAIN] [SAVED]: which navigation apps are on the phone. Sets MAPS_APP (the one that opens
 # by default) and MAPS_APPS_TOML (the others, as a TOML list body like: "google", "waze").
 # GIVEN, like "apple, google,waze" (from ARGUS_MAPS_APPS or the settings file), is used as it is: its first app
 # opens by default. Without it, asks on a terminal; MAIN is then the app that opens (default: by phone).
 app_name() { case "$1" in apple) printf 'Apple Maps' ;; google) printf 'Google Maps' ;; waze) printf 'Waze' ;; esac; }
 
 choose_nav_apps() {
-  local phone="$1" given="$2" main="${3:-}" apps="" word
+  local phone="$1" given="$2" main="${3:-}" saved=" ${4:-} " apps="" word yes
   case "$main" in apple|google|waze) ;; *) if [ "$phone" = android ]; then main=google; else main=apple; fi ;; esac
   for word in $(printf '%s' "$given" | tr '[:upper:]' '[:lower:]' | tr ',[]"' '     '); do
     case "$word" in
@@ -103,10 +147,12 @@ choose_nav_apps() {
     if is_tty && [ "$ASSUME_YES" != 1 ]; then
       echo "  Directions open in $(app_name "$main"). Argus can offer your other navigation apps too:"
       if [ "$phone" != android ] && [ "$main" != google ]; then
-        if confirm "Is Google Maps on your iPhone?" n; then apps="$apps google"; fi
+        yes=n; case "$saved" in *" google "*) yes=y ;; esac
+        if confirm "Is Google Maps on your iPhone?" "$yes"; then apps="$apps google"; fi
       fi
       if [ "$main" != waze ]; then
-        if confirm "Is Waze on your phone?" n; then apps="$apps waze"; fi
+        yes=n; case "$saved" in *" waze "*) yes=y ;; esac
+        if confirm "Is Waze on your phone?" "$yes"; then apps="$apps waze"; fi
       fi
     fi
   fi
@@ -119,15 +165,16 @@ choose_nav_apps() {
 }
 
 # ask_tomtom_key: sets TOMTOM_KEY (from ARGUS_TOMTOM_KEY, the saved key, or a question; empty = skipped).
+# shellcheck disable=SC2034  # TOMTOM_KEY and TOMTOM_ASKED are read by the setup scripts
 ask_tomtom_key() {
   TOMTOM_KEY="${ARGUS_TOMTOM_KEY:-}"
-  if [ -z "$TOMTOM_KEY" ] && [ "${CHANGE_KEYS:-0}" = 0 ]; then TOMTOM_KEY="$(secret_get TOMTOM_API_KEY)"; fi
-  if [ -n "$TOMTOM_KEY" ]; then
-    ok "TomTom key: found (ending ...$(printf '%s' "$TOMTOM_KEY" | tail -c 4))"
-  elif is_tty; then
+  TOMTOM_ASKED=0
+  optional_key TOMTOM_KEY TOMTOM_API_KEY tomtom_key "TomTom key"
+  if [ "$KEY_ASK" = 1 ]; then
     echo "  Accidents, closures and road works on each route, and one more opinion on the traffic, come from"
     echo "  TomTom: a free key from developer.tomtom.com (2,500 requests a day, no card). Press Enter to skip."
     ask_secret TOMTOM_KEY "TomTom API key (Enter to skip)" optional
+    TOMTOM_ASKED=1
   fi
 }
 

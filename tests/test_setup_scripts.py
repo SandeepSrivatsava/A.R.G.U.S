@@ -90,7 +90,8 @@ def test_setup_for_android_then_iphone(tmp_path, venv):
     assert setting(cfg, "glasses", "enabled") == "true"
     assert (tmp_path / "home" / "secrets.env").read_text().count("GOOGLE_MAPS_API_KEY=") == 1
     third = run("setup.sh", dict(env, ARGUS_PHONE=""))                 # no answer and no terminal: keep iPhone
-    assert third.returncode == 0 and "setting up for iphone" in third.stderr and "Switched" not in third.stdout
+    assert third.returncode == 0 and "Switched" not in third.stdout       # no answer and no terminal: keep iPhone
+    assert "iPhone: Apple Maps, Siri Shortcuts" in third.stdout and "(saved)" in third.stdout
     loaded = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
                              "from argus import config; s = config.load(); print(s.phone_type, s.maps_link_app)",
                              str(REPO)], env=env, capture_output=True, text=True)
@@ -333,3 +334,101 @@ def test_shell_scripts_pass_shellcheck():
     scripts = [REPO / "setup.sh", REPO / "tests" / "e2e.sh"] + sorted((REPO / "scripts").glob("*.sh"))
     out = subprocess.run(["shellcheck", "-x", *map(str, scripts)], cwd=REPO, capture_output=True, text=True)
     assert out.returncode == 0, out.stdout
+
+
+# ---- running setup again: keep the saved answers, or go through them ---------------------------------------------
+def talk(env, steps, args=(), timeout=60):
+    """Run setup.sh on a terminal: for each (text, reply), wait for text, then type reply (None: just wait).
+    Returns everything setup printed and its exit code."""
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(["bash", str(REPO / "setup.sh"), *args], env=env, stdin=slave, stdout=slave,
+                            stderr=slave, close_fds=True)
+    os.close(slave)
+    seen = b""
+
+    def read_until(text: bytes) -> None:
+        nonlocal seen
+        deadline = time.time() + timeout
+        while text not in seen:
+            assert time.time() < deadline, f"never saw {text!r}; got {seen[-800:]!r}"
+            ready, _, _ = select.select([master], [], [], 0.5)
+            if ready:
+                try:
+                    seen += os.read(master, 4096)
+                except OSError:
+                    break
+    try:
+        for text, reply in steps:
+            read_until(text.encode())
+            if reply is not None:
+                os.write(master, reply.encode() + b"\n")
+        read_until(b"Done.")
+        proc.wait(30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        os.close(master)
+    return seen.decode(errors="replace"), proc.returncode
+
+
+def test_setup_again_keeps_saved_answers_and_asks_only_new_ones(tmp_path, venv):
+    env = mac_env(tmp_path, venv)
+    first, code = talk(env, [("Type 1 or 2", "1"), ("Is Google Maps on your iPhone?", "y"), ("Is Waze on your phone?", "n"),
+                             ("Google Maps API key", ""), ("TomTom API key", "")])
+    assert code == 0 and "You've set up Argus on this Mac before" not in first
+    answers = tmp_path / "home" / "setup-answers"
+    assert answers.read_text().splitlines() == ["claude_key=saved", "google_key=skipped", "tomtom_key=skipped"]
+    assert oct(answers.stat().st_mode & 0o777) == "0o600"
+
+    again, code = talk(env, [("Keep these answers and only ask what's new?", "")])
+    assert code == 0
+    summary = again[again.index("Your saved answers:"):again.index("Keep these answers")]
+    for line in ("Phone:             iPhone", "Maps apps:         Apple Maps, Google Maps",
+                 "Claude API key:    saved (ending ...test)", "Your name:         Sandeep", "Home city:         Portland, OR",
+                 "Blocked sites:     none", "Google Maps key:   skipped", "TomTom key:        skipped",
+                 "Weekday briefing:  off", "Keep Mac awake:    not asked yet (new question)"):
+        assert line in summary, line
+    for question in ("Type 1 or 2", "Is Google Maps on your iPhone?", "Is Waze on your phone?", "Google Maps API key (",
+                     "TomTom API key ("):
+        assert question not in again, question                   # all answered before: not asked again
+    assert "iPhone: Apple Maps, Siri Shortcuts, Meta glasses, calls from your number (optional) (saved)" in again
+    assert "Google Maps key: skipped before" in again and "TomTom key: skipped before" in again
+
+    review = {k: v for k, v in env.items() if k not in ("ARGUS_NAME", "ARGUS_CITY", "ARGUS_BLOCKED_SITES",
+                                                        "ARGUS_AI_BRIEFING", "ARGUS_ANTHROPIC_API_KEY")}
+    changed, code = talk(review, [
+        ("Keep these answers and only ask what's new?", "n"),
+        ("Type 1 or 2 [1]", ""), ("Is Google Maps on your iPhone? [Y/n]", ""), ("Is Waze on your phone? [y/N]", "y"),
+        ("New Claude API key (Enter keeps the saved one)", ""), ("What should Argus call you? [Sandeep]", ""),
+        ("[Portland, OR]", "Fremont, CA"), ("Sites to block, comma-separated [none]", "mybank.com"),
+        ("Google Maps API key", ""), ("TomTom API key", "tt-new-key-12345"),
+        ("weekday briefing at 7:30 (weather + news; roughly $1-3 a month)? [y/N]", "y")])
+    assert code == 0 and "Each question now shows your saved answer" in changed
+    cfg = tmp_path / "home" / "config.toml"
+    assert setting(cfg, "", "city") == "Fremont, CA" and setting(cfg, "", "user_name") == "Sandeep"
+    assert setting(cfg, "maps", "apps") == "[google, waze]" and setting(cfg, "security", "blocked_sites") == "[mybank.com]"
+    assert setting(cfg, "schedule", "morning_briefing") == "30 7 * * 1-5"
+    secrets = (tmp_path / "home" / "secrets.env").read_text()
+    assert "ANTHROPIC_API_KEY=sk-ant-test" in secrets and "TOMTOM_API_KEY=tt-new-key-12345" in secrets
+    assert "tomtom_key=saved" in answers.read_text() and "google_key=skipped" in answers.read_text()
+    assert cfg.read_text().count("city = ") == 1 and "\n[]\n" not in cfg.read_text()
+    loaded = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
+                             "from argus import config; s = config.load(); print(s.city, s.blocked_sites)", str(REPO)],
+                            env=env, capture_output=True, text=True)
+    assert loaded.stdout.strip() == "Fremont, CA ['mybank.com']", loaded.stderr
+
+
+def test_toml_set_writes_top_level_settings(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('name = "Argus"\ncity = "Portland, OR"\n\n[phone]\ntype = "iphone"\n')
+
+    def sh(code):
+        return subprocess.run(["bash", "-c", f'. "{REPO}/scripts/lib.sh"; {code}', "_", str(cfg)], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    sh('toml_set "$1" "" city \'"Fremont, CA"\'; toml_set "$1" "" user_name \'"Sandeep"\'')
+    assert cfg.read_text() == 'name = "Argus"\ncity = "Fremont, CA"\n\nuser_name = "Sandeep"\n[phone]\ntype = "iphone"\n'
+    assert sh('toml_get "$1" "" user_name') == "Sandeep" and sh('toml_get "$1" phone type') == "iphone"
+    flat = tmp_path / "flat.toml"
+    flat.write_text('name = "Argus"\n')
+    subprocess.run(["bash", "-c", f'. "{REPO}/scripts/lib.sh"; toml_set "$1" "" city \'"X"\'', "_", str(flat)], check=True)
+    assert flat.read_text() == 'name = "Argus"\ncity = "X"\n'

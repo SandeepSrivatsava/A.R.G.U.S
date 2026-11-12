@@ -320,6 +320,20 @@ builds Argus.app and the Apple Maps helper, and starts it at login. Then:
 
 Then say: "Argus, what's the news today?"
 
+### Updating, and running setup again
+
+There's no automatic update yet. To get a new version:
+
+```
+cd ~/argus && git pull && ./setup.sh
+```
+
+When setup has run before, it starts by listing your saved answers (phone, maps apps, keys, name, home city,
+blocked sites, briefing, keeping the Mac awake) and asks **"Keep these answers and only ask what's new?"**
+Press Enter, and only questions you've never answered are asked (a key you skipped stays skipped). Answer
+`n` to go through every question: each shows your saved answer, and Enter keeps it. Your keys, memory and
+lessons are kept either way. `./setup.sh --change-keys` asks for the keys again.
+
 ## Everyday commands
 
 ```bash
@@ -367,7 +381,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **768 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **770 automated tests**: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed

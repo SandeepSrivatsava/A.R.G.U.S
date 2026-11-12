@@ -130,6 +130,48 @@ case "$SYSTEM" in
   *) die "Unsupported system: $SYSTEM. Argus runs on a Mac (and on Android phones and Linux servers with their own setup)." ;;
 esac
 
+# ---- running setup again: show the saved answers, and offer to keep them --------------------------------------
+ANSWERS="$ARGUS_HOME/setup-answers"   # which questions were answered, including keys you chose to skip
+KEEP=0                                # 1 = keep every saved answer and ask only questions not answered yet
+saved_line() { printf '    %-18s %s\n' "$1" "$2"; }
+saved_key() {  # saved_key SECRET_NAME ANSWER_ID
+  local value; value="$(secret_get "$1")"
+  if [ -n "$value" ]; then printf 'saved (ending ...%s)' "$(printf '%s' "$value" | tail -c 4)"
+  elif [ "$(answer_get "$2")" = skipped ]; then printf 'skipped'
+  else printf 'not asked yet (new question)'; fi
+}
+show_saved_answers() {
+  local apps="" word sites brief awake
+  for word in $(toml_get "$CONFIG" maps app) $(toml_get "$CONFIG" maps apps | tr -d '[],'); do
+    apps="${apps:+$apps, }$(app_name "$word")"
+  done
+  sites="$(toml_get "$CONFIG" security blocked_sites | tr -d '[]')"
+  brief="$(toml_get "$CONFIG" schedule morning_briefing)"
+  awake="$(answer_get stay_awake)"
+  echo
+  echo "  You've set up Argus on this Mac before. Your saved answers:"
+  saved_line "Phone:" "$(if [ "$(toml_get "$CONFIG" phone type)" = android ]; then echo Android; else echo iPhone; fi)"
+  saved_line "Maps apps:" "${apps:-Apple Maps}"
+  saved_line "Claude API key:" "$(saved_key ANTHROPIC_API_KEY claude_key)"
+  saved_line "Your name:" "$(toml_get "$CONFIG" "" user_name)"
+  saved_line "Home city:" "$(toml_get "$CONFIG" "" city)"
+  saved_line "Blocked sites:" "${sites:-none}"
+  saved_line "Google Maps key:" "$(saved_key GOOGLE_MAPS_API_KEY google_key)"
+  saved_line "TomTom key:" "$(saved_key TOMTOM_API_KEY tomtom_key)"
+  saved_line "Weekday briefing:" "$(if [ -n "$brief" ]; then echo on; else echo off; fi)"
+  saved_line "Keep Mac awake:" "${awake:-not asked yet (new question)}"
+}
+if [ -f "$CONFIG" ] && [ "$CHANGE_KEYS" = 0 ]; then
+  KEEP=1
+  show_saved_answers
+  if is_tty && [ "$ASSUME_YES" != 1 ]; then
+    if ! confirm "Keep these answers and only ask what's new?" y; then
+      KEEP=0
+      echo "  Each question now shows your saved answer: press Enter to keep it, or type a new one."
+    fi
+  fi
+fi
+
 # =====================================================================
 step "1/10  Your phone (Argus runs on this Mac; the phone is how you reach it when away)"
 OLD_PHONE=""
@@ -137,6 +179,9 @@ OLD_PHONE=""
 GIVEN="${PHONE_FLAG:-${ARGUS_PHONE:-}}"
 PHONE="$(normalize_phone "$GIVEN")"
 [ -z "$GIVEN" ] || [ -n "$PHONE" ] || die "--phone must be iphone or android"
+if [ -z "$PHONE" ] && [ "$KEEP" = 1 ] && [ -n "$OLD_PHONE" ]; then
+  PHONE="$OLD_PHONE"; PHONE_NOTE=" (saved)"        # kept from last time
+fi
 if [ -z "$PHONE" ]; then
   if is_tty; then
     echo "  Which phone do you carry? (Not the computer: this Mac is already set.)"
@@ -159,18 +204,20 @@ PHONE_DOC=docs/IPHONE.md
 if [ "$PHONE" = android ]; then
   PHONE_DOC=docs/ANDROID.md
   MAPS_APP=google; GLASSES=false
-  ok "Android: Google Maps links, and Argus on the phone itself (texts, WhatsApp, notifications)"
+  ok "Android: Google Maps links, and Argus on the phone itself (texts, WhatsApp, notifications)${PHONE_NOTE:-}"
 else
   MAPS_APP=apple; GLASSES=true
-  ok "iPhone: Apple Maps, Siri Shortcuts, Meta glasses, calls from your number (optional)"
+  ok "iPhone: Apple Maps, Siri Shortcuts, Meta glasses, calls from your number (optional)${PHONE_NOTE:-}"
 fi
 # Which navigation apps are on the phone (Apple Maps, Google Maps, Waze): asked once, then kept in the settings.
-OLD_APPS=""; OLD_APP=""
+OLD_APPS=""; OLD_APP=""; SAVED_APPS=""
 if [ -f "$CONFIG" ] && [ "$OLD_PHONE" = "$PHONE" ]; then
   OLD_APP="$(toml_get "$CONFIG" maps app)"
   if grep -q '^apps[[:space:]]*=' "$CONFIG"; then OLD_APPS="$OLD_APP $(toml_get "$CONFIG" maps apps)"; fi
+  SAVED_APPS="$(printf '%s' "$OLD_APPS" | tr -d '[],')"
+  [ "$KEEP" = 1 ] || OLD_APPS=""    # reviewing: ask again, with the saved answers as the defaults
 fi
-choose_nav_apps "$PHONE" "${ARGUS_MAPS_APPS:-$OLD_APPS}" "$OLD_APP"
+choose_nav_apps "$PHONE" "${ARGUS_MAPS_APPS:-$OLD_APPS}" "$OLD_APP" "$SAVED_APPS"
 ok "Directions open in $(app_name "$MAPS_APP")${MAPS_APPS_TOML:+ (also offered: $(printf '%s' "$MAPS_APPS_TOML" | tr -d '"'))}"
 
 # =====================================================================
@@ -210,24 +257,40 @@ if [ "$CHANGE_KEYS" = 0 ]; then
   ANTHROPIC_KEY="${ANTHROPIC_KEY:-$(secret_get ANTHROPIC_API_KEY)}"
 fi
 [ -n "$ANTHROPIC_KEY" ] && ok "Claude API key: found (ending ...$(printf '%s' "$ANTHROPIC_KEY" | tail -c 4))"
+if [ -n "$ANTHROPIC_KEY" ] && [ "$KEEP" = 0 ] && [ -f "$CONFIG" ] && [ -z "${ARGUS_ANTHROPIC_API_KEY:-}" ] && is_tty; then
+  read -r -s -p "  New Claude API key (Enter keeps the saved one): " new_key; echo
+  [ -z "$new_key" ] || ANTHROPIC_KEY="$new_key"
+fi
 ask_secret ANTHROPIC_KEY "Claude API key (from platform.claude.com, starts with sk-ant-)"
 case "$ANTHROPIC_KEY" in sk-ant-*) ;; *) die "That doesn't look like a Claude API key (it should start with sk-ant-)." ;; esac
 
 default_name="$( { id -F 2>/dev/null || getent passwd "$ME" 2>/dev/null | cut -d: -f5 | cut -d, -f1; } | awk '{print $1}' || true)"
+SAVED_NAME=""; SAVED_CITY=""
+if [ -f "$CONFIG" ]; then SAVED_NAME="$(toml_get "$CONFIG" "" user_name)"; SAVED_CITY="$(toml_get "$CONFIG" "" city)"; fi
 NAME="${ARGUS_NAME:-}"
-ask NAME "What should Argus call you?" "${default_name:-$ME}"
+if [ -z "$NAME" ] && [ "$KEEP" = 1 ] && [ -n "$SAVED_NAME" ]; then NAME="$SAVED_NAME"; ok "Your name: $NAME (saved)"; fi
+ask NAME "What should Argus call you?" "${SAVED_NAME:-${default_name:-$ME}}"
 CITY="${ARGUS_CITY:-}"
-ask CITY "Your home city, used when your phone has not shared where you are (e.g. Portland, OR)" ""
+if [ -z "$CITY" ] && [ "$KEEP" = 1 ] && [ -n "$SAVED_CITY" ]; then CITY="$SAVED_CITY"; ok "Home city: $CITY (saved)"; fi
+ask CITY "Your home city, used when your phone has not shared where you are (e.g. Portland, OR)" "$SAVED_CITY"
 TZ_NAME="${ARGUS_TIMEZONE:-$(readlink /etc/localtime 2>/dev/null | sed 's#.*zoneinfo/##' || true)}"
 [ -n "$TZ_NAME" ] || TZ_NAME="UTC"
 ok "Time zone: $TZ_NAME"
 
 SITES="${ARGUS_BLOCKED_SITES-unset}"
+SITES_CHANGED=0
 if [ "$SITES" = unset ]; then
   SITES=""
   if is_tty && [ ! -f "$CONFIG" ]; then
     echo "  Argus will never open, read or type into websites you list here (your bank, payments, etc.)."
     read -r -p "  Sites to block, comma-separated (e.g. mybank.com, paypal.com) [none]: " SITES
+  elif is_tty && [ "$KEEP" = 0 ]; then
+    saved_sites="$(toml_get "$CONFIG" security blocked_sites | tr -d '[]')"
+    echo "  Argus never opens, reads or types into these websites (type none to clear the list)."
+    read -r -p "  Sites to block, comma-separated [${saved_sites:-none}]: " SITES
+    SITES="${SITES:-$saved_sites}"
+    [ "$(printf '%s' "$SITES" | tr '[:upper:]' '[:lower:]')" != none ] || SITES=""
+    SITES_CHANGED=1
   fi
 fi
 SITES_TOML="$(printf '%s' "$SITES" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//' -e 's#^https\{0,1\}://##' -e 's#/.*$##' \
@@ -237,10 +300,10 @@ SITES_TOML="$(printf '%s' "$SITES" | tr ',' '\n' | sed -e 's/^ *//' -e 's/ *$//'
 # Live traffic for directions: Apple Maps on this Mac is free (no key). A Google Maps key adds Google's traffic,
 # and is what an Android phone uses. Optional either way; the maps app always shows traffic itself.
 GOOGLE_KEY="${ARGUS_GOOGLE_MAPS_KEY:-}"
-if [ -z "$GOOGLE_KEY" ] && [ "$CHANGE_KEYS" = 0 ]; then GOOGLE_KEY="$(secret_get GOOGLE_MAPS_API_KEY)"; fi
-if [ -n "$GOOGLE_KEY" ]; then
-  ok "Google Maps key: found (ending ...$(printf '%s' "$GOOGLE_KEY" | tail -c 4))"
-elif is_tty; then
+GOOGLE_ASKED=0
+optional_key GOOGLE_KEY GOOGLE_MAPS_API_KEY google_key "Google Maps key"
+if [ "$KEY_ASK" = 1 ]; then
+  GOOGLE_ASKED=1
   if [ "$PHONE" = android ]; then
     echo "  Live traffic on Android comes from Google Maps: a free API key from console.cloud.google.com"
     echo "  (switch on the Routes API). Press Enter to skip; directions then open Google Maps without times."
@@ -343,20 +406,37 @@ step "6/10  Saving keys and settings"
 printf '%s' "$ANTHROPIC_KEY" | secret_set ANTHROPIC_API_KEY
 [ -z "$GOOGLE_KEY" ] || printf '%s' "$GOOGLE_KEY" | secret_set GOOGLE_MAPS_API_KEY
 [ -z "$TOMTOM_KEY" ] || printf '%s' "$TOMTOM_KEY" | secret_set TOMTOM_API_KEY
+answer_set claude_key saved
+if [ -n "$GOOGLE_KEY" ]; then answer_set google_key saved; elif [ "$GOOGLE_ASKED" = 1 ]; then answer_set google_key skipped; fi
+if [ -n "$TOMTOM_KEY" ]; then answer_set tomtom_key saved; elif [ "$TOMTOM_ASKED" = 1 ]; then answer_set tomtom_key skipped; fi
 printf '' | secret_set TELEGRAM_BOT_TOKEN        # Telegram was removed: drop any token an older setup saved
 ok "Keys saved to $SECRETS (owner-only)"
 PHONE_IP=""
 if PHONE_IP="$(find_tailscale_ip)"; then PHONE_ENABLED=true; else PHONE_ENABLED=false; fi
 BRIEF="${ARGUS_AI_BRIEFING:-}"
-if [ -z "$BRIEF" ] && [ ! -f "$CONFIG" ]; then
-  if confirm "Add an AI-written weekday briefing at 7:30 (weather + news; roughly \$1-3 a month)?" y; then BRIEF=yes; else BRIEF=no; fi
+BRIEF_ASKED=0
+if [ -z "$BRIEF" ] && { [ ! -f "$CONFIG" ] || [ "$KEEP" = 0 ]; }; then
+  brief_default=y
+  if [ -f "$CONFIG" ] && [ -z "$(toml_get "$CONFIG" schedule morning_briefing)" ]; then brief_default=n; fi
+  if confirm "Add an AI-written weekday briefing at 7:30 (weather + news; roughly \$1-3 a month)?" "$brief_default"; then
+    BRIEF=yes; else BRIEF=no; fi
+  BRIEF_ASKED=1
 fi
 BRIEF_CRON=""; [ "$BRIEF" = yes ] && BRIEF_CRON="30 7 * * 1-5"
 if [ "$DRY_RUN" = 1 ]; then
   printf '  [dry-run] write %s\n' "$CONFIG"
 elif [ -f "$CONFIG" ] && [ "${ARGUS_REWRITE_CONFIG:-0}" != 1 ]; then
   ok "Kept your settings in $CONFIG"
-  [ -z "$SITES_TOML" ] || warn "To change blocked sites, edit blocked_sites in $CONFIG, then: argusctl restart"
+  if [ "$SITES_CHANGED" = 1 ]; then
+    toml_set "$CONFIG" security blocked_sites "[$SITES_TOML]"
+  elif [ -n "$SITES_TOML" ]; then
+    warn "To change blocked sites, edit blocked_sites in $CONFIG, then: argusctl restart"
+  fi
+  [ "$BRIEF_ASKED" = 0 ] || toml_set "$CONFIG" schedule morning_briefing "\"$BRIEF_CRON\""
+  if [ "$KEEP" = 0 ] && [ -n "$SAVED_NAME$SAVED_CITY" ]; then
+    toml_set "$CONFIG" "" user_name "$(toml_str "$NAME")"
+    toml_set "$CONFIG" "" city "$(toml_str "$CITY")"
+  fi
   if [ "$OLD_PHONE" != "$PHONE" ]; then            # a different phone: switch the phone-specific settings
     toml_set "$CONFIG" phone type "\"$PHONE\""
     toml_set "$CONFIG" glasses enabled "$GLASSES"
@@ -505,9 +585,16 @@ else
     warn "Tailscale isn't connected, so the phone connection is off for now (see $PHONE_DOC)."
   fi
   want_awake="${ARGUS_STAY_AWAKE:-}"
-  if [ -z "$want_awake" ]; then
-    if confirm "Keep this Mac awake while it's plugged in, so Argus can always answer?" y; then want_awake=yes; else want_awake=no; fi
+  if [ -z "$want_awake" ] && [ "$KEEP" = 1 ]; then
+    want_awake="$(answer_get stay_awake)"
+    [ -z "$want_awake" ] || ok "Keep this Mac awake: $want_awake (saved)"
   fi
+  if [ -z "$want_awake" ]; then
+    awake_default=y; [ "$(answer_get stay_awake)" != no ] || awake_default=n
+    if confirm "Keep this Mac awake while it's plugged in, so Argus can always answer?" "$awake_default"; then
+      want_awake=yes; else want_awake=no; fi
+  fi
+  answer_set stay_awake "$want_awake"
   [ "$want_awake" = yes ] && run "$REPO_DIR/scripts/stay-awake.sh" on
 fi
 
