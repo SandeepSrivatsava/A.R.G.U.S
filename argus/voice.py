@@ -16,7 +16,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Callable, Deque, List, Optional, Tuple
+from typing import Dict, Callable, Deque, List, Optional, Tuple
 
 import numpy as np
 
@@ -155,7 +155,105 @@ class SayVoice(_ProcessVoice):
         return np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0, rate
 
 
-class PiperVoice(_ProcessVoice):
+class _NeuralVoice(_ProcessVoice):
+    """A voice made on the Mac (sherpa-onnx), played with afplay. While one sentence plays, the next one is
+    already being made (prepare), so there's no gap between sentences."""
+
+    def _init_playback(self, player: Optional[List[str]], tmp_dir: Optional[str]) -> None:
+        self.player = player or (["afplay"] if shutil.which("afplay") else ["aplay", "-q"])
+        self.tmp_dir = tmp_dir
+        self._ready: Dict[str, "threading.Thread"] = {}
+        self._made: Dict[str, Tuple[np.ndarray, int]] = {}
+        self._made_lock = threading.Lock()
+        self.upcoming: List[str] = []      # set by the Speaker: what comes after the sentence being spoken
+
+    def synthesize(self, text: str) -> Tuple[np.ndarray, int]:  # pragma: no cover - interface
+        raise NotImplementedError
+
+    def prepare(self, text: str) -> None:
+        """Start making `text` now, in the background."""
+        with self._made_lock:
+            if text in self._ready or text in self._made or len(self._made) > 8:
+                return
+
+            def make():
+                try:
+                    out = self.synthesize(text)
+                except Exception:          # speak() will try again and report it
+                    return
+                with self._made_lock:
+                    self._made[text] = out
+            thread = threading.Thread(target=make, name="argus-voice-prepare", daemon=True)
+            self._ready[text] = thread
+        thread.start()
+
+    def _sound_for(self, text: str) -> Tuple[np.ndarray, int]:
+        with self._made_lock:
+            thread = self._ready.pop(text, None)
+        if thread is not None:
+            thread.join(30)
+        with self._made_lock:
+            made = self._made.pop(text, None)
+        return made if made is not None else self.synthesize(text)
+
+    def stop(self) -> None:
+        with self._made_lock:
+            self._made.clear()
+            self._ready.clear()
+        super().stop()
+
+    def speak(self, text: str) -> None:
+        from .hearing import write_wav
+        samples, rate = self._sound_for(text)
+        for later in self.upcoming:        # this one is ready: make the next one while it plays
+            self.prepare(later)
+        if samples.size == 0 or self._stopped:
+            return
+        fd, path = tempfile.mkstemp(prefix="argus-say-", suffix=".wav", dir=self.tmp_dir)
+        os.close(fd)
+        try:
+            write_wav(path, samples, rate)
+            self._run(self.player + [path])
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
+# Kokoro's English voices (kokoro-en-v0_19), by speaker number. a = American, b = British; f/m = woman/man.
+KOKORO_VOICES = {"af": 0, "af_bella": 1, "af_nicole": 2, "af_sarah": 3, "af_sky": 4, "am_adam": 5,
+                 "am_michael": 6, "bf_emma": 7, "bf_isabella": 8, "bm_george": 9, "bm_lewis": 10}
+
+
+class KokoroVoice(_NeuralVoice):
+    """Kokoro (Apache-2.0): a natural, expressive voice made on the Mac, with American voices."""
+
+    def __init__(self, model_dir: str, voice: str = "am_michael", speed: float = 1.2,
+                 player: Optional[List[str]] = None, tmp_dir: Optional[str] = None, threads: int = 3):
+        super().__init__()
+        import sherpa_onnx as so
+        d = Path(model_dir).expanduser()
+        onnx = sorted(d.glob("model*.onnx"))
+        if not onnx or not (d / "voices.bin").exists():
+            raise FileNotFoundError(f"no Kokoro voice model in {d}")
+        if voice not in KOKORO_VOICES:
+            raise ValueError(f"unknown Kokoro voice {voice!r}; one of: {', '.join(KOKORO_VOICES)}")
+        cfg = so.OfflineTtsConfig(model=so.OfflineTtsModelConfig(
+            kokoro=so.OfflineTtsKokoroModelConfig(model=str(onnx[0]), voices=str(d / "voices.bin"),
+                                                  tokens=str(d / "tokens.txt"), data_dir=str(d / "espeak-ng-data")),
+            num_threads=threads), max_num_sentences=1)
+        self._tts = so.OfflineTts(cfg)
+        self.sid = KOKORO_VOICES[voice]
+        self.speed = speed
+        self._init_playback(player, tmp_dir)
+
+    def synthesize(self, text: str) -> Tuple[np.ndarray, int]:
+        audio = self._tts.generate(text, sid=self.sid, speed=self.speed)
+        return np.asarray(audio.samples, dtype=np.float32), int(audio.sample_rate)
+
+
+class PiperVoice(_NeuralVoice):
     """On-device neural voice (Piper model through sherpa-onnx), played with afplay."""
 
     def __init__(self, model_dir: str, speed: float = 1.0, player: Optional[List[str]] = None,
@@ -174,28 +272,11 @@ class PiperVoice(_ProcessVoice):
             num_threads=2), max_num_sentences=1)
         self._tts = so.OfflineTts(cfg)
         self.speed = speed
-        self.player = player or (["afplay"] if shutil.which("afplay") else ["aplay", "-q"])
-        self.tmp_dir = tmp_dir
+        self._init_playback(player, tmp_dir)
 
     def synthesize(self, text: str) -> Tuple[np.ndarray, int]:
         audio = self._tts.generate(text, sid=0, speed=self.speed)
         return np.asarray(audio.samples, dtype=np.float32), int(audio.sample_rate)
-
-    def speak(self, text: str) -> None:
-        from .hearing import write_wav
-        samples, rate = self.synthesize(text)
-        if samples.size == 0:
-            return
-        fd, path = tempfile.mkstemp(prefix="argus-say-", suffix=".wav", dir=self.tmp_dir)
-        os.close(fd)
-        try:
-            write_wav(path, samples, rate)
-            self._run(self.player + [path])
-        finally:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
 
 
 class RecordingVoice(Voice):
@@ -221,7 +302,14 @@ class RecordingVoice(Voice):
 
 
 def make_voice(engine: str, *, say_voice: str = "Daniel", rate: int = 190, piper_dir: str = "",
-               speed: float = 1.0, tmp_dir: Optional[str] = None) -> Voice:
+               speed: float = 1.0, tmp_dir: Optional[str] = None, kokoro_dir: str = "",
+               kokoro_voice: str = "am_michael") -> Voice:
+    if engine == "kokoro":
+        try:
+            return KokoroVoice(kokoro_dir, voice=kokoro_voice, speed=speed, tmp_dir=tmp_dir)
+        except Exception as exc:
+            log.warning("Kokoro voice unavailable (%s); using the Piper voice", exc)
+            engine = "piper"
     if engine == "piper":
         try:
             return PiperVoice(piper_dir, speed=speed, tmp_dir=tmp_dir)
@@ -298,6 +386,9 @@ class Speaker:
             try:
                 if hasattr(self.voice, "reset"):
                     self.voice.reset()
+                if hasattr(self.voice, "upcoming"):
+                    with self._lock:
+                        self.voice.upcoming = [t for g, t in list(self._queue.queue)[:1] if g == self._generation]
                 self.voice.speak(text)
             except Exception:
                 log.exception("speaking failed")

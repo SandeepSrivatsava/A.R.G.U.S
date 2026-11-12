@@ -563,8 +563,9 @@ def test_argus_stop_interrupts_while_speaking(tmp_path):
     argus.speaker._idle.clear()                              # Argus is talking
     cancelled = []
     argus.brain.cancel = lambda: cancelled.append(True)
+    argus._speech_since = time.monotonic() - 1               # talking for a second already
     argus._maybe_barge_in()
-    argus._maybe_barge_in()                                  # checked at most every 0.8 s
+    argus._maybe_barge_in()                                  # checked at most every 0.5 s
     argus.speaker._idle.set()
     assert cancelled == [True] and "barge_in" in (tmp_path / "audit.jsonl").read_text()
 

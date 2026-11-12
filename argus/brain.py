@@ -124,13 +124,17 @@ class Brain:
     def busy(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def ask(self, text: str, guest: bool = False, heard: Optional[Dict[str, float]] = None) -> None:
+    def ask(self, text: str, guest: bool = False, heard: Optional[Dict[str, float]] = None,
+            interrupted: bool = False) -> None:
         """Handle a request in the background (cancelling any request still running).
         guest=True: someone other than the owner, whom the owner allowed: no personal context, no Mac."""
         with self._lock:
             if self.busy:
                 self.cancel()                       # cancelling also cuts the old request's connection,
                 self._thread.join(timeout=3)        # so the old turn ends almost at once
+            if interrupted:
+                # Claude's saved answer is complete, but he only heard part of it before talking over it.
+                text = "(I interrupted you while you were answering.) " + text
             self._cancelled = flag = threading.Event()
             self._thread = threading.Thread(target=self._handle, args=(text, flag, guest, heard or {}),
                                             name="argus-brain", daemon=True)

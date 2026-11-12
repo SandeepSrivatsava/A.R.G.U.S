@@ -175,6 +175,9 @@ def test_setup_asks_which_phone_on_a_terminal(tmp_path, venv):
         os.write(master, b"\n")
         wait_for_text(b"FlightAware AeroAPI key")
         os.write(master, b"\n")
+        wait_for_text(b"Gemini API key")
+        assert b"aistudio.google.com/apikey" in seen
+        os.write(master, b"\n")
         wait_for_text(b"Let Argus search and read your mail? [y/N]")
         assert b"it can only search and read" in seen
         os.write(master, b"\n")
@@ -380,11 +383,13 @@ def test_setup_again_keeps_saved_answers_and_asks_only_new_ones(tmp_path, venv):
     env = mac_env(tmp_path, venv)
     first, code = talk(env, [("Type 1 or 2", "1"), ("Is Google Maps on your iPhone?", "y"), ("Is Waze on your phone?", "n"),
                              ("Google Maps API key", ""), ("TomTom API key", ""), ("FlightAware AeroAPI key", ""),
-                             ("search and read your mail? [y/N]", "y")])
+                             ("Gemini API key", ""), ("search and read your mail? [y/N]", "y")])
     assert code == 0 and "You've set up Argus on this Mac before" not in first
     answers = tmp_path / "home" / "setup-answers"
     assert answers.read_text().splitlines() == ["claude_key=saved", "google_key=skipped", "tomtom_key=skipped",
-                                                "flight_key=skipped", "mail=yes"]
+                                                "flight_key=skipped", "gemini_key=skipped", "mail=yes",
+                                                "voice_v2=kokoro"]
+    assert setting(tmp_path / "home" / "config.toml", "voice", "engine") == "kokoro"
     assert setting(tmp_path / "home" / "config.toml", "mail", "enabled") == "true"
     assert oct(answers.stat().st_mode & 0o777) == "0o600"
 
@@ -394,15 +399,16 @@ def test_setup_again_keeps_saved_answers_and_asks_only_new_ones(tmp_path, venv):
     for line in ("Phone:             iPhone", "Maps apps:         Apple Maps, Google Maps",
                  "Claude API key:    saved (ending ...test)", "Your name:         Sandeep", "Home city:         Portland, OR",
                  "Blocked sites:     none", "Google Maps key:   skipped", "TomTom key:        skipped",
-                 "FlightAware key:   skipped", "Read your mail:    yes",
+                 "FlightAware key:   skipped", "Gemini key:        skipped", "Read your mail:    yes",
                  "Weekday briefing:  off", "Keep Mac awake:    not asked yet (new question)"):
         assert line in summary, line
     for question in ("Type 1 or 2", "Is Google Maps on your iPhone?", "Is Waze on your phone?", "Google Maps API key (",
-                     "TomTom API key (", "FlightAware AeroAPI key (", "search and read your mail?"):
+                     "TomTom API key (", "FlightAware AeroAPI key (", "Gemini API key (", "search and read your mail?"):
         assert question not in again, question                   # all answered before: not asked again
     assert "iPhone: Apple Maps, Siri Shortcuts, Meta glasses, calls from your number (optional) (saved)" in again
     assert "Google Maps key: skipped before" in again and "TomTom key: skipped before" in again
     assert "FlightAware key: skipped before" in again and "Reading your mail: yes (saved)" in again
+    assert "New voice:" not in again                               # a new install already has it
 
     review = {k: v for k, v in env.items() if k not in ("ARGUS_NAME", "ARGUS_CITY", "ARGUS_BLOCKED_SITES",
                                                         "ARGUS_AI_BRIEFING", "ARGUS_ANTHROPIC_API_KEY")}
@@ -412,7 +418,7 @@ def test_setup_again_keeps_saved_answers_and_asks_only_new_ones(tmp_path, venv):
         ("New Claude API key (Enter keeps the saved one)", ""), ("What should Argus call you? [Sandeep]", ""),
         ("[Portland, OR]", "Fremont, CA"), ("Sites to block, comma-separated [none]", "mybank.com"),
         ("Google Maps API key", ""), ("TomTom API key", "tt-new-key-12345"),
-        ("FlightAware AeroAPI key", "fa-new-key-67890"), ("search and read your mail? [Y/n]", "n"),
+        ("FlightAware AeroAPI key", "fa-new-key-67890"), ("Gemini API key", "AIza-gemini-test-123"), ("search and read your mail? [Y/n]", "n"),
         ("weekday briefing at 7:30 (weather + news; roughly $1-3 a month)? [y/N]", "y")])
     assert code == 0 and "Each question now shows your saved answer" in changed
     cfg = tmp_path / "home" / "config.toml"
@@ -423,6 +429,7 @@ def test_setup_again_keeps_saved_answers_and_asks_only_new_ones(tmp_path, venv):
     assert "ANTHROPIC_API_KEY=sk-ant-test" in secrets and "TOMTOM_API_KEY=tt-new-key-12345" in secrets
     assert "tomtom_key=saved" in answers.read_text() and "google_key=skipped" in answers.read_text()
     assert "FLIGHTAWARE_API_KEY=fa-new-key-67890" in secrets and "flight_key=saved" in answers.read_text()
+    assert "GEMINI_API_KEY=AIza-gemini-test-123" in secrets and "gemini_key=saved" in answers.read_text()
     assert setting(cfg, "mail", "enabled") == "false" and "mail=no" in answers.read_text()
     assert cfg.read_text().count("city = ") == 1 and "\n[]\n" not in cfg.read_text()
     loaded = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
@@ -462,3 +469,20 @@ def test_the_package_install_builds_only_rumps_from_source():
         install = text[text.rindex("pip install", 0, second):second]
         for flag in ("--require-hashes", "--only-binary :all:", "--no-binary rumps", "--no-build-isolation"):
             assert flag in install, (script, flag)
+
+
+def test_an_older_install_gets_the_new_voice_once(tmp_path, venv):
+    env = mac_env(tmp_path, venv)
+    _, code = talk(env, [("Type 1 or 2", "1"), ("Is Google Maps on your iPhone?", "n"), ("Is Waze on your phone?", "n"),
+                         ("Google Maps API key", ""), ("TomTom API key", ""), ("FlightAware AeroAPI key", ""),
+                         ("Gemini API key", ""), ("search and read your mail? [y/N]", "n")])
+    assert code == 0
+    cfg, answers = tmp_path / "home" / "config.toml", tmp_path / "home" / "setup-answers"
+    cfg.write_text(cfg.read_text().replace('engine = "kokoro"', 'engine = "piper"').replace("speed = 1.2", "speed = 1.0"))
+    answers.write_text("".join(line + "\n" for line in answers.read_text().splitlines() if not line.startswith("voice_v2")))
+    again, code = talk(env, [("Keep these answers and only ask what's new?", "")])
+    assert code == 0 and "New voice: natural American (am_michael) at 1.2x" in again
+    assert setting(cfg, "voice", "engine") == "kokoro" and setting(cfg, "voice", "speed") == "1.2"
+    assert setting(cfg, "voice", "kokoro_voice") == "am_michael" and "voice_v2=kokoro" in answers.read_text()
+    third, code = talk(env, [("Keep these answers and only ask what's new?", "")])
+    assert code == 0 and "New voice:" not in third

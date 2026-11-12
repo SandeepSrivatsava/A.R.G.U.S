@@ -51,13 +51,13 @@ check "AI briefing scheduled for weekdays" grep -q 'morning_briefing = "30 7 \* 
 check "set up for an iPhone, with Apple Maps links" sh -c "grep -q '^type = \"iphone\"' '$C' && grep -q '^app = \"apple\"' '$C'"
 check "settings load cleanly" "$VENV/bin/python3" -I -c "from argus import config; s = config.load(); assert s.city == 'Portland, OR'"
 check "speech models installed with verified checksums" sh -c \
-  "test -f '$ARGUS_HOME/models/silero_vad.onnx' && test -f '$ARGUS_HOME/models/asr/tokens.txt' && test -d '$ARGUS_HOME/models/tts/espeak-ng-data' && test -f '$ARGUS_HOME/models/speaker.onnx.sha256'"
+  "test -f '$ARGUS_HOME/models/silero_vad.onnx' && test -f '$ARGUS_HOME/models/asr/tokens.txt' && test -d '$ARGUS_HOME/models/tts/espeak-ng-data' && test -f '$ARGUS_HOME/models/kokoro/voices.bin' && test -f '$ARGUS_HOME/models/speaker.onnx.sha256'"
 check "Argus runs from this folder" sh -c "'$VENV/bin/python3' -I -c 'import argus, sys; sys.exit(not argus.__file__.startswith(\"$REPO\"))'"
 check "argusctl installed" test -x "$WORK/bin/argusctl"
 
 echo "== 2. setup.sh again (must be safe to re-run)"
 run_setup > "$WORK/setup2.log" 2>&1 || { cat "$WORK/setup2.log"; echo "FAIL  second setup.sh run exited non-zero"; exit 1; }
-check "models not downloaded twice" test "$(grep -c 'model already in place' "$WORK/setup2.log")" = 4
+check "models not downloaded twice" test "$(grep -c 'model already in place' "$WORK/setup2.log")" = 5
 check "settings kept" grep -q 'Kept your settings' "$WORK/setup2.log"
 check "no duplicate keys" test "$(grep -c '^ANTHROPIC_API_KEY=' "$S")" = 1
 

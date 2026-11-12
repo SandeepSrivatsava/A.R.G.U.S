@@ -320,4 +320,5 @@ def model_paths(models_dir: str) -> Dict[str, str]:
         "asr": str(d / "asr"),
         "speaker": str(d / "speaker.onnx"),
         "tts": str(d / "tts"),
+        "kokoro": str(d / "kokoro"),
     }

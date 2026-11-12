@@ -16,7 +16,7 @@ from .micwatch import friendly
 from .listener import ACK, ASK, COMMAND, IGNORE, Listener
 from .voice import Speaker
 from .approvals import close_word
-from .wake import Command, command_of, looks_like_echo
+from .wake import Command, command_of, is_hallucination, looks_like_echo, words
 
 log = logging.getLogger("argus.daemon")
 
@@ -37,7 +37,7 @@ class Argus:
     def __init__(self, *, source, segmenter: Segmenter, transcriber: Transcriber, listener: Listener,
                  speaker: Speaker, brain: Brain, audit: Audit, voiceprint: Optional[VoicePrint] = None,
                  voice_lock: bool = False, greeting: str = "", min_utterance_seconds: float = 0.35,
-                 barge_in_interval: float = 0.8, on_change: Callable[[], None] = lambda: None, clap=None,
+                 barge_in_interval: float = 0.5, barge_in: str = "voice", on_change: Callable[[], None] = lambda: None, clap=None,
                  gate=None, voice_approval_threshold: float = 0.55, guests: str = "ask", guest_minutes: float = 60.0,
                  owner_name: str = "", clock: Callable[[], float] = time.monotonic, calls=None,
                  notify: Callable[[str], None] = lambda text: None):
@@ -53,6 +53,9 @@ class Argus:
         self.greeting = greeting
         self.min_samples = int(min_utterance_seconds * SAMPLE_RATE)
         self.barge_in_interval = barge_in_interval
+        self.barge_in = barge_in        # "voice": talking over Argus stops it; "name": only "Argus, stop"
+        self._speech_since: Optional[float] = None
+        self._barged_at = -1e9
         self.on_change = on_change
         self.clap = clap                # ClapDetector: a double clap wakes Argus / starts listening
         self.mic_wanted = True          # the user's choice (menu / voice / argusctl)
@@ -232,21 +235,50 @@ class Argus:
             threading.Thread(target=self._ack_done, daemon=True).start()
         self.on_change()
 
+    BARGE_MIN_SECONDS = 0.4       # this much of your voice before Argus stops (a cough or "mm" doesn't count)
+    BARGE_WINDOW = 12.0           # after stopping, what you say next needs no name
+
     def _maybe_barge_in(self) -> None:
-        """While Argus is talking, listen for "Argus, stop" without waiting for the sentence to end."""
+        """While Argus is talking, you can talk over it, like with a person: it stops at once and listens.
+
+        Its own voice from the speakers reaches the microphone too, so it only stops for you: with an enrolled
+        voice (argusctl enroll), when the voice matches yours; without one, when the words aren't the ones Argus
+        is saying. "Argus, stop" always works."""
         if not self.speaker.speaking or not self.segmenter.speech_active:
+            self._speech_since = None
             return
         now = time.monotonic()
+        if self._speech_since is None:
+            self._speech_since = now
+        talking = now - self._speech_since
+        if talking < (self.BARGE_MIN_SECONDS if self.barge_in == "voice" else 0.0):
+            return
         if now - self._last_barge_check < self.barge_in_interval:
             return
         self._last_barge_check = now
-        audio = self.segmenter.recent_audio()[-int(2.5 * SAMPLE_RATE):]
+        audio = self.segmenter.recent_audio()[-int(min(talking + 0.3, 2.5) * SAMPLE_RATE):]
+        if self.barge_in == "voice" and self.voice_lock_active:
+            score = self.voiceprint.score(audio)
+            if score >= self.voiceprint.threshold:
+                return self._barge(now, "your voice", score=round(score, 3))
+            return                                  # Argus's own voice (or someone else): keep talking
         text = self.transcriber.transcribe(audio)
         heard = self.listener.matcher.hear(text)
         if heard.addressed and (not heard.rest or command_of(heard.rest) is Command.STOP):
-            self.audit.log("barge_in")
-            self.brain.cancel()
-            self.listener.reply_finished()
+            return self._barge(now, "Argus, stop", stopped=True)
+        if (self.barge_in == "voice" and len(words(text)) >= 2 and not is_hallucination(text)
+                and not looks_like_echo(text, self.speaker.recently_spoken(), threshold=0.5)):
+            self._barge(now, "new words")
+
+    def _barge(self, now: float, why: str, stopped: bool = False, **details) -> None:
+        self.audit.log("barge_in", why=why, **details)
+        self.brain.cancel()                          # stops the voice and the rest of the answer at once
+        self.listener.reply_finished()               # what you're saying now doesn't need the name
+        self._barged_at = -1e9 if stopped else now
+        self.on_change()
+
+    def _barged_recently(self) -> bool:
+        return time.monotonic() - self._barged_at < self.BARGE_WINDOW
 
     def handle_utterance(self, samples: np.ndarray) -> None:
         if samples.size < self.min_samples or not self.mic_wanted or self.closed:
@@ -281,8 +313,9 @@ class Argus:
                 return
             if self._guest_pending() and self._guest_answer(text):
                 return
-        speaking = self.speaker.speaking or self.speaker.quiet_for() < 0.8   # don't answer our own voice
-        decision = self.listener.decide(text, busy=self.brain.busy, speaking=speaking)
+        barged = self._barged_recently()
+        speaking = (self.speaker.speaking or self.speaker.quiet_for() < 0.8) and not barged  # not our own voice
+        decision = self.listener.decide(text, busy=self.brain.busy and not barged, speaking=speaking)
         if decision.kind == IGNORE:
             self.ignored += 1
             return
@@ -296,7 +329,9 @@ class Argus:
         elif decision.kind == ASK:
             if decision.interrupt:
                 self.brain.cancel()
-            self.brain.ask(text, heard=getattr(self, "_heard", None))
+            if barged:
+                self._barged_at = -1e9
+            self.brain.ask(text, heard=getattr(self, "_heard", None), interrupted=barged)
         self.on_change()
 
     # ---- spoken approvals ----------------------------------------------------------------------------

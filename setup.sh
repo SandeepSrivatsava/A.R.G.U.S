@@ -41,6 +41,7 @@ MODELS="
 asr-models/silero_vad.onnx 9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6 silero_vad.onnx
 asr-models/sherpa-onnx-moonshine-base-en-int8.tar.bz2 21870cecaa2e44e4e2bf63e02d1072bed183ccd10284871353bd9d24dad14e5e asr
 tts-models/vits-piper-en_GB-alan-medium.tar.bz2 a48d4017da0f77668b27bed63fe6e04dd64c6397e1fadad4f460efb0ef7c9012 tts
+tts-models/kokoro-int8-en-v0_19.tar.bz2 c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd kokoro
 speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012 speaker.onnx
 "
 
@@ -159,6 +160,7 @@ show_saved_answers() {
   saved_line "Google Maps key:" "$(saved_key GOOGLE_MAPS_API_KEY google_key)"
   saved_line "TomTom key:" "$(saved_key TOMTOM_API_KEY tomtom_key)"
   saved_line "FlightAware key:" "$(saved_key FLIGHTAWARE_API_KEY flight_key)"
+  saved_line "Gemini key:" "$(saved_key GEMINI_API_KEY gemini_key)"
   saved_line "Read your mail:" "$(m="$(answer_get mail)"; echo "${m:-not asked yet (new question)}")"
   saved_line "Weekday briefing:" "$(if [ -n "$brief" ]; then echo on; else echo off; fi)"
   saved_line "Keep Mac awake:" "${awake:-not asked yet (new question)}"
@@ -332,6 +334,18 @@ if [ "$KEY_ASK" = 1 ]; then
   FLIGHT_ASKED=1
 fi
 
+# Google search and a second AI opinion (optional, free): a Gemini API key.
+GEMINI_KEY="${ARGUS_GEMINI_KEY:-}"
+GEMINI_ASKED=0
+optional_key GEMINI_KEY GEMINI_API_KEY gemini_key "Gemini key"
+if [ "$KEY_ASK" = 1 ]; then
+  echo "  A free Gemini key lets Argus search Google itself and ask Gemini for a second opinion, next to Claude."
+  echo "  Get one at aistudio.google.com/apikey (Create API key; no card). Only the search words are sent."
+  echo "  Press Enter to skip."
+  ask_secret GEMINI_KEY "Gemini API key (Enter to skip)" optional
+  GEMINI_ASKED=1
+fi
+
 # Your mail, read-only (optional, Mac only): for "find my flight booking" and the like.
 MAIL="${ARGUS_MAIL:-}"
 if [ -z "$MAIL" ]; then
@@ -448,10 +462,12 @@ printf '%s' "$ANTHROPIC_KEY" | secret_set ANTHROPIC_API_KEY
 [ -z "$GOOGLE_KEY" ] || printf '%s' "$GOOGLE_KEY" | secret_set GOOGLE_MAPS_API_KEY
 [ -z "$TOMTOM_KEY" ] || printf '%s' "$TOMTOM_KEY" | secret_set TOMTOM_API_KEY
 [ -z "$FLIGHT_KEY" ] || printf '%s' "$FLIGHT_KEY" | secret_set FLIGHTAWARE_API_KEY
+[ -z "$GEMINI_KEY" ] || printf '%s' "$GEMINI_KEY" | secret_set GEMINI_API_KEY
 answer_set claude_key saved
 if [ -n "$GOOGLE_KEY" ]; then answer_set google_key saved; elif [ "$GOOGLE_ASKED" = 1 ]; then answer_set google_key skipped; fi
 if [ -n "$TOMTOM_KEY" ]; then answer_set tomtom_key saved; elif [ "$TOMTOM_ASKED" = 1 ]; then answer_set tomtom_key skipped; fi
 if [ -n "$FLIGHT_KEY" ]; then answer_set flight_key saved; elif [ "$FLIGHT_ASKED" = 1 ]; then answer_set flight_key skipped; fi
+if [ -n "$GEMINI_KEY" ]; then answer_set gemini_key saved; elif [ "$GEMINI_ASKED" = 1 ]; then answer_set gemini_key skipped; fi
 answer_set mail "$MAIL"
 printf '' | secret_set TELEGRAM_BOT_TOKEN        # Telegram was removed: drop any token an older setup saved
 ok "Keys saved to $SECRETS (owner-only)"
@@ -478,6 +494,12 @@ elif [ -f "$CONFIG" ] && [ "${ARGUS_REWRITE_CONFIG:-0}" != 1 ]; then
   fi
   [ "$BRIEF_ASKED" = 0 ] || toml_set "$CONFIG" schedule morning_briefing "\"$BRIEF_CRON\""
   toml_set "$CONFIG" mail enabled "$MAIL_TOML"
+  if [ -z "$(answer_get voice_v2)" ]; then            # once: the new American voice, a little faster
+    toml_set "$CONFIG" voice engine '"kokoro"'
+    toml_set "$CONFIG" voice kokoro_voice '"am_michael"'
+    toml_set "$CONFIG" voice speed 1.2
+    ok "New voice: natural American (am_michael) at 1.2x. Change kokoro_voice / speed under [voice] in $CONFIG"
+  fi
   if [ "$KEEP" = 0 ] && [ -n "$SAVED_NAME$SAVED_CITY" ]; then
     toml_set "$CONFIG" "" user_name "$(toml_str "$NAME")"
     toml_set "$CONFIG" "" city "$(toml_str "$CITY")"
@@ -522,10 +544,11 @@ guest_minutes = 60              # how long "Argus, talk to everyone" lasts
 mic_device = ""                 # "" = the Mac's current microphone
 
 [voice]
-engine = "piper"                # "piper" = on-device neural voice, "say" = built-in macOS voices
+engine = "kokoro"               # "kokoro" = natural American voice, "piper" = simpler and faster, "say" = macOS
+kokoro_voice = "am_michael"     # am_michael, am_adam (men); af_bella, af_sarah, af_nicole, af_sky (women)
 say_voice = "Daniel"
 rate = 190
-speed = 1.0
+speed = 1.2                     # 1.0 = Kokoro's own pace
 greeting = "Online and listening."
 
 [security]
@@ -575,6 +598,7 @@ EOF
   umask 022
   ok "Settings written to $CONFIG"
 fi
+[ "$DRY_RUN" = 1 ] || answer_set voice_v2 kokoro
 run mkdir -p "$WORKSPACE"
 
 # =====================================================================

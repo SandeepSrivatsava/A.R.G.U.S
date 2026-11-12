@@ -13,11 +13,22 @@ from .store import Store
 log = logging.getLogger("argus.scheduler")
 
 HEADLINES_JOB = "Morning headlines"
-BRIEFING_JOB = ("Morning briefing: today's weather (the weather tool, for 'here'), the 5 most important headlines (use get_news), "
-                "and anything I asked you to remind me about today. Under 150 words, friendly, no preamble.")
+BRIEFING_JOB = ("Morning briefing: today's weather (the weather tool, for 'here'); if you have the calendar tool, today's "
+                "events and anything to leave early for; if you have mail_search, anything important that arrived since "
+                "yesterday evening (bookings, replies from people, deliveries; skip newsletters and ads); the 3 most "
+                "important headlines (get_news); and anything I asked you to remind me about today. Look things up "
+                "together. Under 150 words, like a friend catching me up, no preamble.")
+RETIRED_BRIEFINGS = ("Morning briefing: today's weather (the weather tool, for 'here'), the 5 most important headlines "
+                     "(use get_news), and anything I asked you to remind me about today. Under 150 words, friendly, no "
+                     "preamble.",)
 
 
 def sync_default_jobs(store: Store, headlines_cron: str, briefing_cron: str, tz: Optional[str]) -> None:
+    for old in RETIRED_BRIEFINGS:                     # the briefing's wording changed: replace the old job
+        retired = store.task_named(old)
+        if retired is not None:
+            store.cancel_task(retired)
+            store.set("default_job:task", "")
     for text, mode, cron in ((HEADLINES_JOB, "news", headlines_cron), (BRIEFING_JOB, "task", briefing_cron)):
         existing = store.task_named(text)
         key = f"default_job:{mode}"

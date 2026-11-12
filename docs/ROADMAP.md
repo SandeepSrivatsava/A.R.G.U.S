@@ -3,7 +3,7 @@
 Where Argus stands, what would make phase 1 solid, and what phase 2 could add. Nothing here is promised;
 it's the order that looks most useful.
 
-## Phase 1: what exists (version 2.7)
+## Phase 1: what exists (version 2.8)
 
 Argus on the Mac (always listening, speaks, uses the screen with approvals), reachable from an iPhone
 through a Siri Shortcut and from Meta glasses; Argus on an Android phone; an always-on server for when the
@@ -84,3 +84,15 @@ In rough order of value:
     approvals (Windows Hello instead of Touch ID) and the maps helper would need Windows versions.
 12. **Works offline.** A small local model for simple commands when the internet is down. Needs a Mac with
     more memory than 8 GB.
+
+## Ideas from the projects in the reels (Nov 2026)
+
+* **adewaskar/jarvis (MIT):** talking over the assistant (done in 2.8). Next: an on-screen "HUD" that shows
+  what Argus found (places with ratings, a route, a chart) while it talks, and a quick audio self-test.
+* **OpenJarvis (Stanford, Apache-2.0):** a spoken morning digest from mail, calendar and news (done in 2.8);
+  a catalog of skills Argus can look up; tuning from its own history, on the Mac.
+* **Honcho:** learning what you like from conversations (2.8 saves preferences that come up while choosing).
+* **hectorg2211/jarvis:** a double-clap "welcome" routine (music, apps, briefing), as an option.
+* **founder-skill (MIT, Claude Code skills):** testing a business idea (board, competitors, buyer panel,
+  pricing, unit economics). It runs in Claude Code today; for Argus, as a long project in phase 2.
+* **everything-claude-code:** tools for coding inside Claude Code; nothing for Argus itself.

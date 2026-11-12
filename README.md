@@ -113,6 +113,27 @@ The full list is in [SECURITY.md](SECURITY.md). The short version:
   input, never appear on a command line, and are removed from the environment of commands Argus runs.
   Your Claude Pro subscription is never used; Argus uses its own pay-per-use API key.
 
+## Talking with Argus
+
+* **Talk over it, like with a person.** While Argus is speaking, just start talking: it stops at once and
+  listens, and what you say needs no "Argus". It knows your voice from Argus's own coming out of the
+  speakers by your voiceprint (`argusctl enroll`), so enroll for the best results; without it, Argus checks
+  that the words aren't its own. `barge_in = "name"` under `[listening]` goes back to "Argus, stop" only.
+* **A back-and-forth, not a lecture.** Tell it "I'm going to New York next month" and it reacts, asks what
+  kind of trip it is, then offers two or three ideas and narrows down from your answer. It remembers what
+  you like (budget, food, how you travel), so next time it asks less.
+* **A natural American voice**, made on the Mac by Kokoro (an open, Apache-2.0 voice model), at 1.2× speed.
+  `argusctl voices` plays them all; set `kokoro_voice` and `speed` under `[voice]` (men: am_michael,
+  am_adam; women: af_bella, af_sarah, af_nicole, af_sky). While one sentence plays, the next is being made.
+  If your Mac struggles, `engine = "piper"` is lighter.
+* **Google next to Claude.** Restaurant reviews and ratings from Google Maps, Google's own search results
+  (through Gemini, free) and second opinions from other AI models, looked up at the same time and combined
+  into one answer: [docs/GOOGLE_SEARCH.md](docs/GOOGLE_SEARCH.md).
+
+Why Python and not Go: `python scripts/bench_turn.py` measures Argus's own work for a whole spoken turn at
+about 5 ms; a real turn takes 2 to 5 seconds, almost all of it the network, Claude and the voice models
+(which are C++ either way). Go would save under 1% of the wait.
+
 ## The right model for each request
 
 Argus picks the Claude model by what you ask, on the Mac, before anything is sent (so it costs no time):
@@ -406,6 +427,7 @@ lessons are kept either way. `./setup.sh --change-keys` asks for the keys again.
 ```bash
 argusctl status            # what Argus is doing
 argusctl log               # recent activity (requests, tools, approvals, blocks)
+argusctl voices [name]      # hear the American voices, to pick one
 argusctl google connect     # Gmail, Drive, Calendar, read-only (docs/GOOGLE.md); also: status, disconnect
 argusctl errors [--watch]  # recent problems in plain words (or live)
 argusctl report            # a problem report on your Desktop that is safe to share
@@ -469,7 +491,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **843 automated tests**: Gmail, Drive and Calendar against a stand-in Google (read-only sign-in with PKCE, forged sign-in answers refused, codes and password files left out, access tokens never reaching Claude), lookups running at the same time; picking the model for a request and handing it up, mail search with a stand-in Mail app (codes and blocked senders left out, scripts that can only read), a flight's two-week history against a stand-in FlightAware, `argusctl errors` and the report (nothing private in it); starting at login when macOS is slow to stop the old Argus, a conversation Claude refuses being replaced and the question asked again;: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **861 automated tests**: talking over Argus (your voice vs its own echo), the Kokoro voice making the next sentence while speaking, Google reviews, Google search through Gemini and the council against stand-ins, the one-time voice switch for older installs; Gmail, Drive and Calendar against a stand-in Google (read-only sign-in with PKCE, forged sign-in answers refused, codes and password files left out, access tokens never reaching Claude), lookups running at the same time; picking the model for a request and handing it up, mail search with a stand-in Mail app (codes and blocked senders left out, scripts that can only read), a flight's two-week history against a stand-in FlightAware, `argusctl errors` and the report (nothing private in it); starting at login when macOS is slow to stop the old Argus, a conversation Claude refuses being replaced and the question asked again;: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed

@@ -308,3 +308,16 @@ and your home folder's name (`argus/diagnose.py`). The file is readable only by 
 Only tools that look things up, and only when the rules allow them without asking, run at the same time
 (`PARALLEL_SAFE` in `argus/agent.py`). Anything that needs your OK, and anything on the screen, still runs
 one step at a time, in order.
+
+## 22. Google search, reviews and other AI models
+
+| Protection | Where |
+|---|---|
+| Only the search words or the question go to Google Maps, Gemini or a council member: never memory, mail, files or the conversation (each tool's description tells Claude to send nothing personal). On Gemini's free tier, Google may use what's sent to improve its products. | `argus/search.py`, `argus/council.py` |
+| Reviews, pages and other models' answers are labelled as information, never instructions; Claude stays the one that decides and answers. | `argus/search.py`, `argus/council.py` |
+| Keys live in secrets.env and are removed from error messages. Council members must use https. | `argus/search.py`, `argus/council.py`, `argus/config.py` |
+
+## 23. Talking over Argus
+
+Stopping when you talk uses the same on-device voice check as the voice lock: nothing extra is recorded or
+sent. While Argus speaks, the microphone audio is checked for your voice and then thrown away, as before.

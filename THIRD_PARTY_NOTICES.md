@@ -109,3 +109,9 @@ Nothing here is included in this repository; Argus only runs these programs.
 
 Flight history, with your own key: **FlightAware AeroAPI** (flightaware.com/aeroapi), under FlightAware's terms.
 Mail is read through Apple's Mail app on your Mac; nothing of Apple's is included in Argus.
+
+The voice: **Kokoro-82M** (hexgrad, Apache-2.0), the sherpa-onnx int8 export `kokoro-int8-en-v0_19`, downloaded by
+setup and checked against its SHA-256.
+
+Talking over the assistant was also a feature of adewaskar/jarvis (MIT); Argus's version is its own code.
+Google Maps Places API (New) and the Gemini API are used with your own keys, under Google's terms.

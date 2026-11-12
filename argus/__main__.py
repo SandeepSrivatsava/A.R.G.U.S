@@ -281,6 +281,32 @@ def describe_timing(entry: dict, end_of_speech: float = 0.6) -> str:
     return f"{when}  first word {total:.1f} s after you stopped talking: " + "; ".join(bits)
 
 
+VOICE_SAMPLE = "Hey! I found three great ramen spots near you. Want the closest one, or the best rated?"
+
+
+def cmd_voices(args, *, make=None) -> int:
+    """Play the American voices one after another (or one by name), to pick one for [voice] kokoro_voice."""
+    from .hearing import model_paths
+    from .voice import KOKORO_VOICES, KokoroVoice
+    settings = config_mod.load()
+    make = make or (lambda name, speed: KokoroVoice(model_paths(str(settings.models_dir))["kokoro"], voice=name,
+                                                     speed=speed))
+    names = [args.name] if args.name else [n for n in KOKORO_VOICES if n.startswith("a")]   # American
+    for name in names:
+        if name not in KOKORO_VOICES:
+            print(f"Unknown voice {name}. Choose from: {', '.join(KOKORO_VOICES)}")
+            return 1
+        print(f"{name}{'  (yours now)' if name == settings.kokoro_voice else ''}", flush=True)
+        try:
+            make(name, args.speed or settings.speed).speak(VOICE_SAMPLE)
+        except Exception as exc:
+            print(f"Couldn't play it: {exc}. Run ./setup.sh to download the voice.")
+            return 1
+    print(f'To switch: set kokoro_voice = "<name>" (and speed) under [voice] in {settings.home / "config.toml"}, '
+          "then argusctl restart")
+    return 0
+
+
 def cmd_timing(args) -> int:
     from .audit import Audit
     settings = config_mod.load()
@@ -504,6 +530,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--show", action="store_true", help="print it instead of writing a file")
     s = sub.add_parser("google", help="connect your Google account, read-only (Gmail, Drive, Calendar)")
     s.add_argument("action", nargs="?", choices=["connect", "status", "disconnect"], default="status")
+    s = sub.add_parser("voices", help="hear the American voices, to pick one")
+    s.add_argument("name", nargs="?")
+    s.add_argument("--speed", type=float, default=None)
     s = sub.add_parser("timing", help="how long recent spoken answers took, step by step")
     s.add_argument("n", nargs="?", type=int, default=10)
     s = sub.add_parser("enroll", help="teach Argus your voice (voice lock) and how you say its name")
@@ -563,6 +592,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_log(args)
     if args.cmd == "timing":
         return cmd_timing(args)
+    if args.cmd == "voices":
+        return cmd_voices(args)
     if args.cmd == "google":
         return cmd_google(args)
     if args.cmd == "errors":

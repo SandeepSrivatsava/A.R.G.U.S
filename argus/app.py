@@ -26,6 +26,8 @@ from .listener import Listener
 from .llm import Claude
 from . import flights as flights_mod
 from . import google as google_mod
+from . import council as council_mod
+from . import search as search_mod
 from . import mail as mail_mod
 from . import weather as weather_mod
 from .maps import Router, phone_links, route_tool
@@ -93,6 +95,12 @@ class App:
         tools["route"] = route_tool(self.router)
         self.weather, self.recent = weather_mod.attach(settings, self.router, tools)
         self.flights = flights_mod.attach(secrets, tools)                    # needs a FlightAware key
+
+        def phone_here():
+            place = self.recent.get(weather_mod.RECENT_FOR_WEATHER) if self.recent else None
+            return (place["lat"], place["lon"]) if place else None
+        self.search = search_mod.attach(settings, secrets, tools, where=phone_here)   # Google reviews, Google search
+        self.council = council_mod.attach(settings, secrets, tools)          # second opinions from other AIs
         self.mail = mail_mod.attach(settings, tools) if IS_MAC else None     # read-only; off until switched on
         self.push = push_from(settings, secrets, self.audit)    # reminders reach the phone while you're away
         self.agent = Agent(self.llm, self.store, self.policy, tools,
@@ -134,7 +142,8 @@ class App:
         s = self.settings
         paths = model_paths(s.models_dir)
         speaker = Speaker(speaker_voice or make_voice(s.voice_engine, say_voice=s.say_voice, rate=s.rate,
-                                                      piper_dir=paths["tts"], speed=s.speed, tmp_dir=str(s.run_dir)))
+                                                      piper_dir=paths["tts"], speed=s.speed, tmp_dir=str(s.run_dir),
+                                                      kokoro_dir=paths["kokoro"], kokoro_voice=s.kokoro_voice))
         listener = Listener(name_matcher(s), followup_seconds=s.followup_seconds,
                             conversation_idle_seconds=s.conversation_idle_seconds)
         gate = VoiceGate()
@@ -154,7 +163,7 @@ class App:
                      transcriber=transcriber, listener=listener, speaker=speaker,
                      brain=brain, audit=self.audit, voiceprint=voiceprint, voice_lock=s.voice_lock,
                      greeting=s.greeting, clap=ClapDetector(s.clap) if s.clap != "off" else None,
-                     gate=gate, voice_approval_threshold=s.voice_approval_threshold, guests=s.guests,
+                     gate=gate, voice_approval_threshold=s.voice_approval_threshold, guests=s.guests, barge_in=s.barge_in,
                      guest_minutes=s.guest_minutes, owner_name=s.user_name, calls=calls, notify=notify)
 
     def _build_calls(self, transcriber, speaker, paths, line_factory=None):

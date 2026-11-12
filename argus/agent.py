@@ -50,7 +50,7 @@ READ_ONLY_SCREEN = ("screenshot", "zoom", "cursor_position", "wait")
 # Chicago", "search mail and the calendar"), they run at the same time instead of one after another.
 PARALLEL_SAFE = frozenset({"weather", "route", "get_news", "fetch_page", "recall", "read_file", "list_files",
                            "search_files", "mail_search", "mail_read", "drive_search", "drive_read", "calendar",
-                           "flight_history"})
+                           "flight_history", "place_search", "google_search", "ask_council"})
 MAX_PARALLEL = 6
 SCREEN_MEMBERS = ("screenshot", "zoom", "left_click", "right_click", "middle_click", "double_click", "triple_click",
                   "left_click_drag", "mouse_move", "left_mouse_down", "left_mouse_up", "cursor_position", "scroll",

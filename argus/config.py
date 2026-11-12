@@ -45,6 +45,9 @@ class Settings:
     light_model: str = "claude-haiku-5-5"   # everyday questions ("" = use `model`)
     heavy_model: str = "claude-opus-5-5"    # coding, analysis, long writing ("" = use `model`)
     heavy_effort: str = "high"
+    gemini_model: str = "gemini-2.5-flash"   # google_search (free tier includes Google Search grounding)
+    # More brains for ask_council: "Name | https://.../chat/completions | model | KEY_NAME_IN_SECRETS"
+    council: List[str] = field(default_factory=list)
     web_search: bool = True
     session_idle_minutes: float = 30.0
     max_steps: int = 30
@@ -65,15 +68,17 @@ class Settings:
     guest_minutes: float = 60.0    # "talk to everyone" lasts this long
     mic_device: str = ""
     vad_threshold: float = 0.5
+    barge_in: str = "voice"        # "voice": talk over Argus to stop it; "name": only "Argus, stop" does
     pause_during_calls: bool = True      # stop listening while another app uses a microphone (a call at the Mac)
     ignore_mic_apps: List[str] = field(default_factory=list)   # apps that don't count as a call (names or IDs)
     end_of_speech_seconds: float = 0.6   # how long a pause ends a sentence (shorter = snappier)
     clap: str = "double"            # "double", "single" or "off": clapping wakes Argus up
     # voice
-    voice_engine: str = "piper"
+    voice_engine: str = "kokoro"
     say_voice: str = "Daniel"
     rate: int = 190
-    speed: float = 1.0
+    speed: float = 1.2
+    kokoro_voice: str = "am_michael"   # American man; also am_adam, af_bella, af_sarah, af_nicole, af_sky...
     greeting: str = "Online and listening."
     # security
     approval_needs_touch_id: bool = True
@@ -201,15 +206,16 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _TOP = ("name", "user_name", "city", "timezone")
 _SECTIONS: Dict[str, Dict[str, str]] = {
     "brain": {"model": "model", "small_model": "small_model", "voice_effort": "voice_effort", "effort": "effort", "routing": "routing",
-              "light_model": "light_model", "heavy_model": "heavy_model", "heavy_effort": "heavy_effort", "web_search": "web_search",
+              "light_model": "light_model", "heavy_model": "heavy_model", "heavy_effort": "heavy_effort", "gemini_model": "gemini_model", "web_search": "web_search",
               "session_idle_minutes": "session_idle_minutes", "max_steps": "max_steps",
               "max_turn_tokens": "max_turn_tokens", "context_tokens": "context_tokens", "self_learning": "self_learning",
               "history_messages": "history_messages", "workspace": "workspace_dir", "api_base": "api_base"},
     "listening": {k: k for k in ("followup_seconds", "conversation_idle_seconds", "extra_variants", "soft_variants",
                                  "voice_lock", "voice_lock_threshold", "mic_device", "vad_threshold", "clap",
                                  "end_of_speech_seconds", "guests", "guest_minutes",
-                                 "pause_during_calls", "ignore_mic_apps")},
-    "voice": {"engine": "voice_engine", "say_voice": "say_voice", "rate": "rate", "speed": "speed", "greeting": "greeting"},
+                                 "pause_during_calls", "ignore_mic_apps", "barge_in")},
+    "voice": {"engine": "voice_engine", "say_voice": "say_voice", "rate": "rate", "speed": "speed", "greeting": "greeting",
+              "kokoro_voice": "kokoro_voice"},
     "security": {k: k for k in ("approval_needs_touch_id", "pause_when_locked", "screen_control",
                                 "blocked_apps", "blocked_sites", "voice_approvals", "voice_approval_threshold")},
     "phone": {"type": "phone_type", "enabled": "phone_enabled", "host": "phone_host", "port": "phone_port"},
@@ -220,6 +226,7 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
     "android": {"messages": "android_messages", "notification_days": "android_notification_days",
                 "whatsapp_dir": "android_whatsapp_dir", "drive_assist": "android_drive_assist",
                 "speak": "android_speak"},
+    "council": {"extra": "council"},
     "mail": {"enabled": "mail_enabled", "days": "mail_days"},
     "calls": {"enabled": "calls_enabled", "model": "call_model", "max_minutes": "call_max_minutes",
               "monitor": "call_monitor", "international": "call_international", "per_hour": "calls_per_hour",
@@ -256,8 +263,17 @@ def _validate(s: "Settings") -> None:
         raise ValueError('listening.clap must be "double", "single" or "off"')
     if s.guests not in ("ask", "never"):
         raise ValueError('listening.guests must be "ask" or "never"')
-    if s.voice_engine not in ("piper", "say"):
-        raise ValueError('voice.engine must be "piper" or "say"')
+    if s.barge_in not in ("voice", "name"):
+        raise ValueError('listening.barge_in must be "voice" or "name"')
+    if s.voice_engine not in ("kokoro", "piper", "say"):
+        raise ValueError('voice.engine must be "kokoro", "piper" or "say"')
+    from .voice import KOKORO_VOICES
+    if s.kokoro_voice not in KOKORO_VOICES:
+        raise ValueError("voice.kokoro_voice must be one of: " + ", ".join(KOKORO_VOICES))
+    for entry in s.council:
+        parts = [p.strip() for p in entry.split("|")]
+        if len(parts) != 4 or not parts[1].startswith("https://") or not re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", parts[3]):
+            raise ValueError('council.extra entries look like "Name | https://.../chat/completions | model | KEY_NAME"')
     if s.routing not in ("auto", "off"):
         raise ValueError('brain.routing must be "auto" or "off"')
     for name, value in (("brain.voice_effort", s.voice_effort), ("brain.effort", s.effort),

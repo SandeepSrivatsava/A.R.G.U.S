@@ -24,6 +24,8 @@ from .control import ControlServer
 from .lessons import Reflector
 from .llm import Claude
 from . import flights as flights_mod
+from . import council as council_mod
+from . import search as search_mod
 from . import weather as weather_mod
 from .maps import Router, phone_links, route_tool
 from .news import format_headlines
@@ -53,6 +55,8 @@ class ServerApp:
         tools["route"] = route_tool(self.router)
         self.weather, self.recent = weather_mod.attach(settings, self.router, tools)
         self.flights = flights_mod.attach(secrets, tools)
+        self.search = search_mod.attach(settings, secrets, tools)
+        self.council = council_mod.attach(settings, secrets, tools)
         self.push = push if push is not None else push_from(settings, secrets, self.audit)
         reflector = Reflector(self.llm, self.store, model=settings.small_model, audit=self.audit,
                               cost=request_cost) if settings.self_learning else None
