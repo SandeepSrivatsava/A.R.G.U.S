@@ -49,6 +49,14 @@ def describe(entry: Dict[str, Any]) -> Optional[str]:
                 "second of speech), so Argus switched to the quick voice")
     elif event == "tool_slow":
         text = f"(note) The {entry.get('tool')} tool took {entry.get('seconds')} s"
+    elif event == "mic_silent":
+        text = (f"The microphone gave only silence for {entry.get('seconds')} s: macOS may have taken away Argus's "
+                "microphone permission (System Settings > Privacy & Security > Microphone > Argus)")
+    elif event == "safe_start":
+        text = (f"The last {entry.get('failed_starts')} starts failed, so Argus started safely (the Mac's own voice, "
+                "no extras)")
+    elif event == "stuck_copy_stopped":
+        text = f"A copy of Argus (pid {entry.get('pid')}) was stuck, so it was stopped to let a new one start"
     else:
         return None
     return f"{str(entry.get('ts', ''))[:19].replace('T', ' ')}  {' '.join(str(text).split())}"
@@ -133,7 +141,83 @@ def follow(path: Path, poll: float = 1.0, stop=lambda: False) -> Iterator[str]:
         time.sleep(poll)
 
 
-def build_report(settings, secrets: Dict[str, str], version: str = "") -> str:
+START_EVENTS = ("started", "stopped", "safe_start", "stuck_copy_stopped", "mic_silent")
+
+
+def starts_and_stops(entries: Iterable[Dict[str, Any]], last: int = 8) -> List[str]:
+    lines = []
+    for e in [e for e in entries if e.get("event") in START_EVENTS][-last:]:
+        when = str(e.get("ts", ""))[:19].replace("T", " ")
+        event = e.get("event")
+        if event == "started":
+            what = f"started, version {e.get('version') or '?'}, pid {e.get('pid') or '?'}" + (
+                " (safe start)" if e.get("safe") else "")
+        elif event == "stopped":
+            what = "stopped" + (f" (signal {e.get('signal')})" if e.get("signal") else "")
+        else:
+            what = describe(e) or event
+            what = what[21:] if what[:4].isdigit() else what
+        lines.append(f"  {when}  {what}")
+    return lines or ["  none recorded"]
+
+
+def summarize_threads(dump: str, frames: int = 6, limit: int = 70) -> List[str]:
+    """faulthandler's dump, shortened: each thread with its innermost calls."""
+    out: List[str] = []
+    kept = 0
+    for line in dump.splitlines():
+        if not line.strip():
+            continue
+        if not line.startswith(" "):
+            out.append(line.strip())
+            kept = 0
+        elif kept < frames:
+            out.append("  " + line.strip())
+            kept += 1
+    return out[:limit]
+
+
+def tail(path: Path, last: int = 20) -> List[str]:
+    try:
+        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    return [line[:300] for line in lines if line.strip()][-last:]
+
+
+def last_crash(path: Path, last: int = 40) -> List[str]:
+    """The most recent native crash in logs/crash.log (faulthandler), with the start it belongs to."""
+    lines = tail(path, 4000)
+    where = max((i for i, line in enumerate(lines) if "Fatal Python error" in line), default=None)
+    if where is None:
+        return []
+    started = max((i for i in range(where) if lines[i].startswith("--- Argus started")), default=where)
+    return lines[started:started + 1] + lines[where:where + last] if started != where else lines[where:where + last]
+
+
+def right_now(settings, *, run=None, dump=None) -> List[str]:
+    """Is Argus running and listening this moment, and if not, why not (and where it's stuck)."""
+    from . import runtime, service
+    status = runtime.answering(settings, timeout=3.0)
+    if status is not None and status.get("pid"):
+        lines = ["  " + line.strip() for line in service.describe_status(status)]
+        installed = runtime.version()
+        if status.get("version") and installed and status["version"] != installed:
+            lines.append(f"  The Argus running is {status['version']}, but {installed} is installed: argusctl restart")
+        return lines
+    lines = ["  Argus isn't answering" + (" (an older version is running)" if status is not None else "") + "."]
+    lines += ["  " + line for line in service.why_not(settings, run=run or service.run_command)]
+    start = runtime.read_startup(settings)
+    pid = start.get("pid")
+    if start.get("dumps") and pid and runtime.pid_alive(int(pid)) and runtime.is_argus(int(pid)):
+        dumped = (dump or runtime.dump_threads)(settings, int(pid))
+        if dumped.strip():
+            lines.append("  Where it is right now (each thread, the innermost call first):")
+            lines += ["    " + line for line in summarize_threads(dumped)]
+    return lines
+
+
+def build_report(settings, secrets: Dict[str, str], version: str = "", *, run=None, dump=None) -> str:
     entries = read_entries(settings.audit_path)
     turns = [e for e in entries if e.get("event") == "turn"]
     failed = [e for e in turns if e.get("error")]
@@ -145,6 +229,8 @@ def build_report(settings, secrets: Dict[str, str], version: str = "") -> str:
              f"Argus {version or '?'} on {platform.system()} {platform.release()} ({platform.machine()}), "
              f"Python {platform.python_version()}",
              "",
+             "Right now"] + right_now(settings, run=run, dump=dump) + [
+             "",
              "Settings",
              f"  models: everyday {settings.light_model or settings.model}, main {settings.model}, "
              f"heavy {settings.heavy_model or settings.model} (routing {settings.routing})",
@@ -155,7 +241,8 @@ def build_report(settings, secrets: Dict[str, str], version: str = "") -> str:
              f"  voice: {settings.voice_engine} {settings.kokoro_voice} at {settings.speed}x"
              + (" (switched to the quick voice: the natural one was too slow here)"
                 if (settings.run_dir / "natural-voice-too-slow").exists() else "")
-             + f"; interrupting: {settings.barge_in}",
+             + f"; interrupting: {settings.barge_in}"
+             + f"; your voice enrolled: {'yes' if settings.voiceprint_path.exists() else 'no (argusctl enroll)'}",
              "  keys saved: " + (", ".join(sorted(k for k, v in secrets.items() if v)) or "none"),
              "",
              f"Requests in the log: {len(turns)}, failed: {len(failed)}; by model: "
@@ -171,6 +258,13 @@ def build_report(settings, secrets: Dict[str, str], version: str = "") -> str:
               for e in timings] or ["  none"]
     lines += ["", "From the app's log (warnings and errors)"]
     lines += ["  " + line for line in log_trouble(logs / "argus.log")] or ["  none"]
+    lines += ["", "Starts and stops (newest last)"] + starts_and_stops(entries)
+    printed = tail(logs / "voice.err.log", 20)
+    if printed:
+        lines += ["", "What Argus printed when starting (logs/voice.err.log, last lines)"] + ["  " + p for p in printed]
+    crash = last_crash(logs / "crash.log")
+    if crash:
+        lines += ["", "The last crash (logs/crash.log)"] + ["  " + c for c in crash]
     try:
         launch = (logs / "launchctl.err").read_text(encoding="utf-8", errors="replace").strip()
     except OSError:

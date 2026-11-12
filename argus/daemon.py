@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import time
@@ -81,6 +82,29 @@ class Argus:
         self.calls = calls              # CallManager: phone calls from your number (calls.py)
         self.notify = notify            # a quiet on-screen note (Argus can't speak while it's on a call)
         self.brain.on_reply_finished = self._reply_finished
+        self.extra_status: Callable[[], Dict[str, Any]] = dict   # the app adds its version, voice...
+        self.started_at = time.monotonic()
+        self.show_requested = False     # another copy was opened: the menu bar shows a note that Argus is here
+        self._mic_open_since: Optional[float] = None
+        self._last_sound: Optional[float] = None
+        self._told_silent = False
+
+    MIC_SILENT_AFTER = 20.0       # an open microphone giving nothing but zeros this long: no permission
+
+    @property
+    def voice_enrolled(self) -> bool:
+        return bool(self.voiceprint is not None and self.voiceprint.enrolled)
+
+    @property
+    def talk_over(self) -> str:
+        """How talking over Argus stops it, in words (status, report)."""
+        if self.barge_in == "name":
+            return "by name only (\"Argus, stop\")"
+        if self.barge_in == "words":
+            return "any new words (best with headphones)"
+        if self.voice_enrolled:
+            return "your voice"
+        return "by name only until you run: argusctl enroll"
 
     @property
     def voice_lock_active(self) -> bool:
@@ -104,10 +128,39 @@ class Argus:
             mode = "working"
         else:
             mode = self.listener.mode()
-        return {"ok": True, "mode": mode, "mic_open": bool(self.source.is_open), "conversation": self.listener.conversation,
-                "asleep": self.listener.sleeping, "screen_private": self.screen_private,
-                "voice_lock": self.voice_lock_active, "guests": self._guests_status(),
-                "ignored_sentences": self.ignored, "last_error": self.brain.last_error}
+        now = time.monotonic()
+        status = {"ok": True, "mode": mode, "mic_open": bool(self.source.is_open), "conversation": self.listener.conversation,
+                  "asleep": self.listener.sleeping, "screen_private": self.screen_private,
+                  "voice_lock": self.voice_lock_active, "guests": self._guests_status(),
+                  "ignored_sentences": self.ignored, "last_error": self.brain.last_error,
+                  "pid": os.getpid(), "up_s": round(now - self.started_at), "locked": self.locked,
+                  "on_call": [friendly(a) for a in self.on_call], "voice_enrolled": self.voice_enrolled,
+                  "talk_over": self.talk_over, "mic_silent": self.mic_silent(now),
+                  "sound_s_ago": None if self._last_sound is None else round(now - self._last_sound)}
+        try:
+            status.update(self.extra_status())
+        except Exception:                 # status must always answer
+            log.exception("extra status failed")
+        return status
+
+    def mic_silent(self, now: Optional[float] = None) -> bool:
+        """The microphone is open but has given only exact zeros since it opened: macOS gives silence, not an
+        error, to an app that isn't allowed to use the microphone."""
+        now = time.monotonic() if now is None else now
+        return bool(self._mic_open_since is not None and self._last_sound is None
+                    and now - self._mic_open_since >= self.MIC_SILENT_AFTER)
+
+    def _heard_sound(self, chunk: np.ndarray) -> None:
+        now = time.monotonic()
+        if self._mic_open_since is None:
+            self._mic_open_since = now
+        if chunk.size and np.any(chunk):
+            self._last_sound = now
+        elif not self._told_silent and self.mic_silent(now):
+            self._told_silent = True
+            log.warning("the microphone gives only silence; is Argus allowed to use it?")
+            self.audit.log("mic_silent", seconds=round(now - self._mic_open_since))
+            self.on_change()
 
     def _guests_status(self) -> str:
         if not self.voice_lock_active:
@@ -206,9 +259,12 @@ class Argus:
             self.speaker.say(self.greeting)
         while not self._stop.is_set():
             if not self.source.is_open:
+                self._mic_open_since = None         # closed (locked, a call, switched off): start counting again
                 self._stop.wait(0.2)
                 continue
             chunk = self.source.read()
+            if chunk is not None:
+                self._heard_sound(chunk)
             if chunk is None:
                 if getattr(self.source, "finished", False):
                     for utterance in self.segmenter.flush():
@@ -242,9 +298,11 @@ class Argus:
     def _maybe_barge_in(self) -> None:
         """While Argus is talking, you can talk over it, like with a person: it stops at once and listens.
 
-        Its own voice from the speakers reaches the microphone too, so it only stops for you: with an enrolled
-        voice (argusctl enroll), when the voice matches yours; without one, when the words aren't the ones Argus
-        is saying. "Argus, stop" always works."""
+        Its own voice from the speakers reaches the microphone too, and on a laptop it is loud and often
+        misheard, so comparing words isn't enough to tell you apart (that made Argus stop itself mid-sentence
+        and then answer its own words). With an enrolled voice (argusctl enroll) it stops when the voice is
+        yours; without one, when you say its name: "Argus, stop" or "Argus, <something new>". barge_in = "words"
+        brings back stopping for any new words, for headphones."""
         if not self.speaker.speaking or not self.segmenter.speech_active:
             self._speech_since = None
             self._barge_hits = 0
@@ -253,13 +311,14 @@ class Argus:
         if self._speech_since is None:
             self._speech_since = now
         talking = now - self._speech_since
-        if talking < (self.BARGE_MIN_SECONDS if self.barge_in == "voice" else 0.0):
+        by_voice = self.barge_in == "voice" and self.voice_enrolled
+        if talking < (self.BARGE_MIN_SECONDS if by_voice or self.barge_in == "words" else 0.0):
             return
         if now - self._last_barge_check < self.barge_in_interval:
             return
         self._last_barge_check = now
         audio = self.segmenter.recent_audio()[-int(min(talking + 0.3, 2.5) * SAMPLE_RATE):]
-        if self.barge_in == "voice" and self.voice_lock_active:
+        if by_voice:
             score = self.voiceprint.score(audio)
             if score >= self.voiceprint.threshold:
                 if self._barge_hits >= 1:           # twice in a row: one lucky match isn't enough to stop
@@ -272,11 +331,12 @@ class Argus:
         heard = self.listener.matcher.hear(text)
         if heard.addressed and (not heard.rest or command_of(heard.rest) is Command.STOP):
             return self._barge(now, "Argus, stop", stopped=True)
-        # Without an enrolled voice, Argus can only compare words, and its own voice from the speakers is often
-        # misheard. So it takes clearly different words, twice in a row, before it stops.
-        if (self.barge_in == "voice" and len(words(text)) >= 3 and not is_hallucination(text)
-                and not looks_like_echo(text, self.speaker.recently_spoken(), threshold=0.34)):
-            if self._barge_hits >= 1:
+        recent = self.speaker.recently_spoken()
+        if heard.addressed and len(words(heard.rest)) >= 2 and not looks_like_echo(text, recent, threshold=0.5):
+            return self._barge(now, "its name")     # "Argus, what about tomorrow?": stop and listen to the rest
+        if (self.barge_in == "words" and len(words(text)) >= 3 and not is_hallucination(text)
+                and not looks_like_echo(text, recent, threshold=0.34)):
+            if self._barge_hits >= 1:               # clearly different words, twice in a row
                 return self._barge(now, "new words", heard_words=len(words(text)))
             self._barge_hits += 1
         else:
@@ -292,6 +352,15 @@ class Argus:
 
     def _barged_recently(self) -> bool:
         return time.monotonic() - self._barged_at < self.BARGE_WINDOW
+
+    def _yours_after_barge(self, samples: np.ndarray, text: str) -> bool:
+        """Right after Argus stopped for you, what you say next needs no name, but the echo of the sentence it
+        was saying must not count as you: a looser echo check, and your voiceprint when there is one."""
+        if looks_like_echo(text, self.speaker.recently_spoken(), threshold=0.34):
+            return False
+        if self.voice_enrolled and not self.voice_lock_active:     # (with voice lock on it was checked above)
+            return self.voiceprint.score(samples) >= self.voiceprint.threshold
+        return True
 
     def handle_utterance(self, samples: np.ndarray) -> None:
         if samples.size < self.min_samples or not self.mic_wanted or self.closed:
@@ -327,6 +396,9 @@ class Argus:
             if self._guest_pending() and self._guest_answer(text):
                 return
         barged = self._barged_recently()
+        if barged and not heard.addressed and not self._yours_after_barge(samples, text):
+            self.ignored += 1             # the tail of Argus's own sentence, half-heard: not a question
+            return
         speaking = (self.speaker.speaking or self.speaker.quiet_for() < 0.8) and not barged  # not our own voice
         decision = self.listener.decide(text, busy=self.brain.busy and not barged, speaking=speaking)
         if decision.kind == IGNORE:
@@ -528,5 +600,11 @@ class Argus:
             self.brain.sessions.rotate()
             return {"ok": True}
 
+        def show(req):                   # Argus.app opened again while running: say "I'm here" on screen
+            self.show_requested = True
+            self.on_change()
+            return {"ok": True}
+
         return {"status": lambda req: self.status(), "say": say, "ask": ask, "mic": mic,
-                "conversation": conversation, "sleep": sleep, "screen": screen, "stop": stop, "new": new}
+                "conversation": conversation, "sleep": sleep, "screen": screen, "stop": stop, "new": new,
+                "show": show}

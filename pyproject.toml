@@ -1,6 +1,6 @@
 [project]
 name = "argus-assistant"
-version = "2.9.0"
+version = "2.10.0"
 description = "Argus: an always-listening, speaking assistant for your Mac, iPhone and Meta glasses, with its own Claude-powered brain"
 requires-python = ">=3.11"
 license = "MIT"
@@ -21,7 +21,7 @@ markers = ["invalid_requests_ok: the test sends requests the real Claude API wou
 [tool.coverage.run]
 branch = true
 source = ["argus"]
-patch = ["subprocess"]       # also measure the real Argus processes that some tests start
+patch = ["subprocess", "_exit"]   # also measure the real Argus processes some tests start (and stop)
 parallel = true
 
 [tool.coverage.report]

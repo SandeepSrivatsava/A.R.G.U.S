@@ -165,7 +165,7 @@ class Gemini:
 
 PLACE_DESC = ("Find places on Google Maps (restaurants, cafes, shops, attractions, services) with Google's rating, "
               "number of reviews, price level, open now, Google's review summary and a few recent reviews. Put the "
-              "area in the query (\"vegetarian Indian restaurants in Fremont CA\"). Use it for 'is X any good', "
+              "area in the query (\"vegetarian Indian restaurants in Austin TX\"). Use it for 'is X any good', "
               "'reviews of X', 'best ... near ...'; then narrow down for the user instead of reading everything.")
 PLACE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["query"], "properties": {
     "query": {"type": "string", "description": "What and where, e.g. 'ramen near Union Square San Francisco'."},

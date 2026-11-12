@@ -50,7 +50,7 @@ def test_places_come_with_a_phone_number_and_use_where_the_phone_is(tmp_path):
 def test_find_a_place_then_phone_it_to_book(tmp_path):
     fake = FakeGoogle()
     fake.places = (200, {"places": [dict(PLACES["places"][0], nationalPhoneNumber="(510) 555-0142")]})
-    script = Script(call("place_search", {"query": "Indian restaurant Fremont", "open_now": True}),
+    script = Script(call("place_search", {"query": "Indian restaurant Portland", "open_now": True}),
                     say("Udupi Palace, 4.4 stars, people love the dosas. Want me to call and book a table for two at seven?"),
                     call("phone_call", {"number": "(510) 555-0142", "business": "Udupi Palace",
                                         "goal": "book a table", "details": "2 people, 7 pm tonight, name Sam"}),
@@ -338,7 +338,8 @@ def test_voice_timings_reach_the_timing_log(tmp_path):
 def test_one_misheard_echo_doesnt_cut_argus_off(tmp_path):
     from fakes import SPEECH, make_argus
     argus, voice, _ = make_argus(tmp_path, ["so what do you think about", "the museum is open until five",
-                                            "no wait I meant tomorrow", "yes tomorrow is what I meant"])
+                                            "no wait I meant tomorrow", "yes tomorrow is what I meant"],
+                                 barge_in="words")          # stopping for any new words: headphones only
     argus.speaker._recent.append((argus.speaker.clock(), "The museum is open until five today."))
     stopped = []
     argus.brain.cancel = lambda: stopped.append(1)
@@ -378,20 +379,22 @@ def test_argusctl_key(tmp_path, monkeypatch, capsys):
 def test_argusctl_brains_and_free_presets(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("ARGUS_HOME", str(tmp_path))
     A = SimpleNamespace
+    fake = FakeGoogle()
     assert cmd_brains(A(action="list", name=None)) == 0
     out = capsys.readouterr().out
-    assert "argusctl brains add groq" in out and "argusctl key GEMINI_API_KEY" in out and "  on " not in out
+    assert "argusctl brains add groq" in out and "argusctl brains add gemini" in out and "  on " not in out
+    assert "argusctl brains add chatgpt" in out and "argusctl brains add grok" in out and "pay-per-use" in out
     assert cmd_brains(A(action="add", name="skynet")) == 1
-    assert cmd_brains(A(action="add", name="groq"), ask_secret=lambda p: "gsk_test_key_123") == 0
-    assert "console.groq.com/keys" in capsys.readouterr().out
+    assert cmd_brains(A(action="add", name="groq"), ask_secret=lambda p: "gsk_test_key_123", request=fake) == 0
+    out = capsys.readouterr().out
+    assert "console.groq.com/keys" in out and "Test: it answered" in out
     cmd_brains(A(action="list", name=None))
     out = capsys.readouterr().out
-    assert "  on   Groq (gpt-oss-120b)" in out and "brains add openrouter" in out
-    fake = FakeGoogle()
+    assert "  on   Groq (gpt-oss-120b, OpenAI's open model)" in out and "brains add openrouter" in out
     team = council.members(make_settings(tmp_path), {"GROQ_API_KEY": "g", "OPENROUTER_API_KEY": "o"})
-    assert [(m.name, m.model) for m in team] == [("Groq (gpt-oss-120b)", "openai/gpt-oss-120b"),
+    assert [(m.name, m.model) for m in team] == [("Groq (gpt-oss-120b, OpenAI's open model)", "openai/gpt-oss-120b"),
                                                   ("OpenRouter (free models)", "openrouter/free")]
-    assert team[0].ask("q", fake) == "Go with Udupi." and fake.calls[0][0] == "https://api.groq.com/openai/v1/chat/completions"
+    assert team[0].ask("q", fake) == "Go with Udupi." and fake.calls[-1][0] == "https://api.groq.com/openai/v1/chat/completions"
 
 
 def test_the_report_shows_voice_and_interruptions(tmp_path, monkeypatch, capsys):

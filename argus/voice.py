@@ -16,7 +16,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Dict, Callable, Deque, List, Optional, Tuple
+from typing import Any, Dict, Callable, Deque, List, Optional, Tuple
 
 import numpy as np
 
@@ -232,6 +232,27 @@ class _NeuralVoice(_ProcessVoice):
 # Kokoro's English voices (kokoro-en-v0_19), by speaker number. a = American, b = British; f/m = woman/man.
 KOKORO_VOICES = {"af": 0, "af_bella": 1, "af_nicole": 2, "af_sarah": 3, "af_sky": 4, "am_adam": 5,
                  "am_michael": 6, "bf_emma": 7, "bf_isabella": 8, "bm_george": 9, "bm_lewis": 10}
+
+
+def voice_label(name: str) -> str:
+    """"af_sky" -> "American woman" (for lists people choose from)."""
+    accent = {"a": "American", "b": "British"}.get(name[:1], "")
+    who = {"f": "woman", "m": "man"}.get(name[1:2], "voice")
+    return f"{accent} {who}".strip()
+
+
+def describe_voice(voice: Any) -> str:
+    """The voice Argus is speaking with right now, in a few words (status and report)."""
+    current = getattr(voice, "current", voice)
+    if isinstance(current, KokoroVoice):
+        name = next((n for n, sid in KOKORO_VOICES.items() if sid == current.sid), str(current.sid))
+        return f"natural ({name}, {current.speed:g}x)"
+    if isinstance(current, PiperVoice):
+        switched = current is not voice and isinstance(voice, AdaptiveVoice)
+        return "quick" + (" (switched: the natural one was too slow here)" if switched else "")
+    if isinstance(current, SayVoice):
+        return "the Mac's own voice"
+    return type(current).__name__
 
 
 class KokoroVoice(_NeuralVoice):

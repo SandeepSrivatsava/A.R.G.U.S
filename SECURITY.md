@@ -272,7 +272,7 @@ or speech that wasn't for Argus. It rotates at 5 MB.
 
 Found a problem? Open a private issue in this repository.
 
-## 17. Your mail
+## 19. Your mail
 
 | Protection | Where |
 |---|---|
@@ -283,17 +283,17 @@ Found a problem? Open a private issue in this repository.
 | Results are labelled as other people's words, and the prompt tells Claude never to follow instructions inside them. Sending anything onward would still need your approval. | `argus/mail.py`, `argus/prompts.py` |
 | What it doesn't protect: the emails Argus reads for you are sent to Claude to answer your question, like anything else you ask about. | |
 
-## 18. Flight history
+## 20. Flight history
 
 Only the flight number is sent to FlightAware, with your own key (`FLIGHTAWARE_API_KEY` in `secrets.env`).
 Without a key the tool isn't offered.
 
-## 19. Problem reports
+## 21. Problem reports
 
 `argusctl report` leaves out what you said and what Argus answered, and removes keys, tokens, email addresses
 and your home folder's name (`argus/diagnose.py`). The file is readable only by you. Read it before sending it.
 
-## 20. Your Google account
+## 22. Your Google account
 
 | Protection | Where |
 |---|---|
@@ -303,26 +303,31 @@ and your home folder's name (`argus/diagnose.py`). The file is readable only by 
 | Mail and Drive only for you asking (voice, phone, command line), never for guests or scheduled tasks; the calendar also for scheduled tasks (the morning briefing). | `argus/google.py` |
 | Security-code and password mails, never-touch senders, and Drive files named like passwords, recovery codes or keys are left out; everything read is labelled as other people's words. | `argus/google.py`, `argus/mail.py` |
 
-## 21. Lookups at the same time
+## 23. Lookups at the same time
 
 Only tools that look things up, and only when the rules allow them without asking, run at the same time
 (`PARALLEL_SAFE` in `argus/agent.py`). Anything that needs your OK, and anything on the screen, still runs
 one step at a time, in order.
 
-## 22. Google search, reviews and other AI models
+## 24. Google search, reviews and other AI models
 
 | Protection | Where |
 |---|---|
-| Only the search words or the question go to Google Maps, Gemini or a council member: never memory, mail, files or the conversation (each tool's description tells Claude to send nothing personal). On Gemini's free tier, Google may use what's sent to improve its products. | `argus/search.py`, `argus/council.py` |
+| Only the search words or the question go to Google Maps, Gemini or a council member (ChatGPT, Grok, Groq, Mistral, OpenRouter): never memory, mail, files or the conversation (each tool's description tells Claude to send nothing personal). On free tiers (Gemini, Mistral, OpenRouter's free models) the provider may use what's sent to improve its models; Mistral's admin console can switch that off, and xAI's data-sharing program should stay off. | `argus/search.py`, `argus/council.py` |
+| Before a question leaves the Mac for another AI model, email addresses, phone numbers, long numbers (cards, accounts, bookings) and your name are taken out of it, whatever Claude wrote. | `argus/council.py` (`scrub`) |
+| Pay-per-use brains (ChatGPT, Grok) are capped at `paid_per_day` questions a day each (40), counted on the Mac, so a loop or a busy day can't run up a bill. | `argus/council.py` (`DailyCount`) |
 | Reviews, pages and other models' answers are labelled as information, never instructions; Claude stays the one that decides and answers. | `argus/search.py`, `argus/council.py` |
 | Keys live in secrets.env and are removed from error messages. Council members must use https. | `argus/search.py`, `argus/council.py`, `argus/config.py` |
 
-## 23. Talking over Argus
+## 25. Talking over Argus
 
 Stopping when you talk uses the same on-device voice check as the voice lock: nothing extra is recorded or
-sent. While Argus speaks, the microphone audio is checked for your voice and then thrown away, as before.
+sent. While Argus speaks, the microphone audio is checked for your voice (or its name) and then thrown away,
+as before. Right after it stops, what it hears next needs no name, but the echo of its own sentence is still
+filtered out (and checked against your voiceprint when you have one), so it can't talk itself into answering
+its own words.
 
-## 24. Booking by phone, loose ends, and what the glasses saw
+## 26. Booking by phone, loose ends, and what the glasses saw
 
 | Protection | Where |
 |---|---|
@@ -330,3 +335,13 @@ sent. While Argus speaks, the microphone audio is checked for your voice and the
 | A loose-end check runs on its own channel with look-up tools only (search, places, weather, flights, calendar): no files, shell, mail, screen, calls or messages, and nothing can be approved there. At most 12, each for at most 90 days, quiet at night. | `argus/followups.py` |
 | Glances are off unless you set `glances_minutes`. Each glance sends one photo to Claude's quick model with a single tool (note where belongings are); people, screens and documents are not to be noted; the photo is dropped from the conversation store straight away and never written to disk or the logs. Sightings are a few words, kept 14 days in Argus's database on the Mac. At most one glance per interval; "stop watching" pauses them. | `argus/sightings.py`, `argus/phone.py` |
 | `argusctl key` takes a key hidden from the screen and never prints more than its last four characters. | `argus/__main__.py` |
+
+## 27. Restarts, crashes and the report
+
+| Protection | Where |
+|---|---|
+| A stuck copy is only ever stopped when it is Argus's own process (checked by its command line), holds Argus's lock, has been running for over 90 seconds and doesn't answer on its private control socket. `argusctl restart --force` stops only processes whose command line is Argus's. | `argus/runtime.py` (`single_instance`, `is_argus`) |
+| Stopping finishes within a few seconds even if part of the shutdown hangs, so the microphone and the lock are never held by a copy that is half-closed. | `argus/runtime.py` (`stop_on_signals`) |
+| `logs/crash.log` (a native crash) and `logs/threads.log` (a snapshot taken by `argusctl report` when Argus doesn't answer) hold only which code each thread was running: file names, line numbers and function names, no data. Both are owner-only, and the report removes your home folder's name from them. | `argus/runtime.py` (`capture_crashes`, `dump_threads`) |
+| A safe start (after two failed starts) only drops the voice models and glances; every protection stays on. | `argus/app.py`, `argus/runtime.py` (`Startup`) |
+| `run/startup.json` and `run/council-today.json` are owner-only and hold no personal data (a process id, a phase, counts). | `argus/runtime.py`, `argus/council.py` |

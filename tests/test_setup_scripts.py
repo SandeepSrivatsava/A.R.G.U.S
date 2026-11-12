@@ -416,13 +416,13 @@ def test_setup_again_keeps_saved_answers_and_asks_only_new_ones(tmp_path, venv):
         ("Keep these answers and only ask what's new?", "n"),
         ("Type 1 or 2 [1]", ""), ("Is Google Maps on your iPhone? [Y/n]", ""), ("Is Waze on your phone? [y/N]", "y"),
         ("New Claude API key (Enter keeps the saved one)", ""), ("What should Argus call you? [Sandeep]", ""),
-        ("[Portland, OR]", "Fremont, CA"), ("Sites to block, comma-separated [none]", "mybank.com"),
+        ("[Portland, OR]", "Austin, TX"), ("Sites to block, comma-separated [none]", "mybank.com"),
         ("Google Maps API key", ""), ("TomTom API key", "tt-new-key-12345"),
         ("FlightAware AeroAPI key", "fa-new-key-67890"), ("Gemini API key", "AIza-gemini-test-123"), ("search and read your mail? [Y/n]", "n"),
         ("weekday briefing at 7:30 (weather + news; roughly $1-3 a month)? [y/N]", "y")])
     assert code == 0 and "Each question now shows your saved answer" in changed
     cfg = tmp_path / "home" / "config.toml"
-    assert setting(cfg, "", "city") == "Fremont, CA" and setting(cfg, "", "user_name") == "Sandeep"
+    assert setting(cfg, "", "city") == "Austin, TX" and setting(cfg, "", "user_name") == "Sandeep"
     assert setting(cfg, "maps", "apps") == "[google, waze]" and setting(cfg, "security", "blocked_sites") == "[mybank.com]"
     assert setting(cfg, "schedule", "morning_briefing") == "30 7 * * 1-5"
     secrets = (tmp_path / "home" / "secrets.env").read_text()
@@ -435,7 +435,7 @@ def test_setup_again_keeps_saved_answers_and_asks_only_new_ones(tmp_path, venv):
     loaded = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); "
                              "from argus import config; s = config.load(); print(s.city, s.blocked_sites)", str(REPO)],
                             env=env, capture_output=True, text=True)
-    assert loaded.stdout.strip() == "Fremont, CA ['mybank.com']", loaded.stderr
+    assert loaded.stdout.strip() == "Austin, TX ['mybank.com']", loaded.stderr
 
 
 def test_toml_set_writes_top_level_settings(tmp_path):
@@ -445,8 +445,8 @@ def test_toml_set_writes_top_level_settings(tmp_path):
     def sh(code):
         return subprocess.run(["bash", "-c", f'. "{REPO}/scripts/lib.sh"; {code}', "_", str(cfg)], capture_output=True,
                               text=True, check=True).stdout.strip()
-    sh('toml_set "$1" "" city \'"Fremont, CA"\'; toml_set "$1" "" user_name \'"Sandeep"\'')
-    assert cfg.read_text() == 'name = "Argus"\ncity = "Fremont, CA"\n\nuser_name = "Sandeep"\n[phone]\ntype = "iphone"\n'
+    sh('toml_set "$1" "" city \'"Austin, TX"\'; toml_set "$1" "" user_name \'"Sandeep"\'')
+    assert cfg.read_text() == 'name = "Argus"\ncity = "Austin, TX"\n\nuser_name = "Sandeep"\n[phone]\ntype = "iphone"\n'
     assert sh('toml_get "$1" "" user_name') == "Sandeep" and sh('toml_get "$1" phone type') == "iphone"
     flat = tmp_path / "flat.toml"
     flat.write_text('name = "Argus"\n')

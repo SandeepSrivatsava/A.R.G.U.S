@@ -80,13 +80,15 @@ def test_the_report_has_what_is_needed_and_nothing_private(tmp_path, monkeypatch
     monkeypatch.setenv("HOME", str(tmp_path))
     assert main(["report", "--show"]) == 0
     text = capsys.readouterr().out
-    for expected in ("Argus 2.9.0 on ", "models: everyday claude-haiku-5-5, main claude-sonnet-5-5, heavy claude-opus-5-5",
+    from argus.runtime import version
+    for expected in (f"Argus {version()} on ", "Right now", "Starts and stops", "models: everyday claude-haiku-5-5, main claude-sonnet-5-5, heavy claude-opus-5-5",
                      "keys saved: ANTHROPIC_API_KEY, TOMTOM_API_KEY", "Requests in the log: 2, failed: 1",
                      "claude-haiku-5-5 1, claude-sonnet-5-5 1", "A request failed: Claude API error 529: Overloaded",
                      "first word 1.4", "WARNING argus.weather", "RuntimeError: [key removed]", "boom()",
                      "Bootstrap failed: 5", "request failed for [email removed]"):
         assert expected in text, expected
-    for private in ("my private question", "sk-ant", "tomtomkey123", "sandeep@example.com", "fine again", "started"):
+    for private in ("my private question", "sk-ant", "tomtomkey123", "sandeep@example.com", "fine again",
+                    "INFO argus.app started"):
         assert private not in text, private
     (tmp_path / "Desktop").mkdir()
     assert main(["report"]) == 0

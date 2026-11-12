@@ -39,7 +39,7 @@ FILES = [{"id": "doc000000001", "name": "Lease 2026", "mimeType": "application/v
          {"id": "pdf000000003", "name": "W-2.pdf", "mimeType": "application/pdf", "modifiedTime": "2026-02-01T10:00:00Z"},
          {"id": "pwd000000004", "name": "Passwords backup", "mimeType": "application/vnd.google-apps.spreadsheet"}]
 EVENTS = [{"summary": "Dentist", "start": {"dateTime": "2026-11-12T09:00:00-08:00"},
-           "end": {"dateTime": "2026-11-12T10:00:00-08:00"}, "location": "Fremont Smiles"},
+           "end": {"dateTime": "2026-11-12T10:00:00-08:00"}, "location": "Portland Smiles"},
           {"summary": "Standup", "start": {"dateTime": "2026-11-12T10:30:00-08:00"},
            "end": {"dateTime": "2026-11-12T10:45:00-08:00"}, "attendees": [{"self": True}, {"email": "a"}, {"email": "b"}],
            "hangoutLink": "https://meet.google.com/x"},
@@ -163,7 +163,7 @@ def test_drive(tmp_path):
 def test_calendar(tmp_path):
     g, tools, fake, tokens, ctx = connected(tmp_path)
     out = tools["calendar"].run({"start": "2026-11-12"}, ctx).content
-    assert "Thu 2026-11-12 09:00-10:00: Dentist @ Fremont Smiles" in out
+    assert "Thu 2026-11-12 09:00-10:00: Dentist @ Portland Smiles" in out
     assert "10:30-10:45: Standup (with 2 others) [video call]" in out
     assert "2026-11-12 (all day): Diwali" in out and "Old" not in out
     query = [c for c in fake.calls if c[1].endswith("/events")][0][2]

@@ -2,12 +2,12 @@
 # argusctl: control Argus from the Terminal. `argusctl --help` lists the commands.
 set -euo pipefail
 PY="${ARGUS_VENV:-${ARGUS_HOME:-$HOME/.argus}/venv}/bin/python3"
-case "${1:-}" in
-  restart)
-    launchctl kickstart -k "gui/$(id -u)/com.argus.voice" && echo "Argus restarted." ;;
-  quit)
-    launchctl kill TERM "gui/$(id -u)/com.argus.voice" && echo "Argus stopped. Start again: argusctl restart" ;;
-  *)
-    [ -x "$PY" ] || { echo "Argus isn't installed. Run ./setup.sh in the argus folder." >&2; exit 1; }
-    exec "$PY" -I -m argus "$@" ;;
-esac
+if [ ! -x "$PY" ]; then
+  case "${1:-}" in             # without Argus's Python, restart and quit still work through launchd
+    restart) launchctl kickstart -k "gui/$(id -u)/com.argus.voice" && echo "Asked macOS to restart Argus." ;;
+    quit) launchctl kill TERM "gui/$(id -u)/com.argus.voice" && echo "Argus stopped. Start again: argusctl restart" ;;
+    *) echo "Argus isn't installed. Run ./setup.sh in the argus folder." >&2; exit 1 ;;
+  esac
+  exit 0
+fi
+exec "$PY" -I -m argus "$@"

@@ -137,24 +137,51 @@ The full list is in [SECURITY.md](SECURITY.md). The short version:
 argusctl key                        # which keys are saved (never shows them)
 argusctl key FLIGHTAWARE_API_KEY    # add or replace one; you paste it hidden
 argusctl brains                     # the other AI models Argus asks for a second opinion
-argusctl brains add groq            # add a free one (also: openrouter); then argusctl restart
+argusctl brains add chatgpt         # add one (you paste its key hidden; Argus checks it answers)
+argusctl brains test                # does each one answer right now?
+argusctl brains remove grok         # take one out
 ```
+
+Claude always gives the answer; for decisions, advice and disputed questions it asks these at the same time
+and weighs what they say. Restart after adding one (`argusctl restart`).
+
+| Brain | Add with | Cost |
+|---|---|---|
+| Gemini (Google) | `argusctl brains add gemini` | free tier |
+| ChatGPT (OpenAI's GPT-6 Luna) | `argusctl brains add chatgpt` | pay-per-use: about $0.0005 a question |
+| Grok (xAI's Grok 4.7) | `argusctl brains add grok` | pay-per-use: under a cent a question |
+| Groq (OpenAI's open model, gpt-oss-120b) | `argusctl brains add groq` | free: 1,000 questions a day |
+| Mistral (Medium) | `argusctl brains add mistral` | free (rate-limited) |
+| OpenRouter (free models) | `argusctl brains add openrouter` | free: 50 questions a day |
+
+* **ChatGPT and Grok have no free API.** A ChatGPT Plus or SuperGrok subscription doesn't include API use;
+  both bill per question like Claude, from a little prepaid credit. The free way to get an OpenAI brain is
+  Groq, which runs OpenAI's open model. (GitHub's free GPT and Grok access closed in July 2026.)
+* Paid brains are capped at 40 questions a day each (`paid_per_day` under `[council]`), and Argus doesn't
+  wait for a slow one: after 12 seconds (`wait_seconds`) it goes with the answers it has.
+* Only the question is sent, never your memory, mail or the conversation, and email addresses, phone numbers,
+  long numbers and your name are taken out first. Free tiers may keep questions to improve their models
+  (Mistral: switch that off in its admin console; xAI: leave its data-sharing program off).
 
 ## Talking with Argus
 
-* **Talk over it, like with a person.** While Argus is speaking, just start talking: it stops at once and
-  listens, and what you say needs no "Argus". It has to be sure it's you (two checks in a row, about a
-  second), so it doesn't cut itself off. It knows your voice from Argus's own coming out of the
-  speakers by your voiceprint (`argusctl enroll`), so enroll for the best results; without it, Argus checks
-  that the words aren't its own. `barge_in = "name"` under `[listening]` goes back to "Argus, stop" only.
+* **Talk over it, like with a person.** Run `argusctl enroll` once (five sentences, a minute): from then on,
+  while Argus is speaking, just start talking and it stops at once and listens, and what you say needs no
+  "Argus". It tells your voice from its own coming out of the speakers by your voiceprint, and has to be sure
+  (two checks in a row, about a second). Until you enroll, say its name: "Argus, stop" or "Argus, what about
+  tomorrow?". (Comparing words alone made it stop itself mid-sentence on a laptop's speakers and then answer
+  its own words, so that's only used with `barge_in = "words"` under `[listening]`, for headphones.)
+  `barge_in = "name"` keeps it to the name even after enrolling.
 * **A back-and-forth, not a lecture.** Tell it "I'm going to New York next month" and it reacts, asks what
   kind of trip it is, then offers two or three ideas and narrows down from your answer. It remembers what
   you like (budget, food, how you travel), so next time it asks less.
 * **A natural American voice**, made on the Mac by Kokoro (an open, Apache-2.0 voice model), at 1.2× speed.
-  `argusctl voices` plays them all; set `kokoro_voice` and `speed` under `[voice]` (men: am_michael,
-  am_adam; women: af_bella, af_sarah, af_nicole, af_sky). While one sentence plays, the next is being made.
-  If your Mac can't make the natural voice fast enough (gaps between sentences), Argus notices after a few
-  sentences and switches by itself to a quick American voice; `argusctl voices --natural` tries again.
+  Change it in one step: `argusctl voice af_sky` (it saves the setting, restarts Argus and says hello in the
+  new voice); `argusctl voice` lists them (men: am_michael, am_adam; women: af_bella, af_sarah, af_nicole,
+  af_sky), `argusctl voice af_sky --try` plays it first, `argusctl voice --speed 1.1` changes the pace and
+  `argusctl voices` plays them all. While one sentence plays, the next is being made. If your Mac can't make
+  the natural voice fast enough (gaps between sentences), Argus notices after a few sentences and switches by
+  itself to a quick American voice; `argusctl voice --natural` tries the natural one again.
 * **Google next to Claude.** Restaurant reviews and ratings from Google Maps, Google's own search results
   (through Gemini, free) and second opinions from other AI models, looked up at the same time and combined
   into one answer: [docs/GOOGLE_SEARCH.md](docs/GOOGLE_SEARCH.md).
@@ -202,10 +229,24 @@ landlord reply?", or "I'm flying Friday" (it finds the booking in Gmail). `argus
 ## Seeing what went wrong
 
 ```bash
+argusctl status            # what Argus is doing right now, in plain words
 argusctl errors            # recent problems in plain words
 argusctl errors --watch    # leave this open in a Terminal window: new problems appear as they happen
 argusctl report            # writes argus-report.txt to your Desktop: problems, timings, settings
 ```
+
+* `argusctl restart` waits until Argus really answers again and says so ("Argus is back and listening"), or
+  says why it didn't: where the start stopped, how it ended and what it printed. `argusctl restart --force`
+  stops every copy of Argus first, for when one is stuck.
+* A restart can't leave Argus off any more: a new copy waits for the old one to finish closing, a copy that
+  holds on without answering for minutes is stopped, and stopping always finishes within a few seconds.
+* If two starts in a row fail, the next one starts safely (the Mac's own voice, no extras) so Argus still
+  answers, and `argusctl status` and the report say so.
+* The report starts with **Right now**: whether Argus is answering, and if not, why (and where it is stuck,
+  from a snapshot of what each part is doing). It also has what Argus printed when starting, any crash, and
+  when it started and stopped.
+* If the microphone gives only silence (macOS took the permission away), the menu bar and `argusctl status`
+  say so: System Settings → Privacy & Security → Microphone → Argus.
 
 * The report never contains what you said or what Argus answered, and keys, tokens, email addresses and
   your home folder's name are removed. Read it, then send it when you ask for help.
@@ -430,8 +471,9 @@ builds Argus.app and the Apple Maps helper, and starts it at login. Then:
 2. **Switch on Argus** in System Settings → Privacy & Security → **Screen Recording** and
    **Accessibility**, then run `argusctl restart`. This is what lets Argus see and use apps for you.
 3. **Teach it your voice**: `argusctl enroll`. You read five short sentences; Argus learns how you say
-   its name and makes a voiceprint. From then on it answers only you (it asks you about anyone else),
-   and you can approve things by voice. Without it, everyone counts as you and approvals are Touch ID only.
+   its name and makes a voiceprint. From then on you can talk over it (it stops for your voice, not its
+   own), and with voice lock on it answers only you (it asks you about anyone else) and you can approve
+   things by voice. Without it, everyone counts as you and approvals are Touch ID only.
 4. **Your phone**: iPhone and glasses, [docs/IPHONE.md](docs/IPHONE.md); Android,
    [docs/ANDROID.md](docs/ANDROID.md) (in Termux on the phone, the same `./setup.sh` installs Argus there).
 
@@ -454,10 +496,12 @@ lessons are kept either way. `./setup.sh --change-keys` asks for the keys again.
 ## Everyday commands
 
 ```bash
-argusctl status            # what Argus is doing
+argusctl status            # what Argus is doing, in plain words (--json for everything)
 argusctl log               # recent activity (requests, tools, approvals, blocks)
-argusctl voices [name]      # hear the American voices, to pick one
-argusctl google connect     # Gmail, Drive, Calendar, read-only (docs/GOOGLE.md); also: status, disconnect
+argusctl voice af_sky      # change the voice (and --speed 1.1); it restarts and says hello in it
+argusctl voices [name]     # hear the American voices, to pick one
+argusctl brains [test]     # other AI models for second opinions: add chatgpt / grok / gemini / groq ...
+argusctl google connect    # Gmail, Drive, Calendar, read-only (docs/GOOGLE.md); also: status, disconnect
 argusctl errors [--watch]  # recent problems in plain words (or live)
 argusctl report            # a problem report on your Desktop that is safe to share
 argusctl timing [n]        # how long the last spoken answers took, step by step
@@ -470,8 +514,8 @@ argusctl lessons           # what Argus has learned (forget L3 / clear)
 argusctl push on|test|off  # reminders on your phone while you're away (ntfy)
 argusctl maps-token ...    # a year-long Apple Maps token from your Maps key (docs/SERVER.md)
 argusctl doctor            # check models, keys, Claude, the app and its permissions
-argusctl restart           # after editing ~/.argus/config.toml
-argusctl quit              # stop Argus
+argusctl restart           # after editing ~/.argus/config.toml; says when Argus is back (or why not)
+argusctl quit              # stop it until the next restart or login
 ./scripts/doctor.sh        # doctor, plus file privacy, login item and stay-awake checks
 ./scripts/update.sh        # get the latest Argus and its packages
 ```
@@ -480,11 +524,19 @@ Settings live in `~/.argus/config.toml`: your name and city, the model, web sear
 token budget, follow-up time, clap mode (`"double"`, `"single"` or `"off"`), voice lock, the voice,
 blocked apps and sites, how long a pause ends what you're saying (`end_of_speech_seconds`, 0.6), your phone
 (`[phone] type`) and its gateway, maps (`[maps]`: which app links open, where traffic comes from, miles or
-km), push notifications, the glasses, and the morning headlines (7:00, free) and optional AI briefing. The voice is an on-device
-British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a macOS voice instead.
+km), push notifications, the glasses, and the morning headlines (7:00, free) and optional AI briefing. The voice is
+made on the Mac (Kokoro, American); `argusctl voice` changes it, and `argusctl voice mac` uses the Mac's own voice.
 
 ## Troubleshooting
 
+* **After a restart it doesn't open or answer.** Run `argusctl restart`: it now waits and tells you whether
+  Argus came back, and if not, why. Still stuck? `argusctl restart --force` stops every copy and starts it
+  fresh. Then `argusctl report` and send the file: its first section says what Argus is doing right now.
+  (Opening Argus from Finder while it's already running just shows a note: it's the ◉ in the menu bar.)
+* **It cuts itself off, or answers its own words.** That was its own voice from the speakers counted as you.
+  It now stops only for your voiceprint or its name: run `argusctl enroll` once so you can just talk over it.
+* **Settings typed into the Terminal do nothing.** Lines like `kokoro_voice = "af_sky"` belong in
+  `~/.argus/config.toml`, not the Terminal. For the voice, use `argusctl voice af_sky` instead.
 * **"Bootstrap failed: 5: Input/output error" at step 8.** macOS hadn't finished stopping the old Argus.
   Setup now waits and tries again; if it still fails, run `launchctl bootout gui/$(id -u)/com.argus.voice`,
   wait a few seconds, and run `./setup.sh` again.
@@ -516,11 +568,18 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 * **Screen actions fail.** `argusctl doctor` says whether Argus has Screen Recording and Accessibility.
   Switch Argus on in both (System Settings → Privacy & Security), then `argusctl restart`.
 * **Microphone permission was denied.** System Settings → Privacy & Security → Microphone → turn on Argus.
-* Logs: `~/.argus/logs/` (activity log `audit.jsonl` and `argus.log`).
+* Logs: `~/.argus/logs/` (activity log `audit.jsonl`, `argus.log`, what a start printed in `voice.err.log`, native
+  crashes in `crash.log`). `argusctl report` gathers what matters from all of them.
 
 ## How this was tested
 
-* **877 automated tests**: finding a place and phoning it to book (with your OK), loose ends that speak only when there's news and can only look things up, glances that keep a few words and drop the photo, the quick-voice fallback, `argusctl key` and `brains`; talking over Argus (your voice vs its own echo), the Kokoro voice making the next sentence while speaking, Google reviews, Google search through Gemini and the council against stand-ins, the one-time voice switch for older installs; Gmail, Drive and Calendar against a stand-in Google (read-only sign-in with PKCE, forged sign-in answers refused, codes and password files left out, access tokens never reaching Claude), lookups running at the same time; picking the model for a request and handing it up, mail search with a stand-in Mail app (codes and blocked senders left out, scripts that can only read), a flight's two-week history against a stand-in FlightAware, `argusctl errors` and the report (nothing private in it); starting at login when macOS is slow to stop the old Argus, a conversation Claude refuses being replaced and the question asked again;: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **925 automated tests**: restarting (a new copy waiting for the old one, a stuck copy stopped and only ever
+  Argus's own, stopping while the main thread and the shutdown are stuck, a native crash and a hang leaving a
+  trace, two failed starts bringing a safe one, `argusctl restart` saying whether Argus came back or why not,
+  against a stand-in launchd), talking over Argus without a voiceprint (only its name stops it, and the echo of
+  its own sentence isn't taken for a question), `argusctl voice`, a microphone that gives only silence, the
+  report's "Right now", ChatGPT and Grok next to the free brains (only the question leaves, without names or
+  numbers; a slow one left out; a daily cap on paid ones; `argusctl brains add/test/remove`); finding a place and phoning it to book (with your OK), loose ends that speak only when there's news and can only look things up, glances that keep a few words and drop the photo, the quick-voice fallback, `argusctl key` and `brains`; talking over Argus (your voice vs its own echo), the Kokoro voice making the next sentence while speaking, Google reviews, Google search through Gemini and the council against stand-ins, the one-time voice switch for older installs; Gmail, Drive and Calendar against a stand-in Google (read-only sign-in with PKCE, forged sign-in answers refused, codes and password files left out, access tokens never reaching Claude), lookups running at the same time; picking the model for a request and handing it up, mail search with a stand-in Mail app (codes and blocked senders left out, scripts that can only read), a flight's two-week history against a stand-in FlightAware, `argusctl errors` and the report (nothing private in it); starting at login when macOS is slow to stop the old Argus, a conversation Claude refuses being replaced and the question asked again;: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed

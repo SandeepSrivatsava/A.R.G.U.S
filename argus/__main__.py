@@ -1,6 +1,7 @@
 """argusctl: control Argus from the Terminal."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 import argparse
 import json
@@ -26,8 +27,34 @@ def _send(cmd: str, timeout: float = 10.0, **fields):
         return send(settings.socket_path, cmd, timeout=timeout, **fields)
     except OSError:
         from .runtime import START_HINT, kind
-        print(f"Argus isn't running. Start it with: {START_HINT[kind()]}")
+        print("Argus isn't running.")
+        if kind() == "mac":
+            from .service import why_not
+            for line in why_not(settings):
+                print("  " + line)
+        print(f"Start it with: {START_HINT[kind()]}")
         sys.exit(1)
+
+
+def cmd_status(args) -> int:
+    reply = _send("status")
+    if args.json or "talk_over" not in reply:      # the always-on server and Android answer differently
+        print(json.dumps(reply, indent=2))
+        return 0
+    from .service import describe_status
+    for line in describe_status(reply):
+        print(line)
+    return 0
+
+
+def cmd_restart(args) -> int:
+    from . import service
+    return service.restart(config_mod.load(), force=args.force, wait=args.wait)
+
+
+def cmd_quit(args) -> int:
+    from . import service
+    return service.stop(config_mod.load())
 
 
 def _record(prompts: List[str]):
@@ -164,17 +191,8 @@ def cmd_errors(args) -> int:
 
 
 def argus_version() -> str:
-    try:
-        from importlib.metadata import version
-        return version("argus")
-    except Exception:
-        try:
-            import re
-            from pathlib import Path
-            text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
-            return re.search(r'^version = "([^"]+)"', text, re.M).group(1)
-        except Exception:
-            return ""
+    from .runtime import version
+    return version()
 
 
 def cmd_report(args) -> int:
@@ -287,7 +305,10 @@ KNOWN_KEYS = {
     "TOMTOM_API_KEY": "TomTom: traffic incidents and a third route opinion",
     "FLIGHTAWARE_API_KEY": "FlightAware AeroAPI: a flight's delays and cancellations",
     "GEMINI_API_KEY": "Gemini (free): Google search and a second opinion",
+    "OPENAI_API_KEY": "ChatGPT (pay-per-use, tiny): a second opinion",
+    "XAI_API_KEY": "Grok (pay-per-use): a second opinion",
     "GROQ_API_KEY": "Groq (free): another opinion in the council",
+    "MISTRAL_API_KEY": "Mistral (free): another opinion in the council",
     "OPENROUTER_API_KEY": "OpenRouter (free models): another opinion in the council",
     "ANTHROPIC_API_KEY": "Claude",
 }
@@ -325,27 +346,60 @@ def cmd_key(args, *, ask_secret=None) -> int:
     return 0
 
 
-def cmd_brains(args, *, ask_secret=None) -> int:
-    """The other AI models Argus asks for a second opinion; add a free one by name."""
+def cmd_brains(args, *, ask_secret=None, request=None) -> int:
+    """The other AI models Argus asks for a second opinion: list them, add or remove one, test them."""
     from . import council
+    from .maps import http_json
     settings = config_mod.load()
     saved = config_mod.read_secrets(settings.secrets_path) if settings.secrets_path.exists() else {}
-    if args.action == "add":
-        preset = council.PRESETS.get((args.name or "").lower())
-        if preset is None:
-            print("Choose one of: " + ", ".join(council.PRESETS) + "   (Gemini: argusctl key GEMINI_API_KEY)")
+    request = request or http_json
+    if args.action in ("add", "remove"):
+        if (args.name or "").lower() == "gemini":
+            return cmd_key(SimpleNamespace(name="GEMINI_API_KEY", remove=args.action == "remove"), ask_secret=ask_secret)
+        found = council.preset(args.name or "")
+        if found is None:
+            print("Choose one of: " + ", ".join(council.PRESETS) + ", gemini")
             return 1
-        print(f"{preset[0]}: get a free key at {preset[4]}")
-        return cmd_key(SimpleNamespace(name=preset[3], remove=False), ask_secret=ask_secret)
+        if args.action == "remove":
+            return cmd_key(SimpleNamespace(name=found.key, remove=True))
+        print(f"{found.name}: {found.cost}. Get a key at {found.where}.")
+        if found.note:
+            print(f"  Also: {found.note}.")
+        code = cmd_key(SimpleNamespace(name=found.key, remove=False), ask_secret=ask_secret)
+        if code == 0:
+            fresh = config_mod.read_secrets(settings.secrets_path)
+            member = next((m for m in council.members(settings, fresh) if m.short == found.short), None)
+            if member is not None:
+                ok, said, seconds = council.check(member, request)
+                print(f"Test: {'it answered' if ok else 'it did NOT answer'} in {seconds:.1f} s"
+                      + (f" ({said})" if not ok else "") + ".")
+                if not ok:
+                    return 1
+        return code
     team = council.members(settings, saved)
-    print("Claude answers; these give it a second opinion (only the question is sent to them):")
+    if args.action == "test":
+        if not team:
+            print("No other brains yet. Add one: argusctl brains add chatgpt   (or grok, gemini, groq, mistral, openrouter)")
+            return 1
+        failed = 0
+        with ThreadPoolExecutor(max_workers=len(team)) as pool:
+            for member, (ok, said, seconds) in zip(team, pool.map(lambda m: council.check(m, request), team)):
+                failed += not ok
+                print(f"  {'ok  ' if ok else 'FAIL'} {member.name:<42} {seconds:4.1f} s  {said if not ok else ''}".rstrip())
+        return 1 if failed else 0
+    print("Claude answers; these give it a second opinion (only the question is sent, without your name, numbers or "
+          "addresses):")
+    on = {m.short for m in team}
     for member in team:
-        print(f"  on   {member.name}")
-    if not saved.get("GEMINI_API_KEY"):
-        print("  off  Gemini (free)            add: argusctl key GEMINI_API_KEY   (key from aistudio.google.com/apikey)")
-    for short, preset in council.PRESETS.items():
-        if not saved.get(preset[3]):
-            print(f"  off  {preset[0]:<24} add: argusctl brains add {short}   (key from {preset[4]})")
+        cost = council.PRESETS[member.short].cost if member.short in council.PRESETS else (
+            "free" if member.short == "gemini" else "your own")
+        print(f"  on   {member.name:<42} {cost}")
+    if "gemini" not in on:
+        print(f"  off  {'Gemini (free)':<42} add: argusctl brains add gemini   (key from aistudio.google.com/apikey)")
+    for short, found in council.PRESETS.items():
+        if short not in on:
+            print(f"  off  {found.name:<42} add: argusctl brains add {short}   ({found.cost})")
+    print("Check they answer: argusctl brains test")
     return 0
 
 
@@ -360,7 +414,7 @@ def cmd_voices(args, *, make=None) -> int:
     if getattr(args, "natural", False):
         marker = settings.run_dir / "natural-voice-too-slow"
         marker.unlink(missing_ok=True)
-        print("Argus will try the natural voice again after: argusctl restart")
+        print("Argus will try the natural voice again after: argusctl restart   (or in one step: argusctl voice --natural)")
         return 0
     make = make or (lambda name, speed: KokoroVoice(model_paths(str(settings.models_dir))["kokoro"], voice=name,
                                                      speed=speed))
@@ -375,9 +429,88 @@ def cmd_voices(args, *, make=None) -> int:
         except Exception as exc:
             print(f"Couldn't play it: {exc}. Run ./setup.sh to download the voice.")
             return 1
-    print(f'To switch: set kokoro_voice = "<name>" (and speed) under [voice] in {settings.home / "config.toml"}, '
-          "then argusctl restart")
+    print("To switch to one, type for example: argusctl voice af_sky   (faster or slower: argusctl voice --speed 1.1)")
     return 0
+
+
+VOICE_HELLO = "Hi, this is my new voice."
+
+
+def cmd_voice(args, *, make=None, restart=None, ask=input, hello=None) -> int:
+    """Change Argus's voice and speed in one step: the setting, a restart, and a hello in the new voice."""
+    from .voice import KOKORO_VOICES, KokoroVoice, voice_label
+    settings = config_mod.load()
+    path = settings.home / "config.toml"
+    marker = settings.run_dir / "natural-voice-too-slow"
+    name = (args.name or "").strip().lower()
+    if not name and args.speed is None and not args.natural:
+        now = settings.kokoro_voice if settings.voice_engine == "kokoro" else {"piper": "quick", "say": "mac"}.get(
+            settings.voice_engine, settings.voice_engine)
+        print(f"Argus speaks with: {now} at {settings.speed:g}x" + (
+            " (using the quick voice for now: the natural one was too slow on this Mac)" if marker.exists() else ""))
+        for voice in KOKORO_VOICES:
+            print(f"  {voice:<12} {voice_label(voice)}{'   <- now' if voice == now else ''}")
+        print(f"  {'quick':<12} quicker to make, a little less natural{'   <- now' if now == 'quick' else ''}")
+        print(f"  {'mac':<12} the Mac's own voice{'   <- now' if now == 'mac' else ''}")
+        print("Change it:      argusctl voice af_sky        (hear one first: argusctl voice af_sky --try)\n"
+              "Faster/slower:  argusctl voice --speed 1.1   (1.0 is normal)\n"
+              "Hear them all:  argusctl voices")
+        return 0
+    changes = []
+    if name in ("quick", "piper"):
+        changes.append(("engine", '"piper"'))
+    elif name in ("mac", "say"):
+        changes.append(("engine", '"say"'))
+    elif name in KOKORO_VOICES:
+        changes += [("engine", '"kokoro"'), ("kokoro_voice", json.dumps(name))]
+    elif name:
+        print(f"There's no voice called {name}. Choose from: {', '.join(KOKORO_VOICES)}, quick, mac")
+        return 1
+    if args.speed is not None:
+        if not 0.5 <= args.speed <= 2.0:
+            print("The speed goes from 0.5 to 2.0 (1.0 is normal, 1.2 a little faster).")
+            return 1
+        changes.append(("speed", f"{args.speed:g}"))
+    if args.try_it and name in KOKORO_VOICES:
+        from .hearing import model_paths
+        make = make or (lambda voice, speed: KokoroVoice(model_paths(str(settings.models_dir))["kokoro"], voice=voice,
+                                                         speed=speed))
+        try:
+            make(name, args.speed or settings.speed).speak(VOICE_SAMPLE)
+        except Exception as exc:
+            print(f"Couldn't play it: {exc}. Run ./setup.sh to download the voice.")
+            return 1
+        if ask(f"Use {name}? [Y/n] ").strip().lower() in ("n", "no"):
+            print("Nothing changed.")
+            return 0
+    before = path.read_text(encoding="utf-8") if path.exists() else None
+    for key, value in changes:
+        config_mod.set_setting(path, "voice", key, value)
+    try:
+        config_mod.load()
+    except ValueError as exc:                      # never leave a config Argus can't start with
+        if before is None:
+            path.unlink()
+        else:
+            path.write_text(before, encoding="utf-8")
+        print(f"Couldn't change it: {exc}")
+        return 1
+    if args.natural or name in KOKORO_VOICES:      # you asked for a natural voice: try it again on this Mac
+        marker.unlink(missing_ok=True)
+    fresh = config_mod.load()
+    print(f"Voice: {fresh.kokoro_voice if fresh.voice_engine == 'kokoro' else name or fresh.voice_engine} "
+          f"at {fresh.speed:g}x.")
+    if args.no_restart:
+        print("It's used from the next start: argusctl restart")
+        return 0
+    from . import service
+    code = (restart or (lambda: service.restart(fresh)))()
+    if code == 0:
+        try:
+            (hello or (lambda: _send_quiet("say", text=VOICE_HELLO)))()
+        except Exception:
+            pass
+    return code
 
 
 def cmd_timing(args) -> int:
@@ -580,7 +713,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         return android_main(argv[1:])
     p = argparse.ArgumentParser(prog="argusctl", description="Control Argus, your voice assistant.")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("status", help="what Argus is doing")
+    s = sub.add_parser("status", help="what Argus is doing, in plain words (--json for all of it)")
+    s.add_argument("--json", action="store_true")
+    s = sub.add_parser("restart", help="restart Argus and check that it really came back (--force: stop every copy first)")
+    s.add_argument("--force", action="store_true", help="stop every copy of Argus, then start it fresh")
+    s.add_argument("--wait", type=float, default=90.0, help="seconds to wait for it to answer (default 90)")
+    sub.add_parser("quit", help="stop Argus until argusctl restart (or the next login)")
     s = sub.add_parser("say", help="speak text out loud")
     s.add_argument("text", nargs="+")
     s = sub.add_parser("ask", help="ask something as if you had said it")
@@ -603,6 +741,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--show", action="store_true", help="print it instead of writing a file")
     s = sub.add_parser("google", help="connect your Google account, read-only (Gmail, Drive, Calendar)")
     s.add_argument("action", nargs="?", choices=["connect", "status", "disconnect"], default="status")
+    s = sub.add_parser("voice", help="see or change Argus's voice and speed (it restarts and says hello in it)")
+    s.add_argument("name", nargs="?", help="e.g. af_sky, am_michael, quick, mac")
+    s.add_argument("--speed", type=float, default=None, help="1.0 is normal, 1.2 a little faster")
+    s.add_argument("--try", dest="try_it", action="store_true", help="hear it first, then choose")
+    s.add_argument("--natural", action="store_true", help="go back to the natural voice after it switched to the quick one")
+    s.add_argument("--no-restart", action="store_true", help="change the setting only")
     s = sub.add_parser("voices", help="hear the American voices, to pick one")
     s.add_argument("name", nargs="?")
     s.add_argument("--speed", type=float, default=None)
@@ -610,8 +754,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     s = sub.add_parser("key", help="list the keys, or add / replace / remove one (typed hidden)")
     s.add_argument("name", nargs="?")
     s.add_argument("--remove", action="store_true")
-    s = sub.add_parser("brains", help="the other AI models Argus asks for a second opinion; add a free one")
-    s.add_argument("action", nargs="?", choices=["list", "add"], default="list")
+    s = sub.add_parser("brains", help="other AI models (ChatGPT, Grok, Gemini, free ones) Argus asks for a second opinion")
+    s.add_argument("action", nargs="?", choices=["list", "add", "remove", "test"], default="list")
     s.add_argument("name", nargs="?")
     s = sub.add_parser("timing", help="how long recent spoken answers took, step by step")
     s.add_argument("n", nargs="?", type=int, default=10)
@@ -678,6 +822,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_brains(args)
     if args.cmd == "voices":
         return cmd_voices(args)
+    if args.cmd == "voice":
+        return cmd_voice(args)
+    if args.cmd == "status":
+        return cmd_status(args)
+    if args.cmd == "restart":
+        return cmd_restart(args)
+    if args.cmd == "quit":
+        return cmd_quit(args)
     if args.cmd == "google":
         return cmd_google(args)
     if args.cmd == "errors":
@@ -688,7 +840,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_doctor(args)
 
     simple = {
-        "status": lambda: _send("status"),
         "say": lambda: _send("say", text=" ".join(args.text)),
         "ask": lambda: _send("ask", timeout=300, text=" ".join(args.text)),
         "mic": lambda: _send("mic", on=args.state == "on"),

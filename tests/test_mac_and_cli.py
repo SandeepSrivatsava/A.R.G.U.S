@@ -619,8 +619,10 @@ def cli(capsys, *args):
 
 
 def test_argusctl_commands_reach_the_running_app(ctl, capsys):
-    code, out = cli(capsys, "status")
+    code, out = cli(capsys, "status", "--json")
     assert code == 0 and json.loads(out)["mode"] == "listening"
+    code, out = cli(capsys, "status")
+    assert code == 0 and out.startswith("Argus is listening (version ") and "Talking over Argus: by name only" in out
     cli(capsys, "say", "Hello", "there")
     assert wait_for(lambda: ctl.voice.spoken == ["Hello there"])
     assert json.loads(cli(capsys, "mic", "off")[1])["mode"] == "microphone off"

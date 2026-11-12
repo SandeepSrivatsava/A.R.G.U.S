@@ -48,6 +48,8 @@ class Settings:
     gemini_model: str = "gemini-2.5-flash"   # google_search (free tier includes Google Search grounding)
     # More brains for ask_council: "Name | https://.../chat/completions | model | KEY_NAME_IN_SECRETS"
     council: List[str] = field(default_factory=list)
+    council_paid_per_day: int = 40     # questions a day for each pay-per-use brain (ChatGPT, Grok)
+    council_wait: float = 12.0         # seconds before going with the answers that are in
     web_search: bool = True
     session_idle_minutes: float = 30.0
     max_steps: int = 30
@@ -68,7 +70,9 @@ class Settings:
     guest_minutes: float = 60.0    # "talk to everyone" lasts this long
     mic_device: str = ""
     vad_threshold: float = 0.5
-    barge_in: str = "voice"        # "voice": talk over Argus to stop it; "name": only "Argus, stop" does
+    # Talking over Argus stops it: "voice" = your enrolled voice (argusctl enroll; until then, its name),
+    # "name" = only "Argus, stop" / "Argus, ...", "words" = any new words (only with headphones)
+    barge_in: str = "voice"
     pause_during_calls: bool = True      # stop listening while another app uses a microphone (a call at the Mac)
     ignore_mic_apps: List[str] = field(default_factory=list)   # apps that don't count as a call (names or IDs)
     end_of_speech_seconds: float = 0.6   # how long a pause ends a sentence (shorter = snappier)
@@ -227,7 +231,7 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
     "android": {"messages": "android_messages", "notification_days": "android_notification_days",
                 "whatsapp_dir": "android_whatsapp_dir", "drive_assist": "android_drive_assist",
                 "speak": "android_speak"},
-    "council": {"extra": "council"},
+    "council": {"extra": "council", "paid_per_day": "council_paid_per_day", "wait_seconds": "council_wait"},
     "mail": {"enabled": "mail_enabled", "days": "mail_days"},
     "calls": {"enabled": "calls_enabled", "model": "call_model", "max_minutes": "call_max_minutes",
               "monitor": "call_monitor", "international": "call_international", "per_hour": "calls_per_hour",
@@ -266,8 +270,8 @@ def _validate(s: "Settings") -> None:
         raise ValueError('listening.guests must be "ask" or "never"')
     if s.glances_minutes and not 1 <= s.glances_minutes <= 60:
         raise ValueError("glasses.glances_minutes must be 0 (off) or between 1 and 60")
-    if s.barge_in not in ("voice", "name"):
-        raise ValueError('listening.barge_in must be "voice" or "name"')
+    if s.barge_in not in ("voice", "name", "words"):
+        raise ValueError('listening.barge_in must be "voice", "name" or "words"')
     if s.voice_engine not in ("kokoro", "piper", "say"):
         raise ValueError('voice.engine must be "kokoro", "piper" or "say"')
     from .voice import KOKORO_VOICES
@@ -277,6 +281,10 @@ def _validate(s: "Settings") -> None:
         parts = [p.strip() for p in entry.split("|")]
         if len(parts) != 4 or not parts[1].startswith("https://") or not re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", parts[3]):
             raise ValueError('council.extra entries look like "Name | https://.../chat/completions | model | KEY_NAME"')
+    if not 0 <= s.council_paid_per_day <= 1000:
+        raise ValueError("council.paid_per_day must be between 0 and 1000")
+    if not 3 <= s.council_wait <= 60:
+        raise ValueError("council.wait_seconds must be between 3 and 60")
     if s.routing not in ("auto", "off"):
         raise ValueError('brain.routing must be "auto" or "off"')
     for name, value in (("brain.voice_effort", s.voice_effort), ("brain.effort", s.effort),

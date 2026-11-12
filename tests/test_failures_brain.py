@@ -304,7 +304,11 @@ def test_a_broken_approval_dialog_counts_as_no(tmp_path):
     assert '"approval_failed"' in log
 
 
-def test_cancel_during_a_batch_skips_the_remaining_tools(tmp_path):
+def test_cancel_during_a_batch_skips_the_remaining_tools(tmp_path, monkeypatch):
+    import argus.agent as agent_mod
+    # One at a time (steps that change things): lookups may run together, and then a second one can already
+    # be under way when the first is cancelled, which made this test fail now and then on a busy machine.
+    monkeypatch.setattr(agent_mod, "PARALLEL_SAFE", frozenset())
     cancel = threading.Event()
     agent, mock = make_agent(tmp_path, lambda body: (
         [{"type": "tool_use", "name": "recall", "input": {}}, {"type": "tool_use", "name": "recall", "input": {}}],

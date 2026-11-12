@@ -62,9 +62,29 @@ def test_a_cough_or_a_short_sound_doesnt_stop_it(tmp_path):
     argus.speaker._idle.set()
 
 
-def test_without_an_enrolled_voice_new_words_stop_it_but_its_own_echo_doesnt(tmp_path):
+def test_without_an_enrolled_voice_only_its_name_stops_it(tmp_path):
+    # On a laptop its own voice comes back through the microphone garbled: "new words" made it stop itself
+    # mid-sentence and then answer its own words. Without a voiceprint, only its name stops it.
     argus, voice, _ = make_argus(tmp_path, ["the museum is open until five", "wait which one is cheaper",
-                                            "which one is cheaper I asked"])
+                                            "which one is cheaper I asked", "Argus which one is cheaper"])
+    argus.speaker._recent.append((argus.speaker.clock(), "The museum is open until five today."))
+    stopped = []
+    argus.brain.cancel = lambda: stopped.append(1)
+    talking(argus)
+    for _ in range(3):                                # its own echo, then new-looking words twice: keeps talking
+        argus._last_barge_check = 0.0
+        argus._maybe_barge_in()
+    assert stopped == []
+    argus._last_barge_check = 0.0
+    argus._maybe_barge_in()                           # "Argus, which one is cheaper": stops and listens
+    assert stopped == [1] and '"why": "its name"' in (tmp_path / "audit.jsonl").read_text()
+    assert argus._barged_recently() and argus.status()["talk_over"].startswith("by name only until")
+    argus.speaker._idle.set()
+
+
+def test_words_mode_stops_for_new_words_but_not_its_own_echo(tmp_path):
+    argus, voice, _ = make_argus(tmp_path, ["the museum is open until five", "wait which one is cheaper",
+                                            "which one is cheaper I asked"], barge_in="words")
     argus.speaker._recent.append((argus.speaker.clock(), "The museum is open until five today."))
     stopped = []
     argus.brain.cancel = lambda: stopped.append(1)
@@ -76,6 +96,27 @@ def test_without_an_enrolled_voice_new_words_stop_it_but_its_own_echo_doesnt(tmp
         argus._maybe_barge_in()
     assert stopped == [1] and '"why": "new words"' in (tmp_path / "audit.jsonl").read_text()
     argus.speaker._idle.set()
+
+
+def test_after_stopping_its_own_echo_isnt_taken_for_a_question(tmp_path):
+    # The loop in the report: stop, then hear the rest of its own sentence and answer it.
+    argus, voice, script = make_argus(tmp_path, ["open until five today I think", "is it cheaper on weekdays"],
+                                      script=Script(say("Yes, on weekdays.")))
+    argus.speaker._recent.append((argus.speaker.clock(), "The museum is open until five today, I think."))
+    argus._barge(time.monotonic(), "its name")
+    argus.handle_utterance(SPEECH)                    # the tail of its own sentence: ignored
+    assert argus.ignored == 1 and script.bodies == []
+    argus.handle_utterance(SPEECH)                    # you, no name needed
+    assert wait_for(lambda: voice.spoken[-1:] == ["Yes, on weekdays."])
+
+
+def test_an_enrolled_voice_must_match_after_stopping(tmp_path):
+    argus, voice, script = make_argus(tmp_path, ["what about the other one"], voiceprint=FakeVoicePrint(0.2),
+                                      script=Script(say("Hmm.")))
+    assert argus.voice_enrolled and not argus.voice_lock_active and argus.talk_over == "your voice"
+    argus._barge(time.monotonic(), "your voice")
+    argus.handle_utterance(SPEECH)                    # 0.2: not your voice (its own, from the speakers)
+    assert argus.ignored == 1 and script.bodies == []
 
 
 def test_name_only_mode_keeps_the_old_way(tmp_path):
@@ -186,7 +227,7 @@ def test_argusctl_voices(tmp_path, monkeypatch, capsys):
     assert [h[0] for h in heard] == ["af", "af_bella", "af_nicole", "af_sarah", "af_sky", "am_adam", "am_michael"]
     assert heard[0][1] == 1.2 and "ramen" in heard[0][2]
     out = capsys.readouterr().out
-    assert "am_michael  (yours now)" in out and "kokoro_voice" in out
+    assert "am_michael  (yours now)" in out and "argusctl voice af_sky" in out and "set kokoro_voice" not in out
     Args.name, Args.speed = "bm_lewis", 1.0
     assert cmd_voices(Args, make=Fake) == 0 and heard[-1][:2] == ("bm_lewis", 1.0)
     Args.name = "nobody"
@@ -210,7 +251,7 @@ def test_the_instructions_ask_for_a_back_and_forth():
 
 # ---- Google reviews and search --------------------------------------------------------------------------
 PLACES = {"places": [
-    {"displayName": {"text": "Udupi Palace"}, "formattedAddress": "1 Main St, Fremont, CA", "rating": 4.4,
+    {"displayName": {"text": "Udupi Palace"}, "formattedAddress": "1 Main St, Portland, OR", "rating": 4.4,
      "userRatingCount": 1832, "priceLevel": "PRICE_LEVEL_INEXPENSIVE", "currentOpeningHours": {"openNow": True},
      "primaryTypeDisplayName": {"text": "Indian Restaurant"},
      "reviewSummary": {"text": {"text": "People love the dosas; service can be slow at peak times."}},
@@ -226,7 +267,7 @@ class FakeGoogle:
         self.calls = []
         self.places = (200, PLACES)
         self.gemini = (200, {"candidates": [{"content": {"parts": [{"text": "Udupi Palace is the most "}, {"text": "praised."}]},
-                                             "groundingMetadata": {"webSearchQueries": ["best dosa fremont"],
+                                             "groundingMetadata": {"webSearchQueries": ["best dosa portland"],
                                                                    "groundingChunks": [{"web": {"uri": "https://example.com/a", "title": "Eater"}},
                                                                                        {"web": {"uri": "https://example.com/a", "title": "Eater"}},
                                                                                        {"other": 1}]}}]})
@@ -251,7 +292,7 @@ def test_google_reviews(tmp_path):
     fake = FakeGoogle()
     made, tools, ctx = tools_for(tmp_path, fake, {"GOOGLE_MAPS_API_KEY": "maps-key-1"}, where=lambda: (37.55, -121.98))
     assert "google_search" not in tools
-    out = tools["place_search"].run({"query": "dosa near Fremont", "open_now": True, "min_rating": 4.2, "limit": 3}, ctx)
+    out = tools["place_search"].run({"query": "dosa near Portland", "open_now": True, "min_rating": 4.2, "limit": 3}, ctx)
     text = out.content
     assert text.startswith(search.UNTRUSTED)
     assert "Udupi Palace: 4.4★ from 1,832 Google reviews, $, Indian Restaurant, open now" in text
@@ -260,7 +301,7 @@ def test_google_reviews(tmp_path):
     assert "Quiet Cafe: 4.0★ from 12 Google reviews, closed now" in text and "A calm spot." in text
     url, headers, body = fake.calls[0]
     assert headers["X-Goog-Api-Key"] == "maps-key-1" and "places.reviews" in headers["X-Goog-FieldMask"]
-    assert body == {"textQuery": "dosa near Fremont", "pageSize": 3, "openNow": True, "minRating": 4.0,
+    assert body == {"textQuery": "dosa near Portland", "pageSize": 3, "openNow": True, "minRating": 4.0,
                     "locationBias": {"circle": {"center": {"latitude": 37.55, "longitude": -121.98}, "radius": 15000.0}}}
     assert tools["place_search"].run({"query": " "}, ctx).is_error
     fake.places = (200, {})
@@ -280,13 +321,13 @@ def test_google_search_through_gemini(tmp_path):
     fake = FakeGoogle()
     made, tools, ctx = tools_for(tmp_path, fake, {"GEMINI_API_KEY": "gem-key-1"})
     assert "place_search" not in tools
-    out = tools["google_search"].run({"question": "best dosa in Fremont?"}, ctx).content
+    out = tools["google_search"].run({"question": "best dosa in Portland?"}, ctx).content
     assert "Google (answered by Gemini gemini-2.5-flash from Google Search):" in out
-    assert "Udupi Palace is the most praised." in out and "Searched for: best dosa fremont" in out
+    assert "Udupi Palace is the most praised." in out and "Searched for: best dosa portland" in out
     assert out.count("https://example.com/a") == 1
     url, headers, body = fake.calls[0]
     assert url.endswith("/models/gemini-2.5-flash:generateContent") and headers == {"x-goog-api-key": "gem-key-1"}
-    assert body["tools"] == [{"google_search": {}}] and "best dosa in Fremont?" in body["contents"][0]["parts"][0]["text"]
+    assert body["tools"] == [{"google_search": {}}] and "best dosa in Portland?" in body["contents"][0]["parts"][0]["text"]
     fake.gemini = (200, {"promptFeedback": {"blockReason": "SAFETY"}})
     assert "no answer (SAFETY)" in tools["google_search"].run({"question": "x"}, ctx).content
     fake.gemini = (200, {"candidates": [{"content": {"parts": []}}]})
@@ -318,7 +359,7 @@ def test_the_council(tmp_path):
     assert openai_call[1] == {"Authorization": "Bearer groq-secret"} and openai_call[2]["model"] == "llama-x"
     fake.openai = (401, {"error": {"message": "bad key groq-secret"}})
     out = tools["ask_council"].run({"question": "q"}, ctx).content
-    assert "- Groq Llama: no answer (HTTP 401 (bad key ...))" in out
+    assert "- Groq Llama: no answer (HTTP 401 (the key isn't right): bad key ...)" in out
     fake.gemini = (500, {})
     fake.openai = (200, {"choices": [{"message": {"content": "  "}}]})
     out = tools["ask_council"].run({"question": "q"}, ctx)
@@ -343,8 +384,8 @@ def test_council_settings_are_checked(tmp_path, monkeypatch):
 
 def test_a_restaurant_question_looks_in_several_places_at_once(tmp_path):
     fake = FakeGoogle()
-    script = Script(([{"type": "tool_use", "id": "a", "name": "place_search", "input": {"query": "dosa Fremont"}},
-                      {"type": "tool_use", "id": "b", "name": "google_search", "input": {"question": "best dosa Fremont"}}],
+    script = Script(([{"type": "tool_use", "id": "a", "name": "place_search", "input": {"query": "dosa Portland"}},
+                      {"type": "tool_use", "id": "b", "name": "google_search", "input": {"question": "best dosa Portland"}}],
                      "tool_use"),
                     say("Udupi Palace: 4.4 stars, and Google agrees it's the dosa spot. Want the closest one instead?"))
     agent, _ = make_agent(tmp_path, script)

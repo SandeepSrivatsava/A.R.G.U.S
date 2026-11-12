@@ -498,7 +498,7 @@ elif [ -f "$CONFIG" ] && [ "${ARGUS_REWRITE_CONFIG:-0}" != 1 ]; then
     toml_set "$CONFIG" voice engine '"kokoro"'
     toml_set "$CONFIG" voice kokoro_voice '"am_michael"'
     toml_set "$CONFIG" voice speed 1.2
-    ok "New voice: natural American (am_michael) at 1.2x. Change kokoro_voice / speed under [voice] in $CONFIG"
+    ok "New voice: natural American (am_michael) at 1.2x. Change it any time: argusctl voice   (it lists them)"
   fi
   if [ "$KEEP" = 0 ] && [ -n "$SAVED_NAME$SAVED_CITY" ]; then
     toml_set "$CONFIG" "" user_name "$(toml_str "$NAME")"
@@ -545,7 +545,7 @@ mic_device = ""                 # "" = the Mac's current microphone
 
 [voice]
 engine = "kokoro"               # "kokoro" = natural American voice, "piper" = simpler and faster, "say" = macOS
-kokoro_voice = "am_michael"     # am_michael, am_adam (men); af_bella, af_sarah, af_nicole, af_sky (women)
+kokoro_voice = "am_michael"     # or: argusctl voice af_sky (am_adam, af_bella, af_sarah, af_nicole...)
 say_voice = "Daniel"
 rate = 190
 speed = 1.2                     # 1.0 = Kokoro's own pace

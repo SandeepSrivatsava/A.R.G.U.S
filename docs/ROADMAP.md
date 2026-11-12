@@ -3,7 +3,7 @@
 Where Argus stands, what would make phase 1 solid, and what phase 2 could add. Nothing here is promised;
 it's the order that looks most useful.
 
-## Phase 1: what exists (version 2.9)
+## Phase 1: what exists (version 2.10)
 
 Argus on the Mac (always listening, speaks, uses the screen with approvals), reachable from an iPhone
 through a Siri Shortcut and from Meta glasses; Argus on an Android phone; an always-on server for when the
@@ -39,8 +39,10 @@ In rough order of value:
    Sync them over Tailscale so a fact told to one is known to all.
 8. **Voice polish.** Done in 2.5: quicker spoken answers (low effort, thinking only between steps),
    `argusctl timing`, and pausing during calls at the Mac. Next: noticing calls on the iPhone by itself
-   (needs the phase 2 app), interrupt Argus by speaking while it talks, start speaking sooner on long answers, a
-   custom-trained wake word for fewer misses, and more languages.
+   (needs the phase 2 app), interrupt Argus by speaking while it talks (done in 2.8; in 2.10 it needs your
+   voiceprint or its name, because a laptop's speakers fooled the word check), start speaking sooner on long
+   answers, echo cancellation so talking over it works without enrolling, a custom-trained wake word for fewer
+   misses, and more languages.
 9. **Calendar, mail and reminders, read-only first.** Done: mail through the Mail app (2.6), and Gmail,
    Drive and Calendar read-only through your own Google sign-in (2.7). Next: Outlook and iCloud
    ("what's on today?"), still without the right to send or delete until that has earned trust.

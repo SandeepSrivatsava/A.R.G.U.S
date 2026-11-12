@@ -46,7 +46,7 @@ WEB_SEARCH_USD = 10.0 / 1000                                  # $10 per 1,000 se
 IMAGE_TOKENS = 1600          # rough cost of one 1280x800 screenshot
 KEEP_IMAGES = 3              # older screenshots are replaced by a note
 READ_ONLY_SCREEN = ("screenshot", "zoom", "cursor_position", "wait")
-# Tools that only look things up. When Claude asks for several of these at once ("weather in Fremont and in
+# Tools that only look things up. When Claude asks for several of these at once ("weather in Austin and in
 # Chicago", "search mail and the calendar"), they run at the same time instead of one after another.
 PARALLEL_SAFE = frozenset({"weather", "route", "get_news", "fetch_page", "recall", "read_file", "list_files",
                            "search_files", "mail_search", "mail_read", "drive_search", "drive_read", "calendar",

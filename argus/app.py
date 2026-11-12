@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
-import signal
 import subprocess
 import sys
 import threading
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from . import config as config_mod
 from .agent import Agent, Events, request_cost
@@ -37,11 +36,12 @@ from .news import format_headlines
 from .phone import Gatekeeper, PhoneServer, bind_address, load_or_create_token
 from .policy import Policy
 from .push import push_from
+from . import runtime
 from .runtime import setup_logging, single_instance
 from .scheduler import Scheduler, sync_default_jobs
 from .store import Store
 from .toolbox import build_tools
-from .voice import Speaker, make_voice
+from .voice import Speaker, describe_voice, make_voice
 from .wake import DEFAULT_SOFT_VARIANTS, DEFAULT_VARIANTS, NameMatcher
 
 log = logging.getLogger("argus")
@@ -73,8 +73,12 @@ class App:
     """All of Argus, wired together. `voice=False` builds everything except the microphone (tests, CLI)."""
 
     def __init__(self, settings: config_mod.Settings, *, voice: bool = True, secrets: Optional[dict] = None,
-                 computer=None, transcriber=None, source=None, speaker_voice=None, approver=None):
+                 computer=None, transcriber=None, source=None, speaker_voice=None, approver=None,
+                 safe: bool = False, version: str = "", progress: Callable[[str], None] = lambda step: None):
         self.settings = settings
+        self.safe = safe              # the last starts failed: the plain Mac voice, no extras (runtime.Startup)
+        self.version = version
+        self.progress = progress      # what it's loading, for `argusctl restart` / `status` while it starts
         secrets = secrets if secrets is not None else config_mod.read_secrets(settings.secrets_path)
         self.audit = Audit(settings.audit_path)
         self.store = Store(settings.db_path)
@@ -116,7 +120,7 @@ class App:
         self.agent.loose_ends = lambda: followups_mod.in_prompt(self.store)
         self.glancer = None
         if self.glasses is not None:                                    # where things were seen through the glasses
-            if settings.glances_minutes:
+            if settings.glances_minutes and not safe:
                 self.glancer = sightings_mod.Glancer(self.agent, self.store, self.audit, minutes=settings.glances_minutes)
             sightings_mod.attach(self.store, self.agent.tools, glancer=self.glancer)
         self.scheduler = Scheduler(self.store, deliver=self.deliver, run_task=self.run_task, headlines=format_headlines,
@@ -151,7 +155,9 @@ class App:
     def _build_voice(self, transcriber, source, speaker_voice, approver) -> Argus:
         s = self.settings
         paths = model_paths(s.models_dir)
-        speaker = Speaker(speaker_voice or make_voice(s.voice_engine, say_voice=s.say_voice, rate=s.rate,
+        self.progress("loading the voice")
+        engine = "say" if self.safe and IS_MAC else s.voice_engine     # safe start: no voice models at all
+        speaker = Speaker(speaker_voice or make_voice(engine, say_voice=s.say_voice, rate=s.rate,
                                                       piper_dir=paths["tts"], speed=s.speed, tmp_dir=str(s.run_dir),
                                                       kokoro_dir=paths["kokoro"], kokoro_voice=s.kokoro_voice,
                                                       on_switch=lambda rate: self.audit.log(
@@ -166,17 +172,25 @@ class App:
         brain = Brain(self.agent, speaker, approver, self.audit,
                       Sessions(self.store, "voice", "mac", s.session_idle_minutes))
         voiceprint = None
-        if s.voice_lock and s.voiceprint_path.exists():
+        # Your voiceprint (argusctl enroll) is for voice lock, and for talking over Argus: it stops for your
+        # voice and not for its own from the speakers.
+        if s.voiceprint_path.exists() and (s.voice_lock or s.barge_in == "voice"):
+            self.progress("loading your voiceprint")
             voiceprint = VoicePrint(paths["speaker"], str(s.voiceprint_path), s.voice_lock_threshold)
+        self.progress("loading speech recognition")
         transcriber = transcriber or SherpaTranscriber(paths["asr"])
         calls = self._build_calls(transcriber, speaker, paths) if s.calls_enabled else None
-        return Argus(source=source or Microphone(s.mic_device or None),
+        self.progress("opening the microphone")
+        argus = Argus(source=source or Microphone(s.mic_device or None),
                      segmenter=Segmenter(paths["vad"], threshold=s.vad_threshold, min_silence=s.end_of_speech_seconds),
                      transcriber=transcriber, listener=listener, speaker=speaker,
                      brain=brain, audit=self.audit, voiceprint=voiceprint, voice_lock=s.voice_lock,
                      greeting=s.greeting, clap=ClapDetector(s.clap) if s.clap != "off" else None,
                      gate=gate, voice_approval_threshold=s.voice_approval_threshold, guests=s.guests, barge_in=s.barge_in,
                      guest_minutes=s.guest_minutes, owner_name=s.user_name, calls=calls, notify=notify)
+        argus.extra_status = lambda: {"version": self.version, "voice": describe_voice(speaker.voice),
+                                      "safe_start": self.safe}
+        return argus
 
     def _build_calls(self, transcriber, speaker, paths, line_factory=None):
         """Phone calls from your own number (calls.py): the tool Argus uses, and the switch for "hang up"."""
@@ -257,6 +271,7 @@ def run_menubar(app: App, quit_event: threading.Event) -> None:
         def __init__(self):
             super().__init__("Argus", title="◉", quit_button=None)
             self.told = None
+            self.told_silent = False
             self.status_item = rumps.MenuItem("Starting…")
             self.mic_item = rumps.MenuItem("Microphone", callback=self.toggle_mic)
             self.conversation_item = rumps.MenuItem("Conversation mode (no name needed)", callback=self.toggle_conversation)
@@ -280,13 +295,25 @@ def run_menubar(app: App, quit_event: threading.Event) -> None:
             self.conversation_item.state = int(st["conversation"])
             self.sleep_item.state = int(st["asleep"])
             self.screen_item.state = int(not st["screen_private"])
+            if st.get("mic_silent"):
+                self.status_item.title += " · no sound from the microphone"
             problem = argus.brain.last_error
             if problem and problem != self.told:          # a failed request also shows as a notification
-                try:
-                    rumps.notification("Argus", "A request failed", str(problem)[:180] + "  (argusctl errors)")
-                except Exception:
-                    pass
+                self._note("A request failed", str(problem)[:180] + "  (argusctl errors)")
             self.told = problem
+            if argus.show_requested:                      # Argus.app was opened again while running
+                argus.show_requested = False
+                self._note("Argus is already running", "It's the ◉ at the top of the screen. Say “Argus, …”")
+            if st.get("mic_silent") and not self.told_silent:
+                self.told_silent = True
+                self._note("Argus hears only silence", "Allow the microphone: System Settings → Privacy & "
+                           "Security → Microphone → Argus")
+
+        def _note(self, title, text):
+            try:
+                rumps.notification("Argus", title, text)
+            except Exception:
+                pass
 
         def toggle_mic(self, _):
             argus.set_mic(not argus.mic_wanted)
@@ -327,27 +354,64 @@ def main(headless: bool = False) -> int:
         return 2
     config_mod.ensure_private_dirs(settings)
     setup_logging(settings)
-    lock = single_instance(settings)
+    dumps = runtime.capture_crashes(settings)
+    stuck = []
+    lock = single_instance(settings, wait=runtime.LOCK_WAIT, on_stuck=stuck.append)
     if lock is None:
-        print("Argus is already running.")
+        holder, _ = runtime.lock_holder(settings)
+        try:                                       # Argus.app opened again: the running copy shows a note
+            from .control import send
+            send(settings.socket_path, "show", timeout=3)
+        except (OSError, ValueError):
+            pass
+        print(f"Argus is already running{f' (pid {holder})' if holder else ''}: look for ◉ in the menu bar. "
+              "To restart it: argusctl restart")
         return 0
+    version = runtime.version()
+    startup = runtime.Startup.begin(settings, version, dumps=dumps)
+    parts: dict = {}
+    quit_event = threading.Event()
+
+    def stop(signum: int) -> None:   # launchd, `argusctl quit` / `restart`: close what's open, quickly
+        startup.stopped()
+        if "control" in parts:
+            parts["control"].stop()               # first, so a new copy doesn't take this one for a working one
+        quit_event.set()
+        if "app" in parts:
+            parts["app"].stop()
+            parts["app"].audit.log("stopped", signal=signum)
+        if "guard" in parts:
+            parts["guard"].stop()
+
+    runtime.stop_on_signals(stop)                 # from here on, stopping always works, even while loading
+    if startup.safe:
+        log.warning("the last %d starts failed; starting safely (the Mac's own voice, no extras)", startup.failed_starts)
+    startup.phase("loading")
     try:
-        app = App(settings)
+        app = App(settings, safe=startup.safe, version=version, progress=lambda step: startup.phase(f"loading: {step}"))
     except Exception as exc:
         log.exception("Argus could not start")
+        startup.failed(str(exc))
         print(f"Argus could not start: {exc}\nRun: argusctl doctor", file=sys.stderr)
         return 2
+    parts["app"] = app
+    for pid in stuck:
+        app.audit.log("stuck_copy_stopped", pid=pid)
+    if startup.safe:
+        app.audit.log("safe_start", failed_starts=startup.failed_starts, previous=startup.data.get("previous"))
     argus = app.argus
-    quit_event = threading.Event()
     handlers = argus.handlers()
     if app.computer is not None:
         from .computer import check_permissions
         handlers["permissions"] = lambda req: {"ok": True, **check_permissions()}
+    startup.phase("starting services")
     control = ControlServer(settings.socket_path, handlers)
     control.start()
+    parts["control"] = control
     guard = Guard(settings.state_path, extra_state=argus.guard_state,
                   on_lock_change=lambda locked: settings.pause_when_locked and argus.set_locked(locked))
     guard.start()
+    parts["guard"] = guard
     watcher = None
     if settings.pause_during_calls:                  # a call at the Mac: Argus keeps out of it (micwatch.py)
         from .micwatch import MicWatch
@@ -358,18 +422,10 @@ def main(headless: bool = False) -> int:
         from .computer import request_permissions
         app.audit.log("permissions", **request_permissions())
     app.start_services()
-    app.audit.log("started", name=settings.name)
-
-    def on_term(signum, frame):  # launchd / `argusctl quit`: stop listening and leave cleanly
-        quit_event.set()
-        app.stop()
-        control.stop()
-        app.audit.log("stopped", signal=signum)
-        os._exit(0)
-
-    signal.signal(signal.SIGTERM, on_term)
+    app.audit.log("started", name=settings.name, version=version, pid=os.getpid(), safe=startup.safe)
     worker = threading.Thread(target=argus.run, name="argus-listen", daemon=True)
     worker.start()
+    startup.listening()
     try:
         if not headless:
             try:
@@ -383,6 +439,7 @@ def main(headless: bool = False) -> int:
     except KeyboardInterrupt:
         return 0
     finally:
+        startup.stopped()
         app.stop()
         guard.stop()
         control.stop()
