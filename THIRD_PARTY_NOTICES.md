@@ -49,7 +49,7 @@ Each keeps its own license.
 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 1.12.40 | Running the speech models on the Mac | Apache-2.0 |
 | [Silero VAD](https://github.com/snakers4/silero-vad) | Detecting when someone is speaking | MIT |
 | [Moonshine](https://github.com/usefulsensors/moonshine) base, English (int8 export by sherpa-onnx) | Speech to text | MIT |
-| [Piper](https://github.com/rhasspy/piper) voice `en_GB-alan-medium` | Argus's voice | Piper: MIT. The voice's training data and license are described in the model card installed with it |
+| [Piper](https://github.com/rhasspy/piper) voice `en_US-ryan-medium` | Argus's voice | Piper: MIT. The voice's training data and license are described in the model card installed with it |
 | [WeSpeaker](https://github.com/wenet-e2e/wespeaker) ResNet34 (VoxCeleb) | Optional voice lock | Apache-2.0 (model trained on VoxCeleb; see upstream) |
 | [NumPy](https://numpy.org), [python-sounddevice](https://github.com/spatialaudio/python-sounddevice) | Audio maths, microphone | BSD-3-Clause, MIT |
 | [rumps](https://github.com/jaredks/rumps), [PyObjC](https://github.com/ronaldoussoren/pyobjc) | Menu bar, Touch ID, lock detection, screen control | BSD-3-Clause, MIT |
@@ -115,3 +115,6 @@ setup and checked against its SHA-256.
 
 Talking over the assistant was also a feature of adewaskar/jarvis (MIT); Argus's version is its own code.
 Google Maps Places API (New) and the Gemini API are used with your own keys, under Google's terms.
+
+The quick voice `en_US-ryan-medium` (Piper) was trained on RyanSpeech, licensed CC BY-NC-SA 4.0: fine for your
+own use, not for a product you sell. Groq and OpenRouter are used with your own keys, under their terms.

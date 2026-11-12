@@ -56,7 +56,7 @@ def test_phone_rejects_bad_requests(phone):
 
 def test_glasses_app_round_trip(phone):
     server, _, glasses = phone
-    assert req(server, "POST", "/glasses/status", {"connected": True, "device": "Ray-Ban Meta"}) == (200, {"ok": True})
+    assert req(server, "POST", "/glasses/status", {"connected": True, "device": "Ray-Ban Meta"}) == (200, {"ok": True, "glance_every": 0})
     assert glasses.connected and "Ray-Ban Meta" in glasses.describe()
     result = {}
 

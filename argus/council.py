@@ -61,12 +61,25 @@ class Member:
         return text[:2500]
 
 
+# Free services that join the council as soon as their key is saved (argusctl brains add <name>).
+PRESETS = {
+    "groq": ("Groq (gpt-oss-120b)", "https://api.groq.com/openai/v1/chat/completions", "openai/gpt-oss-120b",
+             "GROQ_API_KEY", "console.groq.com/keys (free plan, no card)"),
+    "openrouter": ("OpenRouter (free models)", "https://openrouter.ai/api/v1/chat/completions", "openrouter/free",
+                   "OPENROUTER_API_KEY", "openrouter.ai/settings/keys (free models: 50 requests a day)"),
+}
+
+
 def members(settings, secrets: Dict[str, str]) -> List[Member]:
     found: List[Member] = []
     gemini_key = str(secrets.get("GEMINI_API_KEY") or "").strip()
     if gemini_key:
         model = getattr(settings, "gemini_model", "gemini-2.5-flash")
         found.append(Member(f"Gemini ({model})", "gemini", "", model, gemini_key))
+    for name, url, model, key_name, _where in PRESETS.values():
+        key = str(secrets.get(key_name) or "").strip()
+        if key:
+            found.append(Member(name, "openai", url, model, key))
     for entry in getattr(settings, "council", []) or []:
         name, url, model, key_name = (p.strip() for p in entry.split("|"))
         key = str(secrets.get(key_name) or "").strip()

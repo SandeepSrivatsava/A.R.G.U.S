@@ -41,6 +41,12 @@ def describe(entry: Dict[str, Any]) -> Optional[str]:
         text = f"Claude refused the conversation, so Argus started a fresh one: {entry.get('error')}"
     elif event == "handed_over":
         text = f"(note) The quick model passed a request up to {entry.get('to')}"
+    elif event == "barge_in":
+        text = f"(note) Argus stopped talking because it heard {entry.get('why')}" + (
+            f" (voice match {entry.get('score')})" if entry.get("score") is not None else "")
+    elif event == "voice_switched":
+        text = (f"The natural voice was too slow on this computer ({entry.get('work_per_second')} s of work per "
+                "second of speech), so Argus switched to the quick voice")
     elif event == "tool_slow":
         text = f"(note) The {entry.get('tool')} tool took {entry.get('seconds')} s"
     else:
@@ -146,6 +152,10 @@ def build_report(settings, secrets: Dict[str, str], version: str = "") -> str:
              f"  phone: {settings.phone_type}, gateway {'on' if settings.phone_enabled else 'off'}; "
              f"mail {'on' if settings.mail_enabled else 'off'}; "
              f"Google {'connected' if secrets.get('GOOGLE_REFRESH_TOKEN') else 'not connected'}; web search {'on' if settings.web_search else 'off'}",
+             f"  voice: {settings.voice_engine} {settings.kokoro_voice} at {settings.speed}x"
+             + (" (switched to the quick voice: the natural one was too slow here)"
+                if (settings.run_dir / "natural-voice-too-slow").exists() else "")
+             + f"; interrupting: {settings.barge_in}",
              "  keys saved: " + (", ".join(sorted(k for k, v in secrets.items() if v)) or "none"),
              "",
              f"Requests in the log: {len(turns)}, failed: {len(failed)}; by model: "
@@ -156,7 +166,8 @@ def build_report(settings, secrets: Dict[str, str], version: str = "") -> str:
     lines += ["", "Recent timings (seconds)"]
     timings = [e for e in entries if e.get("event") == "timing"][-8:]
     lines += [f"  {str(e.get('ts', ''))[11:19]} first word {e.get('first_word_s')}, speech to text "
-              f"{e.get('speech_to_text_s')}, Claude {e.get('claude_s')}, tools {e.get('tools')}"
+              f"{e.get('speech_to_text_s')}, Claude {e.get('claude_s')}, tools {e.get('tools')}, "
+              f"voice (made, sound) {e.get('voice')}"
               for e in timings] or ["  none"]
     lines += ["", "From the app's log (warnings and errors)"]
     lines += ["  " + line for line in log_trouble(logs / "argus.log")] or ["  none"]

@@ -49,3 +49,10 @@ Then in the app: **Settings** → enter your Mac's address (`http://100.x.y.z:87
   described. Nothing is stored on the phone.
 * The token is kept in the iPhone's Keychain. Meta's toolkit analytics are switched off in `project.yml`.
 * Anything risky still needs your OK at the Mac (Touch ID, or your voice there). The phone can't approve.
+
+## Glances ("where did I put my keys?")
+
+With `glances_minutes = 3` under `[glasses]` on the Mac, the app sends a photo every few minutes while it is
+open and the glasses are connected, so Argus can note where your things are. The Mac tells the app how often
+(or not at all); nothing to set in the app. The app has to be open: iOS doesn't let it use the glasses'
+camera from the background for long.

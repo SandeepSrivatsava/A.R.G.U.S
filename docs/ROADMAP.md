@@ -3,7 +3,7 @@
 Where Argus stands, what would make phase 1 solid, and what phase 2 could add. Nothing here is promised;
 it's the order that looks most useful.
 
-## Phase 1: what exists (version 2.8)
+## Phase 1: what exists (version 2.9)
 
 Argus on the Mac (always listening, speaks, uses the screen with approvals), reachable from an iPhone
 through a Siri Shortcut and from Meta glasses; Argus on an Android phone; an always-on server for when the

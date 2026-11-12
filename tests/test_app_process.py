@@ -23,7 +23,7 @@ def argus_home(tmp_path):
     home = tmp_path / "argus-home"
     (home / "models").mkdir(parents=True)
     for name, target in (("silero_vad.onnx", "silero_vad.onnx"), ("asr", "sherpa-onnx-moonshine-base-en-int8"),
-                         ("tts", "vits-piper-en_GB-alan-medium")):
+                         ("tts", "vits-piper-en_US-ryan-medium")):
         os.symlink(MODELS / target, home / "models" / name)
     mock = ClaudeMock(rules).start()
     (home / "config.toml").write_text(

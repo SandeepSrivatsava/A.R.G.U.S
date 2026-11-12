@@ -631,6 +631,12 @@ def describe_call(name: str, args: Dict[str, Any]) -> str:
         return f"read Drive file {str(args.get('id'))[:40]}"
     if name == "calendar":
         return f"calendar {args.get('start')}..{args.get('end') or args.get('start')}"
+    if name == "follow_up":
+        return f"loose end {args.get('action')}: {str(args.get('what') or args.get('id') or '')[:100]}"
+    if name == "note_seen":
+        return f"noted {len(args.get('things') or [])} things seen"
+    if name == "find_seen":
+        return f"where was it seen: {str(args.get('thing'))[:60]}"
     if name == "place_search":
         return f"Google Maps: {str(args.get('query'))[:100]}"
     if name == "ask_council":

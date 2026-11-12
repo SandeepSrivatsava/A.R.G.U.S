@@ -541,10 +541,10 @@ def test_voices_that_need_a_reset_get_one_before_each_sentence():
     assert wait_for(lambda: calls == ["reset", "Hello there."])
 
 
-@pytest.mark.skipif(not (MODELS / "vits-piper-en_GB-alan-medium").exists(), reason="voice model missing")
+@pytest.mark.skipif(not (MODELS / "vits-piper-en_US-ryan-medium").exists(), reason="voice model missing")
 def test_piper_with_nothing_to_say_plays_nothing_and_cleans_up_anyway(tmp_path, monkeypatch):
     from argus import voice as voice_mod
-    piper = voice_mod.PiperVoice(str(MODELS / "vits-piper-en_GB-alan-medium"), tmp_dir=str(tmp_path))
+    piper = voice_mod.PiperVoice(str(MODELS / "vits-piper-en_US-ryan-medium"), tmp_dir=str(tmp_path))
     played = []
     monkeypatch.setattr(piper, "_run", played.append)
     monkeypatch.setattr(piper, "synthesize", lambda text: (np.zeros(0, np.float32), 22050))

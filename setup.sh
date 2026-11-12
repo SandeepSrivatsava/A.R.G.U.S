@@ -40,7 +40,7 @@ MODEL_BASE="https://github.com/k2-fsa/sherpa-onnx/releases/download"
 MODELS="
 asr-models/silero_vad.onnx 9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6 silero_vad.onnx
 asr-models/sherpa-onnx-moonshine-base-en-int8.tar.bz2 21870cecaa2e44e4e2bf63e02d1072bed183ccd10284871353bd9d24dad14e5e asr
-tts-models/vits-piper-en_GB-alan-medium.tar.bz2 a48d4017da0f77668b27bed63fe6e04dd64c6397e1fadad4f460efb0ef7c9012 tts
+tts-models/vits-piper-en_US-ryan-medium.tar.bz2 c546af78b6395b4e7c4ce1ed899438b64426a362f5d4ec5fecd090ded9ad7505 tts
 tts-models/kokoro-int8-en-v0_19.tar.bz2 c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd kokoro
 speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012 speaker.onnx
 "

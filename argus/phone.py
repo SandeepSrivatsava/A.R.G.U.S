@@ -18,6 +18,8 @@ The Argus iPhone app (Meta glasses):
 POST /glasses/status {"connected": true, "device": "Ray-Ban Meta"} -> {"ok": true}
 GET  /glasses/next                       -> {"capture": "<request id>"} or {} (long poll, ~25 s)
 POST /glasses/frame {"request_id": "...", "image": "<base64 jpeg>"} -> {"ok": true}
+POST /glasses/glance {"image": "<base64 jpeg>"}  -> {"ok": true, "taken": true}   (only with glances switched on;
+     /glasses/status answers "glance_every": seconds, 0 = don't send any)
 """
 from __future__ import annotations
 
@@ -134,7 +136,9 @@ class Gatekeeper:
 class PhoneServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, ask: Callable[[Any], str], gate: Gatekeeper, audit: Audit, glasses=None):
+    def __init__(self, address, ask: Callable[[Any], str], gate: Gatekeeper, audit: Audit, glasses=None,
+                 glancer=None):
+        self.glancer = glancer
         super().__init__(address, PhoneHandler)
         self.ask = ask              # runs one request through Argus's brain (phone channel) and returns the reply
         self.gate = gate
@@ -210,7 +214,19 @@ class PhoneHandler(BaseHTTPRequestHandler):
             if self.path == "/glasses/status":
                 self.server.glasses.update_status(bool(body.get("connected")), str(body.get("device") or ""))
                 self.server.audit.log("glasses", connected=bool(body.get("connected")), device=body.get("device"))
-                self._send(200, {"ok": True})
+                glancer = self.server.glancer
+                self._send(200, {"ok": True, "glance_every": glancer.interval if glancer is not None else 0})
+            elif self.path == "/glasses/glance":
+                glancer = self.server.glancer
+                if glancer is None:
+                    self._send(403, {"error": "glances are off"})
+                    return
+                try:
+                    url = image_data_url(str(body.get("image") or ""))
+                except ValueError as exc:
+                    self._send(400, {"error": str(exc)})
+                    return
+                self._send(200, {"ok": True, "taken": glancer.glance(url.split(",", 1)[1])})
             elif self.path == "/glasses/frame":
                 try:
                     url = image_data_url(str(body.get("image") or ""))

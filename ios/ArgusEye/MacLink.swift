@@ -57,8 +57,17 @@ struct MacLink {
         return text
     }
 
-    func glassesStatus(connected: Bool, device: String) async throws {
-        _ = try await request("POST", "glasses/status", ["connected": connected, "device": device], timeout: 15)
+    /// Tells the Mac whether the glasses are on. The answer says how often to send a glance (0: never).
+    @discardableResult
+    func glassesStatus(connected: Bool, device: String) async throws -> Int {
+        let reply = try await request("POST", "glasses/status", ["connected": connected, "device": device], timeout: 15)
+        return reply["glance_every"] as? Int ?? 0
+    }
+
+    /// A photo sent by itself, so Argus knows where things are ("where did I put my keys?"). The Mac keeps a few
+    /// words about what's in view, never the photo. Only sent when you switched glances on, on the Mac.
+    func sendGlance(jpeg: Data) async throws {
+        _ = try await request("POST", "glasses/glance", ["image": jpeg.base64EncodedString()], timeout: 90)
     }
 
     /// Long poll: returns a request id when Argus wants a picture from the glasses.

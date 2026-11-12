@@ -166,6 +166,14 @@ class _NeuralVoice(_ProcessVoice):
         self._made: Dict[str, Tuple[np.ndarray, int]] = {}
         self._made_lock = threading.Lock()
         self.upcoming: List[str] = []      # set by the Speaker: what comes after the sentence being spoken
+        self.timings: Deque[Tuple[float, float, float]] = deque(maxlen=60)   # (when, seconds to make, seconds of sound)
+
+    def _timed(self, text: str) -> Tuple[np.ndarray, int]:
+        began = time.monotonic()
+        samples, rate = self.synthesize(text)
+        if rate and samples.size:
+            self.timings.append((began, time.monotonic() - began, samples.size / rate))
+        return samples, rate
 
     def synthesize(self, text: str) -> Tuple[np.ndarray, int]:  # pragma: no cover - interface
         raise NotImplementedError
@@ -178,7 +186,7 @@ class _NeuralVoice(_ProcessVoice):
 
             def make():
                 try:
-                    out = self.synthesize(text)
+                    out = self._timed(text)
                 except Exception:          # speak() will try again and report it
                     return
                 with self._made_lock:
@@ -194,7 +202,7 @@ class _NeuralVoice(_ProcessVoice):
             thread.join(30)
         with self._made_lock:
             made = self._made.pop(text, None)
-        return made if made is not None else self.synthesize(text)
+        return made if made is not None else self._timed(text)
 
     def stop(self) -> None:
         with self._made_lock:
@@ -301,20 +309,79 @@ class RecordingVoice(Voice):
         self._stop.set()
 
 
+class AdaptiveVoice:
+    """The natural voice when this computer can make it fast enough, otherwise the quick one.
+
+    Making a sentence has to take clearly less time than saying it, or there are gaps between sentences. After
+    a few sentences, if the natural voice is too slow here, Argus switches to the quick voice for good (a note
+    is left in `marker`; `argusctl voices --natural` removes it, to try the natural voice again)."""
+    SAMPLES = 4
+    TOO_SLOW = 0.7       # seconds of work per second of speech
+
+    def __init__(self, natural, quick, marker: Optional[Path] = None,
+                 on_switch: Callable[[float], None] = lambda _rate: None):
+        self.natural, self.quick, self.marker, self.on_switch = natural, quick, marker, on_switch
+        self.current = natural
+
+    @property
+    def timings(self):
+        return self.current.timings
+
+    @property
+    def upcoming(self) -> List[str]:
+        return self.current.upcoming
+
+    @upcoming.setter
+    def upcoming(self, value: List[str]) -> None:
+        self.current.upcoming = value
+
+    def reset(self) -> None:
+        self.current.reset()
+
+    def stop(self) -> None:
+        self.current.stop()
+
+    def speak(self, text: str) -> None:
+        self.current.speak(text)
+        if self.current is self.natural:
+            recent = list(self.natural.timings)[-self.SAMPLES:]
+            if len(recent) == self.SAMPLES:
+                rate = sorted(made / max(sound, 0.1) for _, made, sound in recent)[self.SAMPLES // 2]
+                if rate > self.TOO_SLOW:
+                    log.warning("the natural voice is too slow on this computer (%.2f s of work per second of "
+                                "speech); switching to the quick voice", rate)
+                    self.current = self.quick
+                    self.natural.stop()
+                    if self.marker is not None:
+                        try:
+                            self.marker.write_text(f"{rate:.2f}\n")
+                        except OSError:
+                            pass
+                    self.on_switch(rate)
+
+
 def make_voice(engine: str, *, say_voice: str = "Daniel", rate: int = 190, piper_dir: str = "",
                speed: float = 1.0, tmp_dir: Optional[str] = None, kokoro_dir: str = "",
-               kokoro_voice: str = "am_michael") -> Voice:
+               kokoro_voice: str = "am_michael", on_switch: Callable[[float], None] = lambda _rate: None) -> Voice:
+    quick: Optional[Voice] = None
+    if engine in ("kokoro", "piper"):
+        try:        # Piper's pace at 1.0 is already brisk; go a little easier on the speed-up
+            quick = PiperVoice(piper_dir, speed=1.0 + (speed - 1.0) / 2 if engine == "kokoro" else speed, tmp_dir=tmp_dir)
+        except Exception as exc:  # missing model or library: fall back rather than go mute
+            log.warning("Piper voice unavailable (%s)", exc)
     if engine == "kokoro":
+        marker = Path(tmp_dir) / "natural-voice-too-slow" if tmp_dir else None
+        if marker is not None and marker.exists() and quick is not None:
+            log.info("using the quick voice: the natural one was too slow here (%s)", marker)
+            return quick
         try:
-            return KokoroVoice(kokoro_dir, voice=kokoro_voice, speed=speed, tmp_dir=tmp_dir)
+            natural = KokoroVoice(kokoro_dir, voice=kokoro_voice, speed=speed, tmp_dir=tmp_dir)
+            return AdaptiveVoice(natural, quick, marker, on_switch) if quick is not None else natural
         except Exception as exc:
             log.warning("Kokoro voice unavailable (%s); using the Piper voice", exc)
-            engine = "piper"
-    if engine == "piper":
-        try:
-            return PiperVoice(piper_dir, speed=speed, tmp_dir=tmp_dir)
-        except Exception as exc:  # missing model or library: fall back rather than go mute
-            log.warning("Piper voice unavailable (%s); using macOS say", exc)
+    if quick is not None:
+        return quick
+    log.warning("using macOS say")
     return SayVoice(say_voice, rate)
 
 
@@ -368,6 +435,11 @@ class Speaker:
 
     def wait_idle(self, timeout: Optional[float] = None) -> bool:
         return self._idle.wait(timeout)
+
+    def voice_timings(self, since: float) -> List[Tuple[float, float]]:
+        """(seconds to make, seconds of sound) for each sentence made since `since` (time.monotonic)."""
+        return [(round(made, 2), round(sound, 2)) for at, made, sound in list(getattr(self.voice, "timings", ()))
+                if at >= since]
 
     def recently_spoken(self) -> List[str]:
         cutoff = self.clock() - self.echo_seconds

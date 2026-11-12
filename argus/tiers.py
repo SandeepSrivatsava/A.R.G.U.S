@@ -37,6 +37,8 @@ _MAIN = re.compile(
 def choose(content: Any, channel: str, settings) -> Tuple[str, str]:
     """(tier, model) for a request."""
     main = settings.model
+    if channel == "glance" and settings.light_model:      # noting where things are: the quick model is plenty
+        return MAIN, settings.light_model
     if getattr(settings, "routing", "auto") != "auto" or channel not in ROUTED_CHANNELS:
         return MAIN, main
     if not isinstance(content, str):                 # a photo or screenshot came with it

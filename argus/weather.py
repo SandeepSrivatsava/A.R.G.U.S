@@ -623,7 +623,7 @@ def trip_request(trip: Dict[str, Any], user: str) -> str:
 
 def weather_tools(tools: WeatherTools):
     from .toolbox import Tool
-    channels = frozenset({"voice", "phone", "scheduler", "cli", "android", "trip"})
+    channels = frozenset({"voice", "phone", "scheduler", "cli", "android", "trip", "followup"})
     return [Tool("weather", WEATHER_DESCRIPTION, WEATHER_SCHEMA, tools.weather_tool, channels | {"guest"}),
             Tool("watch_trip", TRIP_DESCRIPTION, TRIP_SCHEMA, tools.trip_tool,
                  frozenset({"voice", "phone", "cli", "android"}))]

@@ -321,3 +321,12 @@ one step at a time, in order.
 
 Stopping when you talk uses the same on-device voice check as the voice lock: nothing extra is recorded or
 sent. While Argus speaks, the microphone audio is checked for your voice and then thrown away, as before.
+
+## 24. Booking by phone, loose ends, and what the glasses saw
+
+| Protection | Where |
+|---|---|
+| A call is still only made after your OK for that number (dialog + Touch ID, or your voice + code word), with the existing limits (no emergency or paid numbers, 6 an hour, never card numbers). | `argus/policy.py`, `argus/calls.py` |
+| A loose-end check runs on its own channel with look-up tools only (search, places, weather, flights, calendar): no files, shell, mail, screen, calls or messages, and nothing can be approved there. At most 12, each for at most 90 days, quiet at night. | `argus/followups.py` |
+| Glances are off unless you set `glances_minutes`. Each glance sends one photo to Claude's quick model with a single tool (note where belongings are); people, screens and documents are not to be noted; the photo is dropped from the conversation store straight away and never written to disk or the logs. Sightings are a few words, kept 14 days in Argus's database on the Mac. At most one glance per interval; "stop watching" pauses them. | `argus/sightings.py`, `argus/phone.py` |
+| `argusctl key` takes a key hidden from the screen and never prints more than its last four characters. | `argus/__main__.py` |

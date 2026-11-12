@@ -28,7 +28,16 @@ The free tier of Gemini 2.5 Flash includes Grounding with Google Search, with a 
 searches. Only the question is sent, never your memory, mail or the conversation; on the free tier Google
 may use what's sent to improve its products. Change the model with `gemini_model` under `[brain]`.
 
-## More brains for the council
+## More brains for the council: the quick way
+
+```bash
+argusctl brains add groq          # free key from console.groq.com/keys; you paste it hidden
+argusctl brains add openrouter    # free key from openrouter.ai/settings/keys
+argusctl restart
+argusctl brains                   # shows who's in
+```
+
+## Any other service
 
 Any service with the common OpenAI-style chat API (many have free tiers, such as Groq or OpenRouter's free
 models) can join. Put its key in secrets.env without typing it on a command line:

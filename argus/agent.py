@@ -107,7 +107,7 @@ class Turn:
 # How much Claude thinks before answering. Spoken answers should start quickly: low effort, and on Sonnet 5.5 no
 # thinking up front ("between_tools": it may still think between tool calls). The API docs recommend low or
 # medium for chat and other latency-sensitive work. Scheduled tasks and the command line get more effort.
-SPOKEN_CHANNELS = frozenset({"voice", "phone", "android", "guest", "trip"})
+SPOKEN_CHANNELS = frozenset({"voice", "phone", "android", "guest", "trip", "followup", "glance"})
 _EFFORT_MODELS = re.compile(r"^claude-(fable|mythos|opus|sonnet|haiku)-5|^claude-opus-4-[5-8]|^claude-sonnet-4-6")
 THINKING_TYPES = ("thinking", "redacted_thinking")
 
@@ -263,6 +263,7 @@ class Agent:
         self.computer = computer
         self.glasses = glasses
         self.glasses_status = glasses_status
+        self.loose_ends: Callable[[], Sequence[Tuple[int, str]]] = lambda: ()     # set by followups (app.py)
         # Argus's own keys and tokens: never shown to Claude, never sent anywhere by a tool.
         self.secrets = sorted({str(v) for v in secrets if v and len(str(v)) >= 8}, key=len, reverse=True)
         self._lock = threading.Lock()
@@ -293,7 +294,7 @@ class Agent:
         specs = [t.spec() for t in self.tools.values() if channel in t.channels]
         if tier == tiers.LIGHT:
             specs.append(dict(tiers.HAND_OVER))
-        if self.settings.web_search:
+        if self.settings.web_search and channel != "glance":
             specs.append(web_search_spec(self.settings.blocked_sites, self.settings.city, self.settings.timezone))
         desktop = channel == "voice"
         if self.computer is not None and (desktop or channel == "phone") and tier != tiers.LIGHT:
@@ -455,6 +456,7 @@ class Agent:
                                facts=() if guest else self.store.facts(limit=40),
                                lessons=[(i, text) for i, text, _ in lessons],
                                glasses=None if guest else self.glasses_status(), device=self.device,
+                               loose_ends=() if guest or channel in ("glance", "followup") else self.loose_ends(),
                                phone=getattr(self.settings, "phone_type", "iphone"),
                                location_known=bool(location or locate) and not guest)
         ctx = Context(channel=channel, workspace=self.settings.workspace, store=self.store, cancel=cancel,

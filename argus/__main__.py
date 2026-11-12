@@ -1,6 +1,7 @@
 """argusctl: control Argus from the Terminal."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 import argparse
 import json
 import sys
@@ -281,6 +282,73 @@ def describe_timing(entry: dict, end_of_speech: float = 0.6) -> str:
     return f"{when}  first word {total:.1f} s after you stopped talking: " + "; ".join(bits)
 
 
+KNOWN_KEYS = {
+    "GOOGLE_MAPS_API_KEY": "Google Maps: routes, and reviews with Places API (New) switched on",
+    "TOMTOM_API_KEY": "TomTom: traffic incidents and a third route opinion",
+    "FLIGHTAWARE_API_KEY": "FlightAware AeroAPI: a flight's delays and cancellations",
+    "GEMINI_API_KEY": "Gemini (free): Google search and a second opinion",
+    "GROQ_API_KEY": "Groq (free): another opinion in the council",
+    "OPENROUTER_API_KEY": "OpenRouter (free models): another opinion in the council",
+    "ANTHROPIC_API_KEY": "Claude",
+}
+
+
+def cmd_key(args, *, ask_secret=None) -> int:
+    """Save, replace or remove one key without running setup again. The key is typed hidden, never shown."""
+    import getpass
+    settings = config_mod.load()
+    path = settings.secrets_path
+    saved = config_mod.read_secrets(path) if path.exists() else {}
+    name = (args.name or "").upper()
+    if not name:
+        print("Keys Argus can use (argusctl key NAME to add or replace one, argusctl key NAME --remove to delete):")
+        for key, what in KNOWN_KEYS.items():
+            value = saved.get(key, "")
+            print(f"  {key:<22} {'saved (ending ...' + value[-4:] + ')' if value else 'not set':<26} {what}")
+        return 0
+    if name not in KNOWN_KEYS:
+        print(f"Unknown key {name}. Run argusctl key to see the names.")
+        return 1
+    if args.remove:
+        config_mod.write_secret(path, name, "")
+        print(f"Removed {name}. Run argusctl restart.")
+        return 0
+    value = (ask_secret or getpass.getpass)(f"{name} (hidden as you type or paste; Enter cancels): ").strip()
+    if not value:
+        print("Nothing changed.")
+        return 1
+    if any(c.isspace() for c in value) or len(value) < 8:
+        print("That doesn't look like a key (too short, or it has spaces).")
+        return 1
+    config_mod.write_secret(path, name, value)
+    print(f"Saved {name} (ending ...{value[-4:]}). Run argusctl restart.")
+    return 0
+
+
+def cmd_brains(args, *, ask_secret=None) -> int:
+    """The other AI models Argus asks for a second opinion; add a free one by name."""
+    from . import council
+    settings = config_mod.load()
+    saved = config_mod.read_secrets(settings.secrets_path) if settings.secrets_path.exists() else {}
+    if args.action == "add":
+        preset = council.PRESETS.get((args.name or "").lower())
+        if preset is None:
+            print("Choose one of: " + ", ".join(council.PRESETS) + "   (Gemini: argusctl key GEMINI_API_KEY)")
+            return 1
+        print(f"{preset[0]}: get a free key at {preset[4]}")
+        return cmd_key(SimpleNamespace(name=preset[3], remove=False), ask_secret=ask_secret)
+    team = council.members(settings, saved)
+    print("Claude answers; these give it a second opinion (only the question is sent to them):")
+    for member in team:
+        print(f"  on   {member.name}")
+    if not saved.get("GEMINI_API_KEY"):
+        print("  off  Gemini (free)            add: argusctl key GEMINI_API_KEY   (key from aistudio.google.com/apikey)")
+    for short, preset in council.PRESETS.items():
+        if not saved.get(preset[3]):
+            print(f"  off  {preset[0]:<24} add: argusctl brains add {short}   (key from {preset[4]})")
+    return 0
+
+
 VOICE_SAMPLE = "Hey! I found three great ramen spots near you. Want the closest one, or the best rated?"
 
 
@@ -289,6 +357,11 @@ def cmd_voices(args, *, make=None) -> int:
     from .hearing import model_paths
     from .voice import KOKORO_VOICES, KokoroVoice
     settings = config_mod.load()
+    if getattr(args, "natural", False):
+        marker = settings.run_dir / "natural-voice-too-slow"
+        marker.unlink(missing_ok=True)
+        print("Argus will try the natural voice again after: argusctl restart")
+        return 0
     make = make or (lambda name, speed: KokoroVoice(model_paths(str(settings.models_dir))["kokoro"], voice=name,
                                                      speed=speed))
     names = [args.name] if args.name else [n for n in KOKORO_VOICES if n.startswith("a")]   # American
@@ -533,6 +606,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     s = sub.add_parser("voices", help="hear the American voices, to pick one")
     s.add_argument("name", nargs="?")
     s.add_argument("--speed", type=float, default=None)
+    s.add_argument("--natural", action="store_true", help="try the natural voice again after Argus switched to the quick one")
+    s = sub.add_parser("key", help="list the keys, or add / replace / remove one (typed hidden)")
+    s.add_argument("name", nargs="?")
+    s.add_argument("--remove", action="store_true")
+    s = sub.add_parser("brains", help="the other AI models Argus asks for a second opinion; add a free one")
+    s.add_argument("action", nargs="?", choices=["list", "add"], default="list")
+    s.add_argument("name", nargs="?")
     s = sub.add_parser("timing", help="how long recent spoken answers took, step by step")
     s.add_argument("n", nargs="?", type=int, default=10)
     s = sub.add_parser("enroll", help="teach Argus your voice (voice lock) and how you say its name")
@@ -592,6 +672,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_log(args)
     if args.cmd == "timing":
         return cmd_timing(args)
+    if args.cmd == "key":
+        return cmd_key(args)
+    if args.cmd == "brains":
+        return cmd_brains(args)
     if args.cmd == "voices":
         return cmd_voices(args)
     if args.cmd == "google":

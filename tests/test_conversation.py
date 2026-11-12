@@ -28,7 +28,7 @@ def talking(argus, seconds=1.0):
 
 
 def test_your_voice_stops_argus_and_what_you_say_needs_no_name(tmp_path):
-    argus, voice, script = make_argus(tmp_path, ["actually, somewhere quieter"], voiceprint=FakeVoicePrint(0.2, 0.8),
+    argus, voice, script = make_argus(tmp_path, ["actually, somewhere quieter"], voiceprint=FakeVoicePrint(0.2, 0.8, 0.8),
                                       voice_lock=True, script=Script(say("Sure, a quiet place then.")))
     stopped = []
     real_cancel = argus.brain.cancel
@@ -36,8 +36,9 @@ def test_your_voice_stops_argus_and_what_you_say_needs_no_name(tmp_path):
     talking(argus)
     argus._maybe_barge_in()                           # 0.2: that's Argus's own voice from the speakers
     assert stopped == []
-    argus._last_barge_check = 0.0
-    argus._maybe_barge_in()                           # 0.8: that's you
+    for _ in range(2):                                # 0.8 twice in a row: that's you
+        argus._last_barge_check = 0.0
+        argus._maybe_barge_in()
     assert stopped == [1]
     argus.speaker._idle.set()
     argus.segmenter.speech_active = False
@@ -62,15 +63,17 @@ def test_a_cough_or_a_short_sound_doesnt_stop_it(tmp_path):
 
 
 def test_without_an_enrolled_voice_new_words_stop_it_but_its_own_echo_doesnt(tmp_path):
-    argus, voice, _ = make_argus(tmp_path, ["the museum is open until five", "wait which one is cheaper"])
+    argus, voice, _ = make_argus(tmp_path, ["the museum is open until five", "wait which one is cheaper",
+                                            "which one is cheaper I asked"])
     argus.speaker._recent.append((argus.speaker.clock(), "The museum is open until five today."))
     stopped = []
     argus.brain.cancel = lambda: stopped.append(1)
     talking(argus)
     argus._maybe_barge_in()                           # its own sentence, heard back: keeps talking
     assert stopped == []
-    argus._last_barge_check = 0.0
-    argus._maybe_barge_in()
+    for _ in range(2):
+        argus._last_barge_check = 0.0
+        argus._maybe_barge_in()
     assert stopped == [1] and '"why": "new words"' in (tmp_path / "audit.jsonl").read_text()
     argus.speaker._idle.set()
 
@@ -303,10 +306,10 @@ def test_google_search_through_gemini(tmp_path):
 
 def test_the_council(tmp_path):
     fake = FakeGoogle()
-    settings = make_settings(tmp_path, council=["Groq Llama | https://api.example.com/v1/chat/completions | llama-x | GROQ_API_KEY",
+    settings = make_settings(tmp_path, council=["Groq Llama | https://api.example.com/v1/chat/completions | llama-x | MY_LLAMA_KEY",
                                                  "Nobody | https://api.example.org/v1/chat/completions | m | MISSING_KEY"])
     tools = {}
-    c = council.attach(settings, {"GEMINI_API_KEY": "gem", "GROQ_API_KEY": "groq-secret"}, tools, request=fake)
+    c = council.attach(settings, {"GEMINI_API_KEY": "gem", "MY_LLAMA_KEY": "groq-secret"}, tools, request=fake)
     assert [m.name for m in c.team] == ["Gemini (gemini-2.5-flash)", "Groq Llama"]
     ctx = Context(channel="voice", workspace=tmp_path, store=None)
     out = tools["ask_council"].run({"question": "Should I visit NYC in December or April?"}, ctx).content

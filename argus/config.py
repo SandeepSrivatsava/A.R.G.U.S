@@ -94,6 +94,7 @@ class Settings:
     phone_host: str = ""
     phone_port: int = 8765
     glasses_enabled: bool = True
+    glances_minutes: float = 0.0   # >0: the iPhone app sends a photo this often so Argus knows where things are
     # maps and live traffic (maps.py)
     maps_app: str = ""             # the navigation app links open in: "apple", "google" or "waze" ("" = by phone type)
     maps_apps: List[str] = field(default_factory=list)   # the other navigation apps on the phone, offered as well
@@ -219,7 +220,7 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
     "security": {k: k for k in ("approval_needs_touch_id", "pause_when_locked", "screen_control",
                                 "blocked_apps", "blocked_sites", "voice_approvals", "voice_approval_threshold")},
     "phone": {"type": "phone_type", "enabled": "phone_enabled", "host": "phone_host", "port": "phone_port"},
-    "glasses": {"enabled": "glasses_enabled"},
+    "glasses": {"enabled": "glasses_enabled", "glances_minutes": "glances_minutes"},
     "maps": {"app": "maps_app", "apps": "maps_apps", "traffic": "maps_traffic", "units": "maps_units",
              "news": "maps_news"},
     "push": {"enabled": "push_enabled", "server": "push_server"},
@@ -263,6 +264,8 @@ def _validate(s: "Settings") -> None:
         raise ValueError('listening.clap must be "double", "single" or "off"')
     if s.guests not in ("ask", "never"):
         raise ValueError('listening.guests must be "ask" or "never"')
+    if s.glances_minutes and not 1 <= s.glances_minutes <= 60:
+        raise ValueError("glasses.glances_minutes must be 0 (off) or between 1 and 60")
     if s.barge_in not in ("voice", "name"):
         raise ValueError('listening.barge_in must be "voice" or "name"')
     if s.voice_engine not in ("kokoro", "piper", "say"):

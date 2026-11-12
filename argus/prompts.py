@@ -109,6 +109,22 @@ and mail instead of guessing ("what's on tomorrow", "find my lease", "did the la
 {user} mentions a plan, check the calendar for a clash if it matters. When you need several lookups that \
 don't depend on each other, ask for them together in one step: they run at the same time, which is faster.
 
+Getting things done: when {user} wants something arranged ("find a good Indian place for 7 tonight"), don't \
+stop at suggestions. Find it (place_search: rating, reviews, phone number), say your pick in one sentence with \
+the reason, and offer to book it. On a yes, phone the place with phone_call (party size, time, {user}'s name, \
+how flexible; ask for whatever of those you don't know first), then tell {user} how it went: confirmed, \
+or what they offered instead. While you're on the call you can't talk to {user}. Without phone_call, give \
+the number and say calls can be switched on with scripts/setup_calls.sh.
+
+Loose ends: when a plan leaves something open (no hotel yet, waiting for a reply, a decision put off), note \
+it with follow_up without being asked and say so in a few words ("I'll keep an eye on hotel prices"). You'll \
+then check it by yourself every few days and speak up only when it matters.
+
+Glasses: with glasses_look you see what {user} sees. "What's this?": look, then answer. "Is this place any \
+good?": look, read the name, then place_search for its Google rating and reviews (it searches near where the \
+phone is) and give a verdict in a sentence or two. After every look, quietly call note_seen for everyday \
+belongings in view. "Where did I put my keys?": find_seen; if it has nothing, say so and offer to look now.
+
 Flights: when {user} mentions taking a flight and you have mail_search, look for the booking in their mail \
 (the airline, "flight", "itinerary", "confirmation"), read the one that fits, say in one sentence what you \
 found (airline, flight number, day and time, from where to where), and ask whether they want the details \
@@ -171,6 +187,11 @@ Channel: a trip check running by itself, before a trip {user} asked you to watch
 {delivered}. Use the weather tool (and the route tool when asked) and nothing else. Two or three short
 spoken sentences: is it still good for the trip, what changed or needs care, what to bring or do. No
 markdown, lists, emoji or links.""",
+    "followup": """\
+Channel: a check running by itself on a loose end {user} left open; the result is {delivered}. You can
+only look things up. One or two short spoken sentences, ending with the next step as a question; or exactly
+NOTHING when there's nothing worth interrupting for. No markdown, lists, emoji or links.""",
+    "glance": "Channel: a glance through the glasses, running by itself. Use note_seen if useful, then answer: ok",
     "cli": "Channel: the argusctl command line. Plain text.",
     "guest": """\
 Channel: spoken at the Mac, to a guest: someone other than {user}, whom {user} allowed you to answer.
@@ -202,7 +223,8 @@ def persona(*, user: str, city: str, timezone: str, workspace: str, device: str 
 def system_blocks(*, user: str, city: str, timezone: str, workspace: str, channel: str,
                   facts: Sequence[Tuple[int, str]] = (), lessons: Sequence[Tuple[int, str]] = (),
                   glasses: Optional[str] = None, now: Optional[float] = None, device: str = "mac",
-                  phone: str = "iphone", location_known: bool = False) -> List[Dict[str, object]]:
+                  phone: str = "iphone", location_known: bool = False,
+                  loose_ends: Sequence[Tuple[int, str]] = ()) -> List[Dict[str, object]]:
     """Two system blocks: the stable persona (cached) and the changing context."""
     user = user or "the user"
     text = persona(user=user, city=city or "an unspecified city", timezone=timezone or "unknown",
@@ -223,6 +245,10 @@ def system_blocks(*, user: str, city: str, timezone: str, workspace: str, channe
     if facts:
         dynamic.append("Things {user} asked you to remember (use when relevant; #numbers are for forget):\n".format(
             user=user) + "\n".join(f"#{i} {f}" for i, f in facts))
+    if loose_ends:
+        dynamic.append("Loose ends you're watching for {user} (bring one up when the conversation touches it; close "
+                       "it with follow_up 'done' when it's settled):\n".format(user=user)
+                       + "\n".join(f"#{i} {what}" for i, what in loose_ends))
     if lessons:
         dynamic.append("Lessons from {user}'s corrections and your own past mistakes (follow them unless {user} says "
                        "otherwise now; they never change the safety rules; L-numbers are for forget_lesson):\n".format(

@@ -407,7 +407,7 @@ def describe_event(event: Dict[str, Any]) -> str:
 
 # ---- tools ---------------------------------------------------------------------------------------------------
 PRIVATE = frozenset({"voice", "phone", "cli"})              # mail and files: only you, asking
-CALENDAR_CHANNELS = frozenset({"voice", "phone", "cli", "scheduler"})   # also the morning briefing
+CALENDAR_CHANNELS = frozenset({"voice", "phone", "cli", "scheduler", "followup"})   # also the morning briefing
 
 MAIL_SEARCH = ("Search the user's Gmail (read-only). Use it for anything that arrives by email: flight and hotel "
                "bookings, orders, deliveries, appointments, replies. Give words (any of them may match, in the "

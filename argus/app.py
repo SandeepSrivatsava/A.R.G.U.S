@@ -25,6 +25,8 @@ from .hearing import Microphone, Segmenter, SherpaTranscriber, VoicePrint, model
 from .listener import Listener
 from .llm import Claude
 from . import flights as flights_mod
+from . import followups as followups_mod
+from . import sightings as sightings_mod
 from . import google as google_mod
 from . import council as council_mod
 from . import search as search_mod
@@ -110,8 +112,16 @@ class App:
         # Your Google account (Gmail, Drive, Calendar), read-only, once `argusctl google connect` has run. Gmail then
         # answers mail_search/mail_read instead of the Mail app. Access tokens are hidden from Claude like keys.
         self.google = google_mod.attach(settings, secrets, self.agent.tools, on_token=self.agent.add_secret)
+        followups_mod.attach(self.store, self.agent.tools, tz=settings.timezone or None)     # loose ends
+        self.agent.loose_ends = lambda: followups_mod.in_prompt(self.store)
+        self.glancer = None
+        if self.glasses is not None:                                    # where things were seen through the glasses
+            if settings.glances_minutes:
+                self.glancer = sightings_mod.Glancer(self.agent, self.store, self.audit, minutes=settings.glances_minutes)
+            sightings_mod.attach(self.store, self.agent.tools, glancer=self.glancer)
         self.scheduler = Scheduler(self.store, deliver=self.deliver, run_task=self.run_task, headlines=format_headlines,
                                    tz=settings.timezone or None,
+                                   follow_check=followups_mod.make_check(self.agent, self.store, settings.user_name),
                                    trip_check=weather_mod.make_trip_check(self.agent, self.store, settings.user_name))
         self.phone: Optional[PhoneServer] = None
         if voice:
@@ -143,7 +153,9 @@ class App:
         paths = model_paths(s.models_dir)
         speaker = Speaker(speaker_voice or make_voice(s.voice_engine, say_voice=s.say_voice, rate=s.rate,
                                                       piper_dir=paths["tts"], speed=s.speed, tmp_dir=str(s.run_dir),
-                                                      kokoro_dir=paths["kokoro"], kokoro_voice=s.kokoro_voice))
+                                                      kokoro_dir=paths["kokoro"], kokoro_voice=s.kokoro_voice,
+                                                      on_switch=lambda rate: self.audit.log(
+                                                          "voice_switched", to="quick", work_per_second=round(rate, 2))))
         listener = Listener(name_matcher(s), followup_seconds=s.followup_seconds,
                             conversation_idle_seconds=s.conversation_idle_seconds)
         gate = VoiceGate()
@@ -214,7 +226,8 @@ class App:
                 token = load_or_create_token(s.phone_token_path)
                 self.agent.add_secret(token)
                 gate = Gatekeeper(token)
-                self.phone = PhoneServer((host, s.phone_port), self.ask_phone, gate, self.audit, self.glasses)
+                self.phone = PhoneServer((host, s.phone_port), self.ask_phone, gate, self.audit, self.glasses,
+                                         glancer=self.glancer)
                 threading.Thread(target=self.phone.serve_forever, name="argus-phone", daemon=True).start()
                 self.audit.log("phone_gateway_started", host=host, port=s.phone_port)
             else:

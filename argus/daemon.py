@@ -56,6 +56,7 @@ class Argus:
         self.barge_in = barge_in        # "voice": talking over Argus stops it; "name": only "Argus, stop"
         self._speech_since: Optional[float] = None
         self._barged_at = -1e9
+        self._barge_hits = 0
         self.on_change = on_change
         self.clap = clap                # ClapDetector: a double clap wakes Argus / starts listening
         self.mic_wanted = True          # the user's choice (menu / voice / argusctl)
@@ -246,6 +247,7 @@ class Argus:
         is saying. "Argus, stop" always works."""
         if not self.speaker.speaking or not self.segmenter.speech_active:
             self._speech_since = None
+            self._barge_hits = 0
             return
         now = time.monotonic()
         if self._speech_since is None:
@@ -260,17 +262,28 @@ class Argus:
         if self.barge_in == "voice" and self.voice_lock_active:
             score = self.voiceprint.score(audio)
             if score >= self.voiceprint.threshold:
-                return self._barge(now, "your voice", score=round(score, 3))
-            return                                  # Argus's own voice (or someone else): keep talking
+                if self._barge_hits >= 1:           # twice in a row: one lucky match isn't enough to stop
+                    return self._barge(now, "your voice", score=round(score, 3))
+                self._barge_hits += 1
+            else:
+                self._barge_hits = 0                # Argus's own voice (or someone else): keep talking
+            return
         text = self.transcriber.transcribe(audio)
         heard = self.listener.matcher.hear(text)
         if heard.addressed and (not heard.rest or command_of(heard.rest) is Command.STOP):
             return self._barge(now, "Argus, stop", stopped=True)
-        if (self.barge_in == "voice" and len(words(text)) >= 2 and not is_hallucination(text)
-                and not looks_like_echo(text, self.speaker.recently_spoken(), threshold=0.5)):
-            self._barge(now, "new words")
+        # Without an enrolled voice, Argus can only compare words, and its own voice from the speakers is often
+        # misheard. So it takes clearly different words, twice in a row, before it stops.
+        if (self.barge_in == "voice" and len(words(text)) >= 3 and not is_hallucination(text)
+                and not looks_like_echo(text, self.speaker.recently_spoken(), threshold=0.34)):
+            if self._barge_hits >= 1:
+                return self._barge(now, "new words", heard_words=len(words(text)))
+            self._barge_hits += 1
+        else:
+            self._barge_hits = 0
 
     def _barge(self, now: float, why: str, stopped: bool = False, **details) -> None:
+        self._barge_hits = 0
         self.audit.log("barge_in", why=why, **details)
         self.brain.cancel()                          # stops the voice and the rest of the answer at once
         self.listener.reply_finished()               # what you're saying now doesn't need the name

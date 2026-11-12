@@ -37,6 +37,8 @@ final class AppModel {
     let glasses = GlassesLink()
     let speech = SpeechIO()
     private var pollTask: Task<Void, Never>?
+    private var glanceEvery = 0                 // seconds; set by the Mac (0: glances are off)
+    private var lastGlance = Date.distantPast
 
     func start() async {
         glasses.onConnectionChange = { [weak self] connected, name in
@@ -119,10 +121,16 @@ final class AppModel {
                     continue
                 }
                 do {
-                    try await link.glassesStatus(connected: self.glassesConnected, device: self.glasses.deviceName)
+                    self.glanceEvery = try await link.glassesStatus(connected: self.glassesConnected,
+                                                                      device: self.glasses.deviceName)
                     if let id = try await link.nextCapture(), self.glassesConnected {
                         let jpeg = try await self.glasses.capturePhoto()
                         try await link.sendFrame(id: id, jpeg: jpeg)
+                    } else if self.glanceEvery > 0, self.glassesConnected, !self.busy,
+                              Date().timeIntervalSince(self.lastGlance) >= Double(self.glanceEvery) {
+                        self.lastGlance = Date()
+                        let jpeg = try await self.glasses.capturePhoto()
+                        try await link.sendGlance(jpeg: jpeg)
                     }
                 } catch {
                     try? await Task.sleep(for: .seconds(5))

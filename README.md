@@ -113,10 +113,38 @@ The full list is in [SECURITY.md](SECURITY.md). The short version:
   input, never appear on a command line, and are removed from the environment of commands Argus runs.
   Your Claude Pro subscription is never used; Argus uses its own pay-per-use API key.
 
+## What only Argus does
+
+* **It gets it done, on the phone.** "Find a good Indian place for 7 tonight": Argus checks Google's ratings
+  and reviews, tells you its pick, and on your OK calls the restaurant from your own number, books the table
+  and tells you how it went. (Calls need `scripts/setup_calls.sh` once; every call asks for your OK first.
+  While it's on the call it can't talk to you.)
+* **It follows up by itself.** When a plan leaves something open ("New York: no hotel yet"), Argus notes the
+  loose end and looks into it every few days: prices, dates getting close, a reply that hasn't come. It
+  speaks up only when there's something worth hearing ("Hotel prices for your dates went up; want me to look
+  now?"). "What's still open?" lists them; "forget the hotel one" closes one. Checks can only look things up,
+  and stay quiet from 9 at night to 8 in the morning.
+* **It sees what you see, and remembers where things are.** Through your Meta glasses (the Argus Eye iPhone
+  app): "what's this?", "is this place any good?" (it reads the name and checks Google's reviews for the one in
+  front of you), and "where did I put my keys?". For the last one Argus must have seen them: it notes
+  belongings each time it looks, and with **glances** switched on (`glances_minutes = 3` under `[glasses]`) the
+  app sends a photo every few minutes while the glasses are on. Only a few words are kept ("keys: hallway
+  shelf"), for two weeks, on your Mac; the photo is never stored. "Argus, stop watching" pauses it.
+
+## Keys and extra brains, without running setup
+
+```bash
+argusctl key                        # which keys are saved (never shows them)
+argusctl key FLIGHTAWARE_API_KEY    # add or replace one; you paste it hidden
+argusctl brains                     # the other AI models Argus asks for a second opinion
+argusctl brains add groq            # add a free one (also: openrouter); then argusctl restart
+```
+
 ## Talking with Argus
 
 * **Talk over it, like with a person.** While Argus is speaking, just start talking: it stops at once and
-  listens, and what you say needs no "Argus". It knows your voice from Argus's own coming out of the
+  listens, and what you say needs no "Argus". It has to be sure it's you (two checks in a row, about a
+  second), so it doesn't cut itself off. It knows your voice from Argus's own coming out of the
   speakers by your voiceprint (`argusctl enroll`), so enroll for the best results; without it, Argus checks
   that the words aren't its own. `barge_in = "name"` under `[listening]` goes back to "Argus, stop" only.
 * **A back-and-forth, not a lecture.** Tell it "I'm going to New York next month" and it reacts, asks what
@@ -125,7 +153,8 @@ The full list is in [SECURITY.md](SECURITY.md). The short version:
 * **A natural American voice**, made on the Mac by Kokoro (an open, Apache-2.0 voice model), at 1.2× speed.
   `argusctl voices` plays them all; set `kokoro_voice` and `speed` under `[voice]` (men: am_michael,
   am_adam; women: af_bella, af_sarah, af_nicole, af_sky). While one sentence plays, the next is being made.
-  If your Mac struggles, `engine = "piper"` is lighter.
+  If your Mac can't make the natural voice fast enough (gaps between sentences), Argus notices after a few
+  sentences and switches by itself to a quick American voice; `argusctl voices --natural` tries again.
 * **Google next to Claude.** Restaurant reviews and ratings from Google Maps, Google's own search results
   (through Gemini, free) and second opinions from other AI models, looked up at the same time and combined
   into one answer: [docs/GOOGLE_SEARCH.md](docs/GOOGLE_SEARCH.md).
@@ -491,7 +520,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **861 automated tests**: talking over Argus (your voice vs its own echo), the Kokoro voice making the next sentence while speaking, Google reviews, Google search through Gemini and the council against stand-ins, the one-time voice switch for older installs; Gmail, Drive and Calendar against a stand-in Google (read-only sign-in with PKCE, forged sign-in answers refused, codes and password files left out, access tokens never reaching Claude), lookups running at the same time; picking the model for a request and handing it up, mail search with a stand-in Mail app (codes and blocked senders left out, scripts that can only read), a flight's two-week history against a stand-in FlightAware, `argusctl errors` and the report (nothing private in it); starting at login when macOS is slow to stop the old Argus, a conversation Claude refuses being replaced and the question asked again;: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **877 automated tests**: finding a place and phoning it to book (with your OK), loose ends that speak only when there's news and can only look things up, glances that keep a few words and drop the photo, the quick-voice fallback, `argusctl key` and `brains`; talking over Argus (your voice vs its own echo), the Kokoro voice making the next sentence while speaking, Google reviews, Google search through Gemini and the council against stand-ins, the one-time voice switch for older installs; Gmail, Drive and Calendar against a stand-in Google (read-only sign-in with PKCE, forged sign-in answers refused, codes and password files left out, access tokens never reaching Claude), lookups running at the same time; picking the model for a request and handing it up, mail search with a stand-in Mail app (codes and blocked senders left out, scripts that can only read), a flight's two-week history against a stand-in FlightAware, `argusctl errors` and the report (nothing private in it); starting at login when macOS is slow to stop the old Argus, a conversation Claude refuses being replaced and the question asked again;: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed

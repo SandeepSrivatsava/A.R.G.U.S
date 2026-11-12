@@ -477,13 +477,13 @@ def test_missing_piper_voice_falls_back_to_say(tmp_path):
     assert isinstance(make_voice("say"), SayVoice)
 
 
-@pytest.mark.skipif(not (MODELS / "vits-piper-en_GB-alan-medium").exists(), reason="voice model not available")
+@pytest.mark.skipif(not (MODELS / "vits-piper-en_US-ryan-medium").exists(), reason="voice model not available")
 def test_piper_voice_plays_a_temporary_wav_and_removes_it(tmp_path):
     from argus.voice import PiperVoice
     player = tmp_path / "player"
     player.write_text(f'#!/bin/sh\nwc -c < "$1" > "{tmp_path}/size"\n')
     player.chmod(0o755)
-    voice = PiperVoice(str(MODELS / "vits-piper-en_GB-alan-medium"), player=[str(player)], tmp_dir=str(tmp_path),
+    voice = PiperVoice(str(MODELS / "vits-piper-en_US-ryan-medium"), player=[str(player)], tmp_dir=str(tmp_path),
                        deterministic=True)
     voice.speak("Hello.")
     assert int((tmp_path / "size").read_text()) > 10_000

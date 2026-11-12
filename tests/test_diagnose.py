@@ -80,7 +80,7 @@ def test_the_report_has_what_is_needed_and_nothing_private(tmp_path, monkeypatch
     monkeypatch.setenv("HOME", str(tmp_path))
     assert main(["report", "--show"]) == 0
     text = capsys.readouterr().out
-    for expected in ("Argus 2.8.0 on ", "models: everyday claude-haiku-5-5, main claude-sonnet-5-5, heavy claude-opus-5-5",
+    for expected in ("Argus 2.9.0 on ", "models: everyday claude-haiku-5-5, main claude-sonnet-5-5, heavy claude-opus-5-5",
                      "keys saved: ANTHROPIC_API_KEY, TOMTOM_API_KEY", "Requests in the log: 2, failed: 1",
                      "claude-haiku-5-5 1, claude-sonnet-5-5 1", "A request failed: Claude API error 529: Overloaded",
                      "first word 1.4", "WARNING argus.weather", "RuntimeError: [key removed]", "boom()",

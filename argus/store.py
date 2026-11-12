@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   due REAL, cron TEXT, next_run REAL, created REAL NOT NULL, done INTEGER NOT NULL DEFAULT 0,
   last_run REAL, origin TEXT NOT NULL DEFAULT 'voice');
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sightings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, thing TEXT NOT NULL, place TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS lessons (
   id INTEGER PRIMARY KEY AUTOINCREMENT, lesson TEXT NOT NULL, source TEXT NOT NULL,
   created REAL NOT NULL, used REAL, uses INTEGER NOT NULL DEFAULT 0);
@@ -196,6 +198,19 @@ class Store:
     def task_named(self, text: str) -> Optional[int]:
         row = self._q("SELECT id FROM tasks WHERE done=0 AND text=? LIMIT 1", (text,))
         return int(row[0][0]) if row else None
+
+    # ---- seen through the glasses (sightings.py) ---------------------------------------------------
+    def add_sighting(self, thing: str, place: str, at: float) -> None:
+        self._q("INSERT INTO sightings(at, thing, place) VALUES (?,?,?)", (at, thing, place))
+
+    def sightings(self, limit: int = 600) -> List[Tuple[float, str, str]]:
+        return [(r[0], r[1], r[2]) for r in
+                self._q("SELECT at, thing, place FROM sightings ORDER BY at DESC, id DESC LIMIT ?", (limit,))]
+
+    def prune_sightings(self, older_than: float, keep: int) -> None:
+        self._q("DELETE FROM sightings WHERE at < ?", (older_than,))
+        self._q("DELETE FROM sightings WHERE id NOT IN (SELECT id FROM sightings ORDER BY at DESC, id DESC LIMIT ?)",
+                (keep,))
 
     # ---- small settings ----------------------------------------------------------------------------
     def get(self, key: str, default: Optional[str] = None) -> Optional[str]:

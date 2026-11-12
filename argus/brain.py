@@ -177,7 +177,9 @@ class Brain:
             turn = None
         events.flush()
         if events.first_word_at is not None:      # where the wait went: `argusctl timing` shows these
+            voice = self.speaker.voice_timings(events.started) if hasattr(self.speaker, "voice_timings") else []
             self.audit.log("timing", **dict(heard or {}), first_word_s=round(events.first_word_at - events.started, 2),
+                           voice=voice[:12],
                            **(turn.timings if turn is not None else {}))
         if turn is not None:
             self.last_error = turn.error

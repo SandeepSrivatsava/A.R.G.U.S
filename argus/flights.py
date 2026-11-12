@@ -245,5 +245,5 @@ def attach(secrets: Dict[str, str], tools: Dict[str, Any], *, request=http_json)
         return ToolOutput(report(ident, legs, days, note, str(args.get("origin") or "").strip()[:4]))
 
     tools["flight_history"] = Tool("flight_history", TOOL_DESCRIPTION, TOOL_SCHEMA, run,
-                                   frozenset({"voice", "phone", "cli", "android", "scheduler"}))
+                                   frozenset({"voice", "phone", "cli", "android", "scheduler", "followup"}))
     return service
