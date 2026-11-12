@@ -621,9 +621,16 @@ def describe_call(name: str, args: Dict[str, Any]) -> str:
     if name == "route":
         return f"directions to {str(args.get('destination'))[:120]}"
     if name == "mail_search":
-        return f"search mail: {', '.join(str(w) for w in (args.get('words') or []))[:120]}"
+        what = ", ".join(str(w) for w in (args.get("words") or []))
+        return f"search mail: {(what + ' ' + str(args.get('query') or '')).strip()[:120]}"
     if name == "mail_read":
         return f"read email {args.get('id')}"
+    if name in ("drive_search",):
+        return f"search Drive: {', '.join(str(w) for w in (args.get('words') or []))[:120]}"
+    if name == "drive_read":
+        return f"read Drive file {str(args.get('id'))[:40]}"
+    if name == "calendar":
+        return f"calendar {args.get('start')}..{args.get('end') or args.get('start')}"
     if name == "flight_history":
         return f"flight history: {str(args.get('flight'))[:20]}"
     if name == "search_messages":

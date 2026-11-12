@@ -144,7 +144,8 @@ def build_report(settings, secrets: Dict[str, str], version: str = "") -> str:
              f"heavy {settings.heavy_model or settings.model} (routing {settings.routing})",
              f"  effort: spoken {settings.voice_effort}, other {settings.effort}, heavy {settings.heavy_effort}",
              f"  phone: {settings.phone_type}, gateway {'on' if settings.phone_enabled else 'off'}; "
-             f"mail {'on' if settings.mail_enabled else 'off'}; web search {'on' if settings.web_search else 'off'}",
+             f"mail {'on' if settings.mail_enabled else 'off'}; "
+             f"Google {'connected' if secrets.get('GOOGLE_REFRESH_TOKEN') else 'not connected'}; web search {'on' if settings.web_search else 'off'}",
              "  keys saved: " + (", ".join(sorted(k for k, v in secrets.items() if v)) or "none"),
              "",
              f"Requests in the log: {len(turns)}, failed: {len(failed)}; by model: "

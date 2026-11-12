@@ -292,3 +292,19 @@ Without a key the tool isn't offered.
 
 `argusctl report` leaves out what you said and what Argus answered, and removes keys, tokens, email addresses
 and your home folder's name (`argus/diagnose.py`). The file is readable only by you. Read it before sending it.
+
+## 20. Your Google account
+
+| Protection | Where |
+|---|---|
+| Read-only permissions only (`gmail.readonly`, `drive.readonly`, `calendar.readonly`): Google refuses sending, deleting or editing whatever is asked. | `argus/google.py` (`SCOPES`) |
+| Your own Google Cloud client; sign-in through your browser with PKCE and a random state, answered only on 127.0.0.1 on this Mac. A forged or mismatched answer is refused. | `argus/google.py` (`sign_in`) |
+| The refresh token lives in `secrets.env` (owner-only); access tokens (one hour) only in memory, and are removed from anything Claude sees, like keys. `argusctl google disconnect` revokes them at Google. | `argus/google.py`, `argus/app.py` |
+| Mail and Drive only for you asking (voice, phone, command line), never for guests or scheduled tasks; the calendar also for scheduled tasks (the morning briefing). | `argus/google.py` |
+| Security-code and password mails, never-touch senders, and Drive files named like passwords, recovery codes or keys are left out; everything read is labelled as other people's words. | `argus/google.py`, `argus/mail.py` |
+
+## 21. Lookups at the same time
+
+Only tools that look things up, and only when the rules allow them without asking, run at the same time
+(`PARALLEL_SAFE` in `argus/agent.py`). Anything that needs your OK, and anything on the screen, still runs
+one step at a time, in order.

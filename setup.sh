@@ -689,6 +689,7 @@ if [ "$IS_MAC" = 1 ] && [ "$NO_SERVICE" = 0 ] && [ "$DRY_RUN" = 0 ]; then
   echo "    Speech is processed on this Mac; only what you say to Argus is sent to Claude."
   echo "  • Screen Recording and Accessibility: lets Argus see and use apps when you ask. macOS opens"
   echo "    System Settings; switch Argus on in both lists, then run: argusctl restart"
+  echo "  • Google (optional): argusctl google connect links Gmail, Drive and Calendar, read-only (docs/GOOGLE.md)."
   [ "$MAIL" != yes ] || echo "  • Mail: the first time Argus looks in your mail, macOS asks \"Argus wants to control Mail\" → Allow."
   echo "  • Approvals: when Argus wants to click, type or delete, a box appears; Allow asks for Touch ID."
 else

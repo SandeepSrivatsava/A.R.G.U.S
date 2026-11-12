@@ -60,6 +60,7 @@ Android: the same brain runs on the phone (Termux). Mac off: an always-on server
 | "Hey Siri, Argus" → "fastest way to the airport?" | Live traffic for up to three routes from where your phone is, which one is faster and by how much, and your maps app opens with it. |
 | "Argus, what am I looking at?" | Looks through your Meta glasses if they're connected (Argus Eye app), otherwise at the screen. Only when asked. |
 | "Argus, I'm flying to Chicago on Friday" | If you let it read your mail: finds the booking, tells you the airline, flight and time, and asks whether you want the details (confirmation code, terminal, seat). |
+| "Argus, what's on tomorrow?" / "Find my lease in Drive" | Your Google Calendar and Drive, read-only, once connected (docs/GOOGLE.md). |
 | "Has that flight been late or cancelled in the last two weeks?" | Day by day: on time, late by how much, cancelled or diverted, and a summary (FlightAware key; otherwise it searches the web). |
 | "Argus, write a Python script that renames my photos by date" | Hard work goes to the heavy model ("Let me think that through properly"); everyday questions go to the quick one. |
 | "Argus, remember that my sister's birthday is 12 March" | Remembers across conversations. "What do you remember?" / "Forget number 3." |
@@ -128,9 +129,17 @@ Argus picks the Claude model by what you ask, on the Mac, before anything is sen
   (`light_model`, `model`, `heavy_model`; for example `heavy_model = "claude-fable-5-2"` for the strongest,
   at about 4×), or set `routing = "off"` to always use the main model.
 
+## Your Google account (read-only)
+
+`argusctl google connect` links your Gmail, Google Drive and Google Calendar, read-only: Google itself refuses
+anything that would send, delete or change. Ten minutes in Google Cloud the first time:
+[docs/GOOGLE.md](docs/GOOGLE.md). Then you can ask "what's on tomorrow?", "find my lease in Drive", "did the
+landlord reply?", or "I'm flying Friday" (it finds the booking in Gmail). `argusctl google status` checks it;
+`argusctl google disconnect` revokes it.
+
 ## Your mail (read-only) and your flights
 
-* **Mail** is off until you say yes in setup (`[mail] enabled`). Argus asks the Mac's **Mail app**, which
+* **Mail through the Mail app** (when Google isn't connected) is off until you say yes in setup (`[mail] enabled`). Argus asks the Mac's **Mail app**, which
   already has your accounts, so no mail password or key is stored. It can only search subjects and senders
   and read one message; there is no way for it to send, delete, move or mark mail. Security-code and
   password mails, and mail from your never-touch sites (your bank), are left out before Claude sees
@@ -159,6 +168,9 @@ argusctl report            # writes argus-report.txt to your Desktop: problems, 
   answer (`voice_effort = "low"` under `[brain]`) and lets it think only between steps, such as after a
   weather lookup, not before the first word. Typed and harder jobs use `effort = "medium"`. Raise either
   (`"medium"`, `"high"`) if you'd rather wait for more careful answers.
+* **Lookups run at the same time.** When Claude needs several things that don't depend on each other
+  (your calendar and your mail, the weather in two places), they run together instead of one by one.
+  Gmail search fetches its results in parallel too. Anything that needs your OK still runs alone.
 * **Weather is quick the second time.** The forecast and the warnings are fetched at the same time, and a
   forecast is reused for 10 minutes, so "what about tomorrow?" doesn't fetch it again.
 * **"One moment."** If a tool takes more than a second and a half, Argus says so, so silence never means
@@ -394,6 +406,7 @@ lessons are kept either way. `./setup.sh --change-keys` asks for the keys again.
 ```bash
 argusctl status            # what Argus is doing
 argusctl log               # recent activity (requests, tools, approvals, blocks)
+argusctl google connect     # Gmail, Drive, Calendar, read-only (docs/GOOGLE.md); also: status, disconnect
 argusctl errors [--watch]  # recent problems in plain words (or live)
 argusctl report            # a problem report on your Desktop that is safe to share
 argusctl timing [n]        # how long the last spoken answers took, step by step
@@ -456,7 +469,7 @@ British male voice (Piper "Alan"); set `engine = "say"` under `[voice]` to use a
 
 ## How this was tested
 
-* **832 automated tests**: picking the model for a request and handing it up, mail search with a stand-in Mail app (codes and blocked senders left out, scripts that can only read), a flight's two-week history against a stand-in FlightAware, `argusctl errors` and the report (nothing private in it); starting at login when macOS is slow to stop the old Argus, a conversation Claude refuses being replaced and the question asked again;: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
+* **843 automated tests**: Gmail, Drive and Calendar against a stand-in Google (read-only sign-in with PKCE, forged sign-in answers refused, codes and password files left out, access tokens never reaching Claude), lookups running at the same time; picking the model for a request and handing it up, mail search with a stand-in Mail app (codes and blocked senders left out, scripts that can only read), a flight's two-week history against a stand-in FlightAware, `argusctl errors` and the report (nothing private in it); starting at login when macOS is slow to stop the old Argus, a conversation Claude refuses being replaced and the question asked again;: how fast spoken answers are asked for (quick effort, thinking only between steps, earlier thinking left out), keeping quiet during calls (which apps count as a call, short gaps, Argus's own calls), "I'm on a call", `argusctl timing`;: the Claude client (streaming, exact rebuilding of tool calls, retries, bad
   keys), the tool loop, approvals (once / this task / deny; by voice with the code word, and by Touch ID,
   whichever answers first), spotting payments (Buy and Pay buttons, checkout pages, card numbers), lessons
   (from corrections and from its own mistakes, and planted lessons refused), guests (asked about, allowed

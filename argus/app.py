@@ -25,6 +25,7 @@ from .hearing import Microphone, Segmenter, SherpaTranscriber, VoicePrint, model
 from .listener import Listener
 from .llm import Claude
 from . import flights as flights_mod
+from . import google as google_mod
 from . import mail as mail_mod
 from . import weather as weather_mod
 from .maps import Router, phone_links, route_tool
@@ -98,6 +99,9 @@ class App:
                            settings=settings, audit=self.audit, computer=computer, glasses=self.glasses,
                            glasses_status=(self.glasses.describe if self.glasses else lambda: None),
                            secrets=self._secret_values(secrets), reflector=reflector, device="mac")
+        # Your Google account (Gmail, Drive, Calendar), read-only, once `argusctl google connect` has run. Gmail then
+        # answers mail_search/mail_read instead of the Mail app. Access tokens are hidden from Claude like keys.
+        self.google = google_mod.attach(settings, secrets, self.agent.tools, on_token=self.agent.add_secret)
         self.scheduler = Scheduler(self.store, deliver=self.deliver, run_task=self.run_task, headlines=format_headlines,
                                    tz=settings.timezone or None,
                                    trip_check=weather_mod.make_trip_check(self.agent, self.store, settings.user_name))

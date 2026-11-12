@@ -189,6 +189,80 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_google(args, *, ask=input, ask_secret=None, open_browser=None, request=None) -> int:
+    """Connect your Google account (read-only), check it, or disconnect it."""
+    import getpass
+    import webbrowser
+    from . import google
+    settings = config_mod.load()
+    path = settings.secrets_path
+    saved = config_mod.read_secrets(path) if path.exists() else {}
+    ask_secret = ask_secret or getpass.getpass
+    open_browser = open_browser or webbrowser.open
+    request = request or google.send
+    client_id, client_secret, refresh = (saved.get(k, "") for k in google.SECRET_KEYS)
+
+    if args.action == "status":
+        if not refresh:
+            print("Not connected. To connect: argusctl google connect   (steps in docs/GOOGLE.md)")
+            return 1
+        auth = google.Auth(client_id, client_secret, refresh, request=request)
+        try:
+            auth.token()
+        except google.GoogleError as exc:
+            print(f"Connected before, but it isn't working now: {exc}")
+            return 1
+        names = [s.rsplit("/", 1)[-1] for s in auth.scopes if s in google.SCOPES]
+        print("Connected (read-only): " + (", ".join(names) or "no Gmail, Drive or Calendar permission"))
+        missing = [s.rsplit("/", 1)[-1] for s in google.SCOPES if s not in auth.scopes]
+        if missing:
+            print("Not allowed when you signed in: " + ", ".join(missing) + ". Run argusctl google connect to add them.")
+        return 0
+
+    if args.action == "disconnect":
+        if refresh:
+            try:
+                google.revoke(refresh, request)
+                print("Google access revoked.")
+            except google.GoogleError as exc:
+                print(f"Couldn't reach Google to revoke it ({exc}); also remove Argus at myaccount.google.com/connections.")
+        for key in google.SECRET_KEYS:
+            config_mod.write_secret(path, key, "")
+        print("Removed from this Mac. Run argusctl restart.")
+        return 0
+
+    print("Connecting Argus to your Google account: Gmail, Drive and Calendar, read-only.")
+    print("You need a Google Cloud \"Desktop app\" client first: docs/GOOGLE.md, steps 1 to 4 (about 10 minutes).")
+    if client_id and client_secret:
+        print(f"Using the saved client (ending ...{client_id[-14:]}). Type new ones to replace it, or press Enter.")
+    new_id = ask("  Client ID (ends with .apps.googleusercontent.com): ").strip()
+    if new_id:
+        if not new_id.endswith(".apps.googleusercontent.com"):
+            print("That isn't a client ID (it ends with .apps.googleusercontent.com).")
+            return 1
+        client_id = new_id
+        client_secret = ask_secret("  Client secret (hidden as you type): ").strip()
+    if not client_id:
+        print("A client ID is needed. See docs/GOOGLE.md.")
+        return 1
+    print("Your browser will open. Choose your Google account. If Google says it hasn't verified this app, that's")
+    print("your own app: click Advanced, then Go to Argus. Tick all three permissions, then Continue.")
+    try:
+        reply = google.sign_in(client_id, client_secret, open_browser=open_browser, request=request)
+    except google.GoogleError as exc:
+        print(f"Didn't connect: {exc}")
+        return 1
+    config_mod.write_secret(path, "GOOGLE_CLIENT_ID", client_id)
+    config_mod.write_secret(path, "GOOGLE_CLIENT_SECRET", client_secret)
+    config_mod.write_secret(path, "GOOGLE_REFRESH_TOKEN", str(reply["refresh_token"]))
+    print("Connected. Argus can now read your Gmail, Drive and Calendar (never send, delete or change).")
+    if reply.get("missing"):
+        print("You didn't allow: " + ", ".join(reply["missing"]) + ". Argus works without them; connect again to add.")
+    print("If your Google Cloud app is still in Testing, Google ends this sign-in after 7 days: publish it (docs/GOOGLE.md")
+    print("step 5) so it lasts. Now run: argusctl restart")
+    return 0
+
+
 def describe_timing(entry: dict, end_of_speech: float = 0.6) -> str:
     """One line per spoken request: where the seconds between your last word and Argus's first word went."""
     bits = []
@@ -428,6 +502,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--watch", action="store_true")
     s = sub.add_parser("report", help="write a problem report to the Desktop that is safe to share")
     s.add_argument("--show", action="store_true", help="print it instead of writing a file")
+    s = sub.add_parser("google", help="connect your Google account, read-only (Gmail, Drive, Calendar)")
+    s.add_argument("action", nargs="?", choices=["connect", "status", "disconnect"], default="status")
     s = sub.add_parser("timing", help="how long recent spoken answers took, step by step")
     s.add_argument("n", nargs="?", type=int, default=10)
     s = sub.add_parser("enroll", help="teach Argus your voice (voice lock) and how you say its name")
@@ -487,6 +563,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_log(args)
     if args.cmd == "timing":
         return cmd_timing(args)
+    if args.cmd == "google":
+        return cmd_google(args)
     if args.cmd == "errors":
         return cmd_errors(args)
     if args.cmd == "report":

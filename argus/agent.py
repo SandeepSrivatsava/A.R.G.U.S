@@ -10,6 +10,7 @@ import json
 import re
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
@@ -45,6 +46,12 @@ WEB_SEARCH_USD = 10.0 / 1000                                  # $10 per 1,000 se
 IMAGE_TOKENS = 1600          # rough cost of one 1280x800 screenshot
 KEEP_IMAGES = 3              # older screenshots are replaced by a note
 READ_ONLY_SCREEN = ("screenshot", "zoom", "cursor_position", "wait")
+# Tools that only look things up. When Claude asks for several of these at once ("weather in Fremont and in
+# Chicago", "search mail and the calendar"), they run at the same time instead of one after another.
+PARALLEL_SAFE = frozenset({"weather", "route", "get_news", "fetch_page", "recall", "read_file", "list_files",
+                           "search_files", "mail_search", "mail_read", "drive_search", "drive_read", "calendar",
+                           "flight_history"})
+MAX_PARALLEL = 6
 SCREEN_MEMBERS = ("screenshot", "zoom", "left_click", "right_click", "middle_click", "double_click", "triple_click",
                   "left_click_drag", "mouse_move", "left_mouse_down", "left_mouse_up", "cursor_position", "scroll",
                   "type", "key", "hold_key", "wait")
@@ -59,6 +66,29 @@ class Events:
     def working(self, tier: str) -> None: ...          # which kind of model took the request (tiers.py)
     def approve(self, request: ApprovalRequest) -> str:
         return DENY
+
+
+class _OneAtATime(Events):
+    """Passes events on from tools running at the same time, one at a time."""
+
+    def __init__(self, events: Events):
+        self.events, self.lock = events, threading.Lock()
+
+    def text(self, delta: str) -> None:
+        with self.lock:
+            self.events.text(delta)
+
+    def tool_started(self, name: str, description: str) -> None:
+        with self.lock:
+            self.events.tool_started(name, description)
+
+    def tool_finished(self, name: str, ok: bool) -> None:
+        with self.lock:
+            self.events.tool_finished(name, ok)
+
+    def approve(self, request):              # never reached: only tools that need no approval run together
+        with self.lock:
+            return self.events.approve(request)
 
 
 @dataclass
@@ -394,6 +424,19 @@ class Agent:
             result["is_error"] = True
         return result
 
+    def _can_run_together(self, uses: List[Dict[str, Any]], channel: str) -> bool:
+        """Several lookups that need no approval can run at the same time."""
+        if len(uses) < 2:
+            return False
+        for block in uses:
+            name = str(block.get("name"))
+            if block.get("toolset_name") or name not in PARALLEL_SAFE or name not in self.tools:
+                return False
+            args = block.get("input") if isinstance(block.get("input"), dict) else {}
+            if self.policy.check(name, args, channel, "").action != "allow":
+                return False
+        return True
+
     # ---- a whole turn -------------------------------------------------------------------------------
     def run(self, *, session_id: str, channel: str, content: Any, events: Events,
             cancel: Optional[threading.Event] = None, location: Optional[Dict[str, float]] = None,
@@ -509,7 +552,22 @@ class Agent:
                 break
             results: List[Dict[str, Any]] = []
             screen_failed = False
-            for block in uses:
+            if self._can_run_together(uses, channel):
+                shared = _OneAtATime(events)
+
+                def one(block):
+                    began = time.monotonic()
+                    res = self._call(block, channel=channel, session_id=session_id, events=shared, ctx=ctx,
+                                     grants=grants, earlier_screen_failure=False)
+                    return res, round(time.monotonic() - began, 2)
+                with ThreadPoolExecutor(max_workers=min(MAX_PARALLEL, len(uses))) as pool:
+                    done = list(pool.map(one, uses))
+                for block, (res, took) in zip(uses, done):
+                    turn.timings.setdefault("tools", []).append([str(block.get("name") or "tool"), took])
+                    results.append(res)
+                    turn.steps.append(_step(block, res))
+                self.audit.log("tools_together", count=len(uses))
+            for block in ([] if results else uses):
                 began = time.monotonic()
                 res = self._call(block, channel=channel, session_id=session_id, events=events, ctx=ctx,
                                  grants=grants, earlier_screen_failure=screen_failed)
