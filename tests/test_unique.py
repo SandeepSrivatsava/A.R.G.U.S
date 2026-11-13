@@ -283,12 +283,12 @@ def test_a_natural_voice_that_cant_keep_up_gives_way_to_the_quick_one(tmp_path):
         voice.upcoming = [f"next {n}"]
         voice.reset()
         voice.speak(f"sentence {n}")
-    assert len(slow.said) == 4 and len(quick.said) == 2 and slow.stopped == 1
+    assert len(slow.said) == 5 and len(quick.said) == 1 and slow.stopped == 1     # (the first one is a warm-up)
     assert switched == [pytest.approx(1.2)] and marker.read_text() == "1.20\n"
     assert voice.upcoming == ["next 5"] and voice.timings is quick.timings
     voice.stop()
     assert quick.stopped == 1
-    fine = AdaptiveVoice(FakeNeural(work=0.6), quick, tmp_path / "other")
+    fine = AdaptiveVoice(FakeNeural(work=1.9), quick, tmp_path / "other")   # 0.95: keeps up, just
     for n in range(8):
         fine.speak("x")
     assert fine.current is fine.natural and not (tmp_path / "other").exists()
@@ -416,3 +416,54 @@ def test_the_report_shows_voice_and_interruptions(tmp_path, monkeypatch, capsys)
                      "it heard your voice (voice match 0.71)", "so Argus switched to the quick voice",
                      "voice (made, sound) [[1.9, 2.2]]"):
         assert expected in text, expected
+
+
+def test_one_sentence_is_made_at_a_time_and_only_the_next_one_ahead(tmp_path):
+    """Making several sentences at once slowed each of them, so a fast enough voice measured too slow (0.99)."""
+    from argus.voice import _NeuralVoice
+    import threading
+
+    class Counting(_NeuralVoice):
+        def __init__(self):
+            super().__init__()
+            self._init_playback(["true"], str(tmp_path))
+            self.busy, self.most, self.made, self.guard = 0, 0, [], threading.Lock()
+
+        def synthesize(self, text):
+            with self.guard:
+                self.busy += 1
+                self.most = max(self.most, self.busy)
+            time.sleep(0.05)
+            with self.guard:
+                self.busy -= 1
+            self.made.append(text)
+            return np.zeros(1600, dtype=np.float32), 16000
+
+    voice = Counting()
+    voice.upcoming = ["two", "three", "four"]
+    voice.speak("one")
+    time.sleep(0.3)
+    assert voice.most == 1 and voice.made == ["one", "two"]       # "three" and "four" wait their turn
+
+
+def test_movies_and_other_recommendations_go_to_the_main_model(tmp_path):
+    from argus import tiers
+    from fakes import make_settings
+    s = make_settings(tmp_path, light_model="claude-haiku-5-5")
+    for asked in ("find me a good movie", "any shows to watch tonight", "a book like Dune", "what time is it"):
+        tier, _ = tiers.choose(asked, "voice", s)
+        assert (tier == tiers.MAIN) == (asked != "what time is it"), asked
+
+
+def test_claude_can_write_and_run_code_but_not_for_guests_or_the_quick_model(tmp_path):
+    from argus import tiers
+    agent, _ = make_agent(tmp_path, Script(say("ok")))
+    names = lambda specs: [t.get("name") for t in specs]
+    assert "code_execution" in names(agent._tools_for("voice", tier=tiers.MAIN))
+    assert {"type": "code_execution_20250825", "name": "code_execution"} in [
+        {k: v for k, v in t.items() if k != "cache_control"} for t in agent._tools_for("cli")]
+    assert "code_execution" not in names(agent._tools_for("voice", tier=tiers.LIGHT))
+    assert "code_execution" not in names(agent._tools_for("guest"))
+    assert "code_execution" not in names(agent._tools_for("scheduler"))
+    agent.settings.code_execution = False
+    assert "code_execution" not in names(agent._tools_for("voice"))

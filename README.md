@@ -182,6 +182,11 @@ and weighs what they say. Restart after adding one (`argusctl restart`).
   `argusctl voices` plays them all. While one sentence plays, the next is being made. If your Mac can't make
   the natural voice fast enough (gaps between sentences), Argus notices after a few sentences and switches by
   itself to a quick American voice; `argusctl voice --natural` tries the natural one again.
+* **It can write and run code.** For things that need working out (comparing many options, numbers, data, a
+  schedule), Claude writes Python and runs it in Anthropic's sandbox, which has no internet and can't reach your
+  Mac (`code_execution = false` under `[brain]` turns it off). Searching is still done with Google, Gemini, the
+  web and the other AI models together: "find me a good movie" asks what you're in the mood for, looks in all of
+  them at once and gives two or three picks.
 * **Google next to Claude.** Restaurant reviews and ratings from Google Maps, Google's own search results
   (through Gemini, free) and second opinions from other AI models, looked up at the same time and combined
   into one answer: [docs/GOOGLE_SEARCH.md](docs/GOOGLE_SEARCH.md).
@@ -580,7 +585,7 @@ made on the Mac (Kokoro, American); `argusctl voice` changes it, and `argusctl v
 
 ## How this was tested
 
-* **930 automated tests**: the logs folder (each line once, a folder per day, old days deleted and nothing else);  restarting (a new copy waiting for the old one, a stuck copy stopped and only ever
+* **935 automated tests**: one sentence of the voice made at a time (the natural voice was measured too slow because several were made at once), code execution only for you;  the logs folder (each line once, a folder per day, old days deleted and nothing else);  restarting (a new copy waiting for the old one, a stuck copy stopped and only ever
   Argus's own, stopping while the main thread and the shutdown are stuck, a native crash and a hang leaving a
   trace, two failed starts bringing a safe one, `argusctl restart` saying whether Argus came back or why not,
   against a stand-in launchd), talking over Argus without a voiceprint (only its name stops it, and the echo of

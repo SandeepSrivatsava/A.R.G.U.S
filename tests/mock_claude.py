@@ -70,6 +70,7 @@ def rules(body: Dict[str, Any]) -> Tuple[Blocks, str]:
 
 
 BLOCK_TYPES = {"text", "image", "tool_use", "tool_result", "server_tool_use", "web_search_tool_result",
+               "bash_code_execution_tool_result", "text_editor_code_execution_tool_result",
                "thinking", "redacted_thinking", "document"}
 
 

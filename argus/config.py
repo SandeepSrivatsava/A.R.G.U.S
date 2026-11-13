@@ -48,6 +48,7 @@ class Settings:
     gemini_model: str = "gemini-2.5-flash"   # google_search (free tier includes Google Search grounding)
     # More brains for ask_council: "Name | https://.../chat/completions | model | KEY_NAME_IN_SECRETS"
     council: List[str] = field(default_factory=list)
+    code_execution: bool = True        # Claude may write and run code in Anthropic's sandbox (no internet, not the Mac)
     council_paid_per_day: int = 40     # questions a day for each pay-per-use brain (ChatGPT, Grok)
     council_wait: float = 12.0         # seconds before going with the answers that are in
     # A copy of every log in one folder you can open, a sub-folder per day, deleted after keep_days ("" = off)
@@ -214,7 +215,7 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _TOP = ("name", "user_name", "city", "timezone")
 _SECTIONS: Dict[str, Dict[str, str]] = {
     "brain": {"model": "model", "small_model": "small_model", "voice_effort": "voice_effort", "effort": "effort", "routing": "routing",
-              "light_model": "light_model", "heavy_model": "heavy_model", "heavy_effort": "heavy_effort", "gemini_model": "gemini_model", "web_search": "web_search",
+              "light_model": "light_model", "heavy_model": "heavy_model", "heavy_effort": "heavy_effort", "gemini_model": "gemini_model", "web_search": "web_search", "code_execution": "code_execution",
               "session_idle_minutes": "session_idle_minutes", "max_steps": "max_steps",
               "max_turn_tokens": "max_turn_tokens", "context_tokens": "context_tokens", "self_learning": "self_learning",
               "history_messages": "history_messages", "workspace": "workspace_dir", "api_base": "api_base"},

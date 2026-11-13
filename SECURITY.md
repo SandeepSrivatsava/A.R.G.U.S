@@ -319,6 +319,10 @@ one step at a time, in order.
 | Reviews, pages and other models' answers are labelled as information, never instructions; Claude stays the one that decides and answers. | `argus/search.py`, `argus/council.py` |
 | Keys live in secrets.env and are removed from error messages. Council members must use https. | `argus/search.py`, `argus/council.py`, `argus/config.py` |
 
+Claude can also write and run code with Anthropic's code-execution tool (`[brain] code_execution`, on). It runs
+in Anthropic's sandbox, which has no internet and nothing of your Mac; only what Claude puts into the code goes
+there. It's offered for your own requests, not for guests, scheduled jobs or the quick model.
+
 ## 25. Talking over Argus
 
 Stopping when you talk uses the same on-device voice check as the voice lock: nothing extra is recorded or

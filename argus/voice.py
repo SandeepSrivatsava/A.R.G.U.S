@@ -167,10 +167,12 @@ class _NeuralVoice(_ProcessVoice):
         self._made_lock = threading.Lock()
         self.upcoming: List[str] = []      # set by the Speaker: what comes after the sentence being spoken
         self.timings: Deque[Tuple[float, float, float]] = deque(maxlen=60)   # (when, seconds to make, seconds of sound)
+        self._making = threading.Lock()    # one sentence at a time: two at once each take twice as long
 
     def _timed(self, text: str) -> Tuple[np.ndarray, int]:
-        began = time.monotonic()
-        samples, rate = self.synthesize(text)
+        with self._making:
+            began = time.monotonic()
+            samples, rate = self.synthesize(text)
         if rate and samples.size:
             self.timings.append((began, time.monotonic() - began, samples.size / rate))
         return samples, rate
@@ -213,7 +215,7 @@ class _NeuralVoice(_ProcessVoice):
     def speak(self, text: str) -> None:
         from .hearing import write_wav
         samples, rate = self._sound_for(text)
-        for later in self.upcoming:        # this one is ready: make the next one while it plays
+        for later in self.upcoming[:1]:    # this one is ready: make the next one while it plays
             self.prepare(later)
         if samples.size == 0 or self._stopped:
             return
@@ -337,7 +339,7 @@ class AdaptiveVoice:
     a few sentences, if the natural voice is too slow here, Argus switches to the quick voice for good (a note
     is left in `marker`; `argusctl voices --natural` removes it, to try the natural voice again)."""
     SAMPLES = 4
-    TOO_SLOW = 0.7       # seconds of work per second of speech
+    TOO_SLOW = 1.0       # seconds of work per second of speech: more than that leaves gaps between sentences
 
     def __init__(self, natural, quick, marker: Optional[Path] = None,
                  on_switch: Callable[[float], None] = lambda _rate: None):
@@ -365,7 +367,7 @@ class AdaptiveVoice:
     def speak(self, text: str) -> None:
         self.current.speak(text)
         if self.current is self.natural:
-            recent = list(self.natural.timings)[-self.SAMPLES:]
+            recent = list(self.natural.timings)[1:][-self.SAMPLES:]     # the first one warms the model up
             if len(recent) == self.SAMPLES:
                 rate = sorted(made / max(sound, 0.1) for _, made, sound in recent)[self.SAMPLES // 2]
                 if rate > self.TOO_SLOW:

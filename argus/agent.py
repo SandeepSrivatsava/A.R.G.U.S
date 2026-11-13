@@ -48,6 +48,8 @@ KEEP_IMAGES = 3              # older screenshots are replaced by a note
 READ_ONLY_SCREEN = ("screenshot", "zoom", "cursor_position", "wait")
 # Tools that only look things up. When Claude asks for several of these at once ("weather in Austin and in
 # Chicago", "search mail and the calendar"), they run at the same time instead of one after another.
+CODE_EXECUTION = {"type": "code_execution_20250825", "name": "code_execution"}
+CODE_CHANNELS = frozenset({"voice", "phone", "cli", "android"})      # you asking, not guests or scheduled jobs
 PARALLEL_SAFE = frozenset({"weather", "route", "get_news", "fetch_page", "recall", "read_file", "list_files",
                            "search_files", "mail_search", "mail_read", "drive_search", "drive_read", "calendar",
                            "flight_history", "place_search", "google_search", "ask_council"})
@@ -296,6 +298,8 @@ class Agent:
             specs.append(dict(tiers.HAND_OVER))
         if self.settings.web_search and channel != "glance":
             specs.append(web_search_spec(self.settings.blocked_sites, self.settings.city, self.settings.timezone))
+        if getattr(self.settings, "code_execution", False) and channel in CODE_CHANNELS and tier != tiers.LIGHT:
+            specs.append(dict(CODE_EXECUTION))   # Anthropic's sandbox: no internet, nothing of the Mac
         desktop = channel == "voice"
         if self.computer is not None and (desktop or channel == "phone") and tier != tiers.LIGHT:
             toolset = dict(TOOLSET)

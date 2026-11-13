@@ -156,7 +156,7 @@ class Segmenter:
         cfg.silero_vad.max_speech_duration = max_speech
         cfg.sample_rate = SAMPLE_RATE
         cfg.num_threads = 1
-        self._vad = so.VoiceActivityDetector(cfg, buffer_size_in_seconds=max_speech + 10)
+        self._vad = so.VoiceActivityDetector(cfg, buffer_size_in_seconds=max(60.0, max_speech + 10))   # long talk (a TV) grows it anyway
         self._window = cfg.silero_vad.window_size
         self._pending = np.zeros(0, dtype=np.float32)
         self.recent = collections.deque(maxlen=int(3.0 * SAMPLE_RATE / self._window))  # ~3 s, for barge-in

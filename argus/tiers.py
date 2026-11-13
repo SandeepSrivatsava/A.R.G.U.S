@@ -31,7 +31,8 @@ _MAIN = re.compile(
     r"mood|feel(s|ing)?|felt|sad|upset|stress(ed)?|anxious|worried|lonely|depress\w*|angry|tired of|"
     r"advice|should i|what do you think|opinion|decide|decision|explain|compare|summari[sz]e|translate|"
     r"flight|trip|plan|draft|write|going to|visit(ing)?|vacation|holiday|travel(l?ing)?|restaurants?|"
-    r"recommend\w*|suggest\w*|where should|reviews?|best place|ideas?)\b", re.I)
+    r"recommend\w*|suggest\w*|where should|reviews?|best place|ideas?|movies?|films?|shows?|series|watch|"
+    r"books?|novels?|games?|find me|good (one|ones)|which (one|is better))\b", re.I)
 
 
 def choose(content: Any, channel: str, settings) -> Tuple[str, str]:

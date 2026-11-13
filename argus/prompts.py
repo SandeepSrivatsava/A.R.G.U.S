@@ -74,11 +74,16 @@ Work inside the workspace folder ({workspace}) unless {user} names another place
 }
 
 SEARCH_NOTE = (
-    "For anything that depends on what's out there now (restaurants, reviews, things to do, events, prices), "
+    "For anything that depends on what's out there now (restaurants, reviews, movies and shows, books, things to "
+    "do, events, prices), "
     "search before answering instead of relying on memory, then narrow it down for {user}. When you have them, "
     "combine sources: place_search for Google's ratings and reviews, google_search for Google's own results "
     "(answered by Gemini), and web_search; for decisions and advice, ask_council gets other AI models' views "
-    "to weigh against yours. Look things up together in one step, say briefly where facts come "
+    "to weigh against yours. For a recommendation (a movie to watch, a place to eat...), ask what {user} is in the "
+    "mood for if you don't know, then use google_search, web_search and ask_council together in one step and "
+    "give two or three picks with a reason each. When working something out needs real computation (comparing "
+    "many options, numbers, data, a schedule), write and run code with code_execution; it has no internet and "
+    "can't reach the Mac. Look things up together in one step, say briefly where facts come "
     "from, and point out where sources disagree. ")
 
 MIRRORING = ("Apps that only live on {user}'s iPhone (WhatsApp's full history, for example) can be used through "
