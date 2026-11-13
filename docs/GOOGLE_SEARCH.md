@@ -24,8 +24,9 @@ check the Google Maps Platform pricing page and set a budget alert in Google Clo
 1. https://aistudio.google.com/apikey → **Create API key** (no card needed).
 2. `./setup.sh` asks for it (or press Enter to skip), then `argusctl restart`.
 
-The free tier of Gemini 2.5 Flash includes Grounding with Google Search, with a daily limit of free
-searches. Only the question is sent, never your memory, mail or the conversation; on the free tier Google
+Argus uses Gemini 3.8 Flash, which is on the free tier with grounding with Google Search (5,000 free grounded
+requests a month, shared across Gemini 3 models, as of November 2026; Google retired 2.5 Flash for new users, and
+a saved `gemini-2.5-flash` setting moves to 3.8 by itself). Only the question is sent, never your memory, mail or the conversation; on the free tier Google
 may use what's sent to improve its products. Change the model with `gemini_model` under `[brain]`.
 
 ## More brains for the council: the quick way

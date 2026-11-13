@@ -81,7 +81,7 @@ def test_a_slow_brain_doesnt_hold_the_answer_up(tmp_path):
     began = time.monotonic()
     answers = c.ask("q")
     assert time.monotonic() - began < 2.5
-    assert answers[0] == ("Gemini (gemini-2.5-flash)", "Gemini says April.", None)
+    assert answers[0] == ("Gemini (gemini-3.8-flash)", "Gemini says April.", None)
     assert answers[1] == ("Grok (4.7)", None, "still thinking after 0.5 s (left out)")
 
 
@@ -163,3 +163,12 @@ def test_argusctl_brains_add_test_and_remove(tmp_path, monkeypatch, capsys):
     assert brains_cmd("remove", "grok") == 0 and "XAI_API_KEY" not in (tmp_path / "secrets.env").read_text()
     assert brains_cmd("remove", "gemini") == 0 and "GEMINI_API_KEY" not in (tmp_path / "secrets.env").read_text()
     assert brains_cmd("add", "hal9000") == 1 and "Choose one of: chatgpt, grok, groq, mistral, openrouter, gemini" in capsys.readouterr().out
+
+
+def test_a_gemini_model_google_retired_moves_on_by_itself(tmp_path, monkeypatch):
+    # His log: "models/gemini-2.5-flash is no longer available to new users" (HTTP 404).
+    monkeypatch.setenv("ARGUS_HOME", str(tmp_path))
+    (tmp_path / "config.toml").write_text('[brain]\ngemini_model = "gemini-2.5-flash"\n')
+    assert config.load().gemini_model == "gemini-3.8-flash"
+    (tmp_path / "config.toml").write_text('[brain]\ngemini_model = "gemini-3.8-flash-lite"\n')
+    assert config.load().gemini_model == "gemini-3.8-flash-lite"

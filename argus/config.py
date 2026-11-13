@@ -45,7 +45,7 @@ class Settings:
     light_model: str = "claude-haiku-5-5"   # everyday questions ("" = use `model`)
     heavy_model: str = "claude-opus-5-5"    # coding, analysis, long writing ("" = use `model`)
     heavy_effort: str = "high"
-    gemini_model: str = "gemini-2.5-flash"   # google_search (free tier includes Google Search grounding)
+    gemini_model: str = "gemini-3.8-flash"   # google_search (free tier includes Google Search grounding)
     # More brains for ask_council: "Name | https://.../chat/completions | model | KEY_NAME_IN_SECRETS"
     council: List[str] = field(default_factory=list)
     code_execution: bool = True        # Claude may write and run code in Anthropic's sandbox (no internet, not the Mac)
@@ -288,6 +288,8 @@ def _validate(s: "Settings") -> None:
             raise ValueError('council.extra entries look like "Name | https://.../chat/completions | model | KEY_NAME"')
     if not 0 <= s.council_paid_per_day <= 1000:
         raise ValueError("council.paid_per_day must be between 0 and 1000")
+    if s.gemini_model in RETIRED_GEMINI:          # Google stopped serving it (404 "no longer available")
+        s.gemini_model = "gemini-3.8-flash"
     if not 1 <= s.logs_keep_days <= 3650:
         raise ValueError("logs.keep_days must be between 1 and 3650")
     if not 3 <= s.council_wait <= 60:
@@ -360,6 +362,9 @@ def _drop_retired(data: Dict[str, Any], path: Path) -> None:
             dropped.append(f"{section}.{key}")
     if dropped:
         log.info("ignoring retired setting(s) in %s: %s", path, ", ".join(dropped))
+
+
+RETIRED_GEMINI = {"gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"}
 
 
 def load(path: Path = None) -> Settings:

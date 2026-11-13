@@ -4,8 +4,8 @@
   whether they're open now, Google's review summary and a few recent reviews. Uses the Google Maps key setup
   already asked for (GOOGLE_MAPS_API_KEY); switch on "Places API (New)" for it in Google Cloud.
 * google_search: a question answered by Gemini with Grounding with Google Search, so the answer comes from
-  Google's own results, with the pages it used. Free: Gemini 2.5 Flash on the free tier includes grounded
-  Google searches each day (GEMINI_API_KEY from aistudio.google.com). Claude then weighs it against its own
+  Google's own results, with the pages it used. Free: Gemini 3.8 Flash on the free tier includes grounded
+  Google searches (5,000 a month) (GEMINI_API_KEY from aistudio.google.com). Claude then weighs it against its own
   web_search and what it knows.
 
 Only the search words are sent (never memory, mail or the conversation). On the free tier Google may use
@@ -125,7 +125,7 @@ def describe_place(place: Dict[str, Any], reviews: int = 2) -> str:
 
 
 class Gemini:
-    def __init__(self, key: str, model: str = "gemini-2.5-flash", *, request: Request = http_json):
+    def __init__(self, key: str, model: str = "gemini-3.8-flash", *, request: Request = http_json):
         self.key, self.model, self.request = key, model, request
 
     def search(self, question: str) -> Tuple[str, List[Tuple[str, str]], List[str]]:
@@ -211,7 +211,7 @@ def attach(settings, secrets: Dict[str, str], tools: Dict[str, Any], *, request:
 
     gemini_key = str(secrets.get("GEMINI_API_KEY") or "").strip()
     if gemini_key:
-        gemini = made["gemini"] = Gemini(gemini_key, getattr(settings, "gemini_model", "gemini-2.5-flash"),
+        gemini = made["gemini"] = Gemini(gemini_key, getattr(settings, "gemini_model", "gemini-3.8-flash"),
                                          request=request)
 
         def google_search(args: Dict[str, Any], ctx) -> ToolOutput:

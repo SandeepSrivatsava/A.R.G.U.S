@@ -585,7 +585,7 @@ made on the Mac (Kokoro, American); `argusctl voice` changes it, and `argusctl v
 
 ## How this was tested
 
-* **936 automated tests**: a pause for an app says which and `argusctl ignore-app`;  one sentence of the voice made at a time (the natural voice was measured too slow because several were made at once), code execution only for you;  the logs folder (each line once, a folder per day, old days deleted and nothing else);  restarting (a new copy waiting for the old one, a stuck copy stopped and only ever
+* **935 automated tests**: a retired Gemini model setting moving on to Gemini 3.8 Flash; a pause for an app says which and `argusctl ignore-app`;  one sentence of the voice made at a time (the natural voice was measured too slow because several were made at once), code execution only for you;  the logs folder (each line once, a folder per day, old days deleted and nothing else);  restarting (a new copy waiting for the old one, a stuck copy stopped and only ever
   Argus's own, stopping while the main thread and the shutdown are stuck, a native crash and a hang leaving a
   trace, two failed starts bringing a safe one, `argusctl restart` saying whether Argus came back or why not,
   against a stand-in launchd), talking over Argus without a voiceprint (only its name stops it, and the echo of

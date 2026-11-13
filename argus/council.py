@@ -161,7 +161,7 @@ def members(settings, secrets: Dict[str, str]) -> List[Member]:
     found: List[Member] = []
     gemini_key = str(secrets.get("GEMINI_API_KEY") or "").strip()
     if gemini_key:
-        model = getattr(settings, "gemini_model", "gemini-2.5-flash")
+        model = getattr(settings, "gemini_model", "gemini-3.8-flash")
         found.append(Member(f"Gemini ({model})", "gemini", "", model, gemini_key, short="gemini"))
     for p in PRESETS.values():
         key = str(secrets.get(p.key) or "").strip()

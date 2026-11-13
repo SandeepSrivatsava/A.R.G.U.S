@@ -322,11 +322,11 @@ def test_google_search_through_gemini(tmp_path):
     made, tools, ctx = tools_for(tmp_path, fake, {"GEMINI_API_KEY": "gem-key-1"})
     assert "place_search" not in tools
     out = tools["google_search"].run({"question": "best dosa in Portland?"}, ctx).content
-    assert "Google (answered by Gemini gemini-2.5-flash from Google Search):" in out
+    assert "Google (answered by Gemini gemini-3.8-flash from Google Search):" in out
     assert "Udupi Palace is the most praised." in out and "Searched for: best dosa portland" in out
     assert out.count("https://example.com/a") == 1
     url, headers, body = fake.calls[0]
-    assert url.endswith("/models/gemini-2.5-flash:generateContent") and headers == {"x-goog-api-key": "gem-key-1"}
+    assert url.endswith("/models/gemini-3.8-flash:generateContent") and headers == {"x-goog-api-key": "gem-key-1"}
     assert body["tools"] == [{"google_search": {}}] and "best dosa in Portland?" in body["contents"][0]["parts"][0]["text"]
     fake.gemini = (200, {"promptFeedback": {"blockReason": "SAFETY"}})
     assert "no answer (SAFETY)" in tools["google_search"].run({"question": "x"}, ctx).content
@@ -351,10 +351,10 @@ def test_the_council(tmp_path):
                                                  "Nobody | https://api.example.org/v1/chat/completions | m | MISSING_KEY"])
     tools = {}
     c = council.attach(settings, {"GEMINI_API_KEY": "gem", "MY_LLAMA_KEY": "groq-secret"}, tools, request=fake)
-    assert [m.name for m in c.team] == ["Gemini (gemini-2.5-flash)", "Groq Llama"]
+    assert [m.name for m in c.team] == ["Gemini (gemini-3.8-flash)", "Groq Llama"]
     ctx = Context(channel="voice", workspace=tmp_path, store=None)
     out = tools["ask_council"].run({"question": "Should I visit NYC in December or April?"}, ctx).content
-    assert "- Gemini (gemini-2.5-flash): Udupi Palace is the most praised." in out and "- Groq Llama: Go with Udupi." in out
+    assert "- Gemini (gemini-3.8-flash): Udupi Palace is the most praised." in out and "- Groq Llama: Go with Udupi." in out
     openai_call = [c for c in fake.calls if "api.example.com" in c[0]][0]
     assert openai_call[1] == {"Authorization": "Bearer groq-secret"} and openai_call[2]["model"] == "llama-x"
     fake.openai = (401, {"error": {"message": "bad key groq-secret"}})
