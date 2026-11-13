@@ -560,9 +560,9 @@ made on the Mac (Kokoro, American); `argusctl voice` changes it, and `argusctl v
 * **It stopped listening during a call.** That's on purpose: while FaceTime, Zoom, Teams, WhatsApp or any
   other app uses a microphone, Argus closes its own and the menu says "paused (on a call: ...)". It
   listens again a few seconds after the call. For calls on the iPhone itself, which the Mac can't see,
-  say "Argus, I'm on a call", then "Argus, I'm off the phone" (or clap twice). If an app that isn't a call
-  (a voice recorder, say) pauses Argus, add it to `ignore_mic_apps` under `[listening]`, or set
-  `pause_during_calls = false`.
+  say "Argus, I'm on a call", then "Argus, I'm off the phone" (or clap twice). A note on screen says which app
+  paused it. If that app isn't on a call (WhatsApp can hold the microphone after a voice note), run
+  `argusctl ignore-app WhatsApp`, or set `pause_during_calls = false`.
 * **"Tailscale isn't connected" during setup.** Not an error: setup finished. It only means the iPhone
   can't reach the Mac yet. Install Tailscale on both, sign in with the same account, then `argusctl restart`
   ([docs/IPHONE.md](docs/IPHONE.md)).
@@ -585,7 +585,7 @@ made on the Mac (Kokoro, American); `argusctl voice` changes it, and `argusctl v
 
 ## How this was tested
 
-* **935 automated tests**: one sentence of the voice made at a time (the natural voice was measured too slow because several were made at once), code execution only for you;  the logs folder (each line once, a folder per day, old days deleted and nothing else);  restarting (a new copy waiting for the old one, a stuck copy stopped and only ever
+* **936 automated tests**: a pause for an app says which and `argusctl ignore-app`;  one sentence of the voice made at a time (the natural voice was measured too slow because several were made at once), code execution only for you;  the logs folder (each line once, a folder per day, old days deleted and nothing else);  restarting (a new copy waiting for the old one, a stuck copy stopped and only ever
   Argus's own, stopping while the main thread and the shutdown are stuck, a native crash and a hang leaving a
   trace, two failed starts bringing a safe one, `argusctl restart` saying whether Argus came back or why not,
   against a stand-in launchd), talking over Argus without a voiceprint (only its name stops it, and the echo of

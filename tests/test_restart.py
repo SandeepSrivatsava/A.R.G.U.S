@@ -647,3 +647,21 @@ def test_the_voice_in_use_is_described(tmp_path):
     quick = RecordingVoice()
     adaptive = AdaptiveVoice(Natural(), quick)
     assert describe_voice(adaptive) == "Natural"
+
+
+def test_a_pause_for_an_app_says_why_and_the_app_can_be_ignored(home, tmp_path, capsys):
+    from argus.__main__ import cmd_ignore_app
+    notes = []
+    (tmp_path / "a").mkdir()
+    argus, _, _ = make_argus(tmp_path / "a", [], notify=notes.append)
+    argus.set_on_call(["net.whatsapp.WhatsApp"])
+    assert "paused while WhatsApp uses the microphone" in notes[0] and "argusctl ignore-app WhatsApp" in notes[0]
+    argus.set_on_call(["net.whatsapp.WhatsApp"])
+    assert len(notes) == 1                                       # said once, when it pauses
+    restarted = []
+    args = SimpleNamespace(app="WhatsApp", undo=False)
+    assert cmd_ignore_app(args, restart=lambda: restarted.append(1) or 0) == 0
+    assert config.load().ignore_mic_apps == ["WhatsApp"] and "keeps listening" in capsys.readouterr().out
+    assert cmd_ignore_app(args, restart=lambda: 0) == 0 and config.load().ignore_mic_apps == ["WhatsApp"]
+    assert cmd_ignore_app(SimpleNamespace(app="whatsapp", undo=True), restart=lambda: 0) == 0
+    assert config.load().ignore_mic_apps == [] and restarted == [1]

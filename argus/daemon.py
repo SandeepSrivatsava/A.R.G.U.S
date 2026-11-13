@@ -240,6 +240,10 @@ class Argus:
         if self.closed and not was:
             self.brain.cancel()
             self.listener.set_conversation(False)
+            names = ", ".join(friendly(a) for a in apps)
+            # say why it went quiet: an app can hold the microphone with no call going on (WhatsApp does)
+            self.notify(f"Argus is paused while {names} uses the microphone. Not a call? "
+                        f"argusctl ignore-app {friendly(apps[0])}")
         self.audit.log("on_call", apps=[friendly(a) for a in apps] or None)
         self._sync_mic()
         self._speak_held()

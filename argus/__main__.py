@@ -208,6 +208,21 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_ignore_app(args, *, restart=None) -> int:
+    """Argus pauses while another app holds a microphone (a call). Some apps hold it with no call (WhatsApp
+    after a voice note): this keeps Argus listening for that one."""
+    settings = config_mod.load()
+    app = " ".join(args.app.split())
+    apps = [a for a in settings.ignore_mic_apps if a.lower() != app.lower()]
+    if not args.undo:
+        apps.append(app)
+    config_mod.set_setting(settings.home / "config.toml", "listening", "ignore_mic_apps", json.dumps(apps))
+    print(f"Argus {'pauses again' if args.undo else 'keeps listening'} while {app} uses the microphone"
+          + ("" if args.undo else " (also during a call in it: say \"Argus, I'm on a call\" then)") + ".")
+    from . import service
+    return (restart or (lambda: service.restart(config_mod.load())))()
+
+
 def cmd_logs(args) -> int:
     from . import logkeeper
     settings = config_mod.load()
@@ -754,6 +769,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     s = sub.add_parser("errors", help="recent problems in plain words (--watch shows new ones as they happen)")
     s.add_argument("n", nargs="?", type=int, default=15)
     s.add_argument("--watch", action="store_true")
+    s = sub.add_parser("ignore-app", help="keep listening while this app holds the microphone (e.g. WhatsApp)")
+    s.add_argument("app")
+    s.add_argument("--undo", action="store_true", help="pause for it again")
     sub.add_parser("logs", help="copy the logs to the logs folder now (~/Downloads/Logs) and show where it is")
     s = sub.add_parser("report", help="write a problem report to the Desktop that is safe to share")
     s.add_argument("--show", action="store_true", help="print it instead of writing a file")
@@ -856,6 +874,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_report(args)
     if args.cmd == "logs":
         return cmd_logs(args)
+    if args.cmd == "ignore-app":
+        return cmd_ignore_app(args)
     if args.cmd == "doctor":
         return cmd_doctor(args)
 
