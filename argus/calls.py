@@ -30,6 +30,7 @@ import re
 import shutil
 import subprocess
 import threading
+from pathlib import Path
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -492,9 +493,25 @@ class CallManager:
         if self.audit is not None:
             self.audit.log("phone_call", number=number, outcome=result.outcome, seconds=round(result.seconds),
                            cost_usd=result.cost)
+        self._keep_record(plan, result)
         out = ToolOutput(result.report())
         out.is_error = result.outcome == "failed"
         return out
+
+    def _keep_record(self, plan: "CallPlan", result: "CallResult") -> None:
+        """Every call, tried or made, in logs/calls.log: who, why, how it went and what was said (owner-only;
+        copied to the logs folder with the other logs)."""
+        path = getattr(self.audit, "path", None) or getattr(self.settings, "audit_path", None)
+        if path is None:
+            return
+        try:
+            target = Path(path).parent / "calls.log"
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as fh:
+                fh.write(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')}  {plan.business or plan.number} ({plan.number})\n"
+                         f"Goal: {plan.goal}\n{result.report()}\n\n")
+        except OSError as exc:
+            log.warning("couldn't keep the call record: %s", exc)
 
     def _run(self, plan: CallPlan, cancel: threading.Event) -> CallResult:
         line = self.line_factory()

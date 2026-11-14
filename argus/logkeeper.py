@@ -22,7 +22,7 @@ from typing import Callable, Dict, Optional
 
 log = logging.getLogger("argus.logkeeper")
 
-FILES = ("audit.jsonl", "argus.log", "voice.out.log", "voice.err.log", "crash.log", "threads.log", "launchctl.err")
+FILES = ("audit.jsonl", "calls.log", "argus.log", "voice.out.log", "voice.err.log", "crash.log", "threads.log", "launchctl.err")
 _DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 INTERVAL = 600.0
 

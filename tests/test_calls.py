@@ -402,6 +402,9 @@ def test_the_tool_runs_a_call_and_reports(tmp_path):
     assert not manager.active and not speaker.muted and line.closed
     log = (tmp_path / "audit.jsonl").read_text()
     assert '"phone_call_started"' in log and '"outcome": "done"' in log
+    record = (tmp_path / "calls.log").read_text()       # every call kept: who, why, what was said
+    assert "Nopa (+14155550123)" in record and "Goal: book a table" in record and "Them: Hello, Nopa." in record
+    assert oct((tmp_path / "calls.log").stat().st_mode & 0o777) == "0o600"
 
 
 @pytest.mark.parametrize("args,why", [
@@ -425,6 +428,7 @@ def test_calls_that_arent_set_up_say_what_is_missing(tmp_path):
     manager, speaker = manager_for(tmp_path, line, Words(), Script())
     out = manager.tool({"number": "415-555-0123", "goal": "x"}, ctx())
     assert out.is_error and "BlackHole 2ch isn't installed" in out.content and not speaker.muted
+    assert "Outcome: failed." in (tmp_path / "calls.log").read_text()     # tried calls are kept too
 
 
 def test_one_call_at_a_time(tmp_path):

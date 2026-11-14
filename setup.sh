@@ -538,7 +538,7 @@ conversation_idle_seconds = 120 # conversation mode ends after this much quiet
 clap = "double"                 # "double", "single" or "off": clapping wakes Argus
 end_of_speech_seconds = 0.6     # how long a pause ends what you're saying (lower = snappier, 0.3 to 2)
 voice_lock = true               # only answer your voice, once you've run: argusctl enroll
-voice_lock_threshold = 0.45
+voice_lock_threshold = 0.40
 guests = "ask"                  # someone else talks to Argus: "ask" you first, or "never" answer them
 guest_minutes = 60              # how long "Argus, talk to everyone" lasts
 mic_device = ""                 # "" = the Mac's current microphone

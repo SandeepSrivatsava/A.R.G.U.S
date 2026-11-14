@@ -69,7 +69,7 @@ class Settings:
     extra_variants: List[str] = field(default_factory=list)
     soft_variants: List[str] = field(default_factory=lambda: ["august", "angus"])
     voice_lock: bool = True        # only answer the enrolled voice (takes effect after argusctl enroll)
-    voice_lock_threshold: float = 0.45
+    voice_lock_threshold: float = 0.40
     guests: str = "ask"            # someone else talks to Argus: "ask" you first, or "never" answer them
     guest_minutes: float = 60.0    # "talk to everyone" lasts this long
     mic_device: str = ""
@@ -292,6 +292,8 @@ def _validate(s: "Settings") -> None:
             raise ValueError('council.extra entries look like "Name | https://.../chat/completions | model | KEY_NAME"')
     if not 0 <= s.council_paid_per_day <= 1000:
         raise ValueError("council.paid_per_day must be between 0 and 1000")
+    if s.voice_lock_threshold == 0.45:            # the old default was too strict: his own voice scored 0.41-0.44
+        s.voice_lock_threshold = 0.40
     if s.gemini_model in RETIRED_GEMINI:          # Google stopped serving it (404 "no longer available")
         s.gemini_model = "gemini-3.8-flash"
     if not 1 <= s.logs_keep_days <= 3650:

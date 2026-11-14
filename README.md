@@ -326,7 +326,8 @@ Argus can phone a business for you (book a table, ask about opening hours) from 
 
 It never gives card, bank or account numbers, never agrees to deposits or fees (it says you'll call back),
 never leaves voicemails, never calls emergency, service (N11) or pay-per-call numbers, and makes at most
-6 calls an hour. Calls are off until you run `scripts/setup_calls.sh` (it installs BlackHole, a virtual
+6 calls an hour. Every call, made or tried, is written to `~/.argus/logs/calls.log` (who, why, how it went
+and what was said; copied to the logs folder too). Calls are off until you run `scripts/setup_calls.sh` (it installs BlackHole, a virtual
 audio cable, SwitchAudioSource, and builds the audiotee call recorder; macOS 14.2 or newer). Tested here
 with a simulated phone line; the first real call on your Mac is the real test. Rules on AI phone calls
 differ by place (the US treats AI voices as "artificial voices"), so keep it to businesses you'd call

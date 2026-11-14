@@ -172,3 +172,12 @@ def test_a_gemini_model_google_retired_moves_on_by_itself(tmp_path, monkeypatch)
     assert config.load().gemini_model == "gemini-3.8-flash"
     (tmp_path / "config.toml").write_text('[brain]\ngemini_model = "gemini-3.8-flash-lite"\n')
     assert config.load().gemini_model == "gemini-3.8-flash-lite"
+
+
+def test_the_old_voice_lock_bar_is_loosened(tmp_path, monkeypatch):
+    # His own voice scored 0.41-0.44 and was taken for someone else's at the old 0.45.
+    monkeypatch.setenv("ARGUS_HOME", str(tmp_path))
+    (tmp_path / "config.toml").write_text("[listening]\nvoice_lock_threshold = 0.45\n")
+    assert config.load().voice_lock_threshold == 0.40
+    (tmp_path / "config.toml").write_text("[listening]\nvoice_lock_threshold = 0.5\n")
+    assert config.load().voice_lock_threshold == 0.5
