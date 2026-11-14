@@ -575,11 +575,12 @@ def cmd_calls(args, *, line=None) -> int:
                            permissions=running_argus_permissions)
     if getattr(args, "open", False):
         import subprocess
-        for pane in ("Privacy_ScreenCapture", "Privacy_Accessibility"):
+        for pane in ("Privacy_ScreenCapture", "Privacy_Accessibility"):   # (macOS 27 calls it Device Control and Data Access)
             subprocess.run(["open", f"x-apple.systempreferences:com.apple.preference.security?{pane}"], check=False)
         from pathlib import Path
         subprocess.run(["open", "-R", str(Path.home() / "Applications" / "Argus.app")], check=False)
-        print("Opened Screen Recording and Accessibility in System Settings, and Argus.app in Finder.\n"
+        print("Opened Screen Recording and Accessibility (on macOS 27: Device Control and Data Access) in System "
+              "Settings, and Argus.app in Finder.\n"
               "In each list switch on Argus. If it isn't there, press + (or drag Argus.app from Finder into the list).\n"
               "Then run: argusctl restart")
         return 0

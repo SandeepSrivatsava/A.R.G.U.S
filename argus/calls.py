@@ -630,7 +630,8 @@ PERMISSION_HELP = {
                         "Privacy & Security > Screen & System Audio Recording: switch on Argus; if it isn't listed, "
                         "press + and pick Argus in the Applications folder inside your home folder)",
     "accessibility": "Accessibility is off for Argus, so it can't press the Call button (System Settings > "
-                     "Privacy & Security > Accessibility: switch on Argus; if it isn't listed, press + and pick "
+                     "Privacy & Security > Device Control and Data Access (called Accessibility before macOS 27): switch on "
+                     "Argus; if it isn't listed, press + and pick "
                      "Argus in the Applications folder inside your home folder)",
 }
 
