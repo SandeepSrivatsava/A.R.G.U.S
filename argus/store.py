@@ -107,6 +107,21 @@ class Store:
                 self._q("DELETE FROM sessions WHERE id=?", (sid,))
         return len(old)
 
+    def all_messages(self, *, since: float = 0.0, limit: int = 5000,
+                     skip_channels: Tuple[str, ...] = ("guest",)) -> List[Tuple[float, str, str, Any]]:
+        """(created, channel, role, content) for recent messages in every conversation, newest last (recall)."""
+        marks = ",".join("?" * len(skip_channels)) or "''"
+        rows = self._q(f"SELECT m.created, s.channel, m.role, m.content FROM messages m JOIN sessions s ON "
+                       f"s.id = m.session_id WHERE m.created >= ? AND s.channel NOT IN ({marks}) "
+                       f"ORDER BY m.id DESC LIMIT ?", (since, *skip_channels, limit))
+        out = []
+        for created, channel, role, content in reversed(rows):
+            try:
+                out.append((float(created), channel, role, json.loads(content)))
+            except ValueError:
+                continue
+        return out
+
     # ---- things to remember ------------------------------------------------------------------------
     def remember(self, fact: str) -> int:
         with self._lock:

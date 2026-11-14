@@ -138,6 +138,8 @@ class App:
             sources=[lambda: names_mod.added(self.store),
                      lambda: names_mod.names_in(" ".join(f for _, f in self.store.facts(limit=200)))])
         self.agent.known_names = self.names.all
+        from . import recall as recall_mod
+        recall_mod.attach(self.store, self.agent.tools)                  # search past conversations (BM25)
         self.agent.notice = self.names.notice
         self.glancer = None
         if self.glasses is not None:                                    # where things were seen through the glasses
