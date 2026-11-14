@@ -467,3 +467,27 @@ def test_claude_can_write_and_run_code_but_not_for_guests_or_the_quick_model(tmp
     assert "code_execution" not in names(agent._tools_for("scheduler"))
     agent.settings.code_execution = False
     assert "code_execution" not in names(agent._tools_for("voice"))
+
+
+def test_a_clear_match_of_your_voice_stops_argus_at_once(tmp_path):
+    from fakes import SPEECH, make_argus
+    argus, _, _ = make_argus(tmp_path, [])
+    argus.barge_in = "voice"
+    scores = iter([0.72, 0.45, 0.45])
+    argus.voiceprint = type("Print", (), {"enrolled": True, "score": lambda self, audio: next(scores)})()
+    stopped = []
+    argus.brain.cancel = lambda: stopped.append(1)
+    argus.segmenter.speech_active = True
+    argus.segmenter.recent_audio = lambda: SPEECH
+    argus.speaker._idle.clear()
+    argus._speech_since = time.monotonic() - 1
+    argus._last_barge_check = 0.0
+    argus._maybe_barge_in()                    # 0.72: clearly you, stops on the first check
+    assert stopped == [1]
+    argus._last_barge_check = 0.0
+    argus._maybe_barge_in()                    # 0.45: borderline, needs a second one
+    assert stopped == [1] and argus._barge_hits == 1
+    argus._last_barge_check = 0.0
+    argus._maybe_barge_in()
+    assert stopped == [1, 1]
+    argus.speaker._idle.set()

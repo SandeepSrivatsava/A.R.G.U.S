@@ -617,7 +617,8 @@ def describe_call(name: str, args: Dict[str, Any]) -> str:
     if name == "open_app":
         return f"open {args.get('name')}"
     if name == "phone_call":
-        return f"phone {args.get('business') or args.get('number')}: {str(args.get('goal'))[:120]}"
+        from .policy import business_name
+        return f"phone {business_name(args.get('business')) or args.get('number')}: {str(args.get('goal'))[:120]}"
     if name == "route":
         return f"directions to {str(args.get('destination'))[:120]}"
     if name == "mail_search":

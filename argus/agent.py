@@ -396,7 +396,7 @@ class Agent:
         if verdict.action == ASK and verdict.scope not in grants:
             request = ApprovalRequest(run_id=session_id, command=what, description=verdict.reason,
                                       choices=["once", "session", "deny"], pattern_key=verdict.scope, origin=channel,
-                                      money=verdict.money)
+                                      money=verdict.money, short=verdict.short)
             try:
                 choice = events.approve(request)
             except Exception as exc:   # a broken dialog must never count as a yes

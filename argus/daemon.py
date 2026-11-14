@@ -38,7 +38,7 @@ class Argus:
     def __init__(self, *, source, segmenter: Segmenter, transcriber: Transcriber, listener: Listener,
                  speaker: Speaker, brain: Brain, audit: Audit, voiceprint: Optional[VoicePrint] = None,
                  voice_lock: bool = False, greeting: str = "", min_utterance_seconds: float = 0.35,
-                 barge_in_interval: float = 0.5, barge_in: str = "voice", talk_over_threshold: float = 0.38, on_change: Callable[[], None] = lambda: None, clap=None,
+                 barge_in_interval: float = 0.25, barge_in: str = "voice", talk_over_threshold: float = 0.38, on_change: Callable[[], None] = lambda: None, clap=None,
                  gate=None, voice_approval_threshold: float = 0.55, guests: str = "ask", guest_minutes: float = 60.0,
                  owner_name: str = "", clock: Callable[[], float] = time.monotonic, calls=None,
                  notify: Callable[[str], None] = lambda text: None):
@@ -297,7 +297,8 @@ class Argus:
             threading.Thread(target=self._ack_done, daemon=True).start()
         self.on_change()
 
-    BARGE_MIN_SECONDS = 0.4       # this much of your voice before Argus stops (a cough or "mm" doesn't count)
+    BARGE_MIN_SECONDS = 0.3       # this much of your voice before Argus stops (a cough or "mm" doesn't count)
+    BARGE_SURE = 0.55             # a match this strong stops Argus on the first check, without waiting for a second
     BARGE_WINDOW = 12.0           # after stopping, what you say next needs no name
 
     def _maybe_barge_in(self) -> None:
@@ -326,7 +327,8 @@ class Argus:
         if by_voice:
             score = self.voiceprint.score(audio)
             if score >= self.talk_over_threshold:
-                if self._barge_hits >= 1:           # twice in a row: one lucky match isn't enough to stop
+                # clearly you: stop now. A borderline match has to come twice in a row (one lucky match isn't enough)
+                if score >= max(self.BARGE_SURE, self.talk_over_threshold) or self._barge_hits >= 1:
                     return self._barge(now, "your voice", score=round(score, 3))
                 self._barge_hits += 1
             else:

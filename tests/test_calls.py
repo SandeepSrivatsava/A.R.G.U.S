@@ -469,6 +469,7 @@ def test_calls_need_approval_and_bad_numbers_are_blocked(tmp_path):
                            "voice")
     assert verdict.action == ASK and verdict.scope == "call:+14155550123" and not verdict.money
     assert verdict.reason == "call Nopa at 415 555 0123 from your number to book a table"
+    assert verdict.short == "call Nopa"
     assert policy.check("phone_call", {"number": "911", "goal": "x"}, "voice").action == BLOCK
     assert policy.check("phone_call", {"number": "415 555 0123", "goal": "x"}, "voice").reason.startswith(
         "call 415 555 0123")
@@ -713,3 +714,19 @@ def test_doctor_checks_calls_when_they_are_on(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(C.platform, "mac_ver", lambda: ("", ("", "", ""), ""))
     cli.main(["doctor", "--offline"])
     assert "FAIL  phone calls: phone calls only work on a Mac" in capsys.readouterr().out
+
+
+def test_asking_to_call_is_one_short_question_without_the_address(tmp_path):
+    from argus.approvals import ApprovalRequest
+    from argus.policy import Policy, business_name
+    from argus.toolbox import describe_call
+    s = make_settings(tmp_path)
+    args = {"number": "(415) 555-0123", "business": "Jack in the Box, 100 Main St, Portland", "goal": "ask when they close"}
+    verdict = Policy(s, workspace=s.workspace).check("phone_call", args, "voice")
+    assert verdict.short == "call Jack in the Box" and "Main St" not in verdict.reason
+    request = ApprovalRequest("r", description=verdict.reason, short=verdict.short, code="owl", pattern_key=verdict.scope)
+    assert request.spoken() == "May I call Jack in the Box? To allow, say yes, owl. Or use the screen."
+    assert "Main St" not in describe_call("phone_call", args)
+    assert business_name(None) == "" and business_name("Nopa") == "Nopa"
+    assert Policy(s, workspace=s.workspace).check("phone_call", {"number": "415 555 0123"}, "voice").short == \
+        "call 415 555 0123"

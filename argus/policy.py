@@ -20,12 +20,19 @@ from .protected import MENTION, is_protected
 ALLOW, ASK, BLOCK = "allow", "ask", "block"
 
 
+def business_name(text) -> str:
+    """"Jack in the Box, 5533 Main St, Springfield" -> "Jack in the Box": the name without the address."""
+    name = " ".join(str(text or "").split())
+    return name.split(",", 1)[0].strip()[:60]
+
+
 @dataclass(frozen=True)
 class Verdict:
     action: str
     reason: str = ""
     scope: str = ""        # what an "Allow for this task" answer covers
     money: bool = False    # paying or buying: only Touch ID can approve it
+    short: str = ""        # what Argus says out loud when it asks ("call Jack in the Box"), if not the reason
 
 
 def _rx(patterns: Iterable[Tuple[str, str]]) -> List[Tuple[re.Pattern, str]]:
@@ -224,10 +231,12 @@ class Policy:
                                            bool(getattr(self.settings, "call_international", False)))
             if number is None:
                 return Verdict(BLOCK, why)
-            who = " ".join(str(args.get("business") or "").split())[:60]
+            who = business_name(args.get("business"))
             goal = " ".join(str(args.get("goal") or "").split())[:120]
             target = f"{who} at {spoken_number(number)}" if who else spoken_number(number)
-            return Verdict(ASK, f"call {target} from your number to {goal}", scope=f"call:{number}")
+            # the screen shows the number and the reason; out loud it's just "May I call Jack in the Box?"
+            return Verdict(ASK, f"call {target} from your number to {goal}", scope=f"call:{number}",
+                           short=f"call {who or spoken_number(number)}")
         if tool == "schedule" and args.get("action") == "create" and args.get("mode") == "task":
             return Verdict(ASK, f"schedule a task to run by itself: {str(args.get('text'))[:120]}", scope="schedule:task")
         if tool == "glasses_look" and channel not in ("voice", "phone"):

@@ -51,6 +51,7 @@ class ApprovalRequest:
     origin: str = "voice"
     money: bool = False            # paying or buying: Touch ID only
     code: str = ""                 # set when a spoken answer is allowed
+    short: str = ""                # what to say out loud, when shorter than the description ("call Jack in the Box")
 
     @property
     def task_scope_offered(self) -> bool:
@@ -65,6 +66,8 @@ class ApprovalRequest:
             return "use your iPhone through iPhone Mirroring for this task"
         if self.pattern_key.startswith("computer:"):
             return "use your screen for this task"
+        if self.short:
+            return " ".join(self.short.split())[:80]
         text = " ".join((self.description or self.command or "do that").split())[:140]
         first = text.split(" ", 1)[0].lower()
         return text if first in _VERBS else f"go ahead with {text}"
