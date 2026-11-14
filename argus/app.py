@@ -214,7 +214,7 @@ class App:
             if s.echo_cancel and IS_MAC and not s.mic_device and (s.bin_dir / "argus-ear").exists():
                 from .ear import EchoCancelledMicrophone, Ear
                 from .voice import attach_sink
-                ear = Ear(s.bin_dir / "argus-ear")
+                ear = Ear(s.bin_dir / "argus-ear", failed_marker=s.run_dir / "argus-ear-failed")
                 source = EchoCancelledMicrophone(ear, source, audit=self.audit)
                 attach_sink(speaker.voice, ear)
         argus = Argus(source=source,

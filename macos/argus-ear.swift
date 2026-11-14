@@ -38,10 +38,14 @@ if #available(macOS 14.0, *) {
 }
 
 // ---- the voice: played through this engine, so the echo canceller knows what to remove ----
+// (connected in the mixer's own format: voice processing refuses to start, error -10875, when the formats
+// in the graph don't match what the audio device runs at; files are converted to it when they're played)
 let player = AVAudioPlayerNode()
 engine.attach(player)
-guard let voiceFormat = AVAudioFormat(standardFormatWithSampleRate: voiceRate, channels: 1) else { exit(3) }
-engine.connect(player, to: engine.mainMixerNode, format: voiceFormat)
+let mixer = engine.mainMixerNode
+engine.connect(player, to: mixer, format: nil)
+let voiceFormat = player.outputFormat(forBus: 0)
+_ = voiceRate
 
 // ---- the microphone: converted to 16-bit mono at the mic rate ----
 let micFormat = input.outputFormat(forBus: 0)
@@ -77,7 +81,7 @@ func load(_ path: String) -> AVAudioPCMBuffer? {
           (try? file.read(into: source)) != nil else { return nil }
     if file.processingFormat == voiceFormat { return source }
     guard let convert = AVAudioConverter(from: file.processingFormat, to: voiceFormat) else { return nil }
-    let frames = AVAudioFrameCount(Double(source.frameLength) * voiceRate / file.processingFormat.sampleRate) + 64
+    let frames = AVAudioFrameCount(Double(source.frameLength) * voiceFormat.sampleRate / file.processingFormat.sampleRate) + 64
     guard let target = AVAudioPCMBuffer(pcmFormat: voiceFormat, frameCapacity: frames) else { return nil }
     var given = false
     var failure: NSError?

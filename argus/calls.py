@@ -507,13 +507,15 @@ class CallManager:
         try:
             target = Path(path).parent / "calls.log"
             fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            notes = f"Diagnostics: {self._last_line_notes}\n" if getattr(self, "_last_line_notes", "") else ""
             with os.fdopen(fd, "a", encoding="utf-8") as fh:
                 fh.write(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')}  {plan.business or plan.number} ({plan.number})\n"
-                         f"Goal: {plan.goal}\n{result.report()}\n\n")
+                         f"Goal: {plan.goal}\n{result.report()}\n{notes}\n")
         except OSError as exc:
             log.warning("couldn't keep the call record: %s", exc)
 
     def _run(self, plan: CallPlan, cancel: threading.Event) -> CallResult:
+        self._last_line_notes = ""
         line = self.line_factory()
         problems = line.check()
         if problems:
@@ -546,6 +548,10 @@ class CallManager:
             return CallResult("failed", f"The call broke off: {exc}")
         finally:
             self._active = False
+            try:
+                self._last_line_notes = line.diagnostics() if hasattr(line, "diagnostics") else ""
+            except Exception:
+                self._last_line_notes = ""
             try:
                 line.close()
             finally:
@@ -676,6 +682,17 @@ class MacCallLine(CallLine):
         self._before: Optional[np.ndarray] = None
         self._connected_at = 0.0
         self._connected = True
+        self._end_seen = False       # the red End button was found on screen at least once
+        self._end_missing = 0        # checks in a row without it, after it had been seen
+        self.peak = 0.0              # loudest call audio heard (diagnostics in calls.log)
+        self.chunks = 0
+        self.hang_up_how = ""
+
+    def diagnostics(self) -> str:
+        return (f"call audio: {self.chunks} chunks, loudest {self.peak:.3f}"
+                f"{' (silence: Argus heard nothing from the call)' if self.peak < 0.01 else ''}; "
+                f"End button {'seen' if self._end_seen else 'never recognised on screen'}"
+                f"{'; hung up by ' + self.hang_up_how if self.hang_up_how else ''}")
 
     # -- setup checks --
     def _switch(self, *args: str) -> str:
@@ -777,6 +794,9 @@ class MacCallLine(CallLine):
             if not data:
                 break
             chunk = np.frombuffer(data[: len(data) // 2 * 2], dtype="<i2").astype(np.float32) / 32768.0
+            self.chunks += 1
+            if chunk.size:
+                self.peak = max(self.peak, float(np.max(np.abs(chunk))))
             try:
                 self._audio.put_nowait(chunk)
             except queue.Full:
@@ -800,23 +820,63 @@ class MacCallLine(CallLine):
             t.join(timeout=30)
 
     def connected(self) -> bool:
+        """Whether the call is still on. The red End button is the sign; but macOS versions draw the call window
+        differently, so a call only counts as ended once that button had been seen and then went away (three
+        checks in a row). If it's never recognised, the call is ended by silence or by Argus hanging up."""
         if self.clock() - self._connected_at < 3:          # the call window is still appearing
             return True
         try:
-            self._connected = find_new_button(self._before, self.screen.grab(), RED) is not None
+            red = find_new_button(self._before, self.screen.grab(), RED) is not None
         except Exception:
-            pass
-        return self._connected
+            return True
+        if red:
+            self._end_seen, self._end_missing = True, 0
+            return True
+        if not self._end_seen:
+            return True
+        self._end_missing += 1
+        return self._end_missing < 3
+
+    END_SCRIPT = (
+        'tell application "System Events"\n'
+        '  repeat with procName in {"FaceTime", "NotificationCenter", "Phone"}\n'
+        '    if exists process procName then\n'
+        '      repeat with w in windows of process procName\n'
+        '        repeat with b in (buttons of w)\n'
+        '          set n to ""\n'
+        '          try\n'
+        '            set n to (name of b as text) & " " & (description of b as text)\n'
+        '          end try\n'
+        '          if n contains "End" or n contains "Hang Up" then\n'
+        '            click b\n'
+        '            return "clicked"\n'
+        '          end if\n'
+        '        end repeat\n'
+        '      end repeat\n'
+        '    end if\n'
+        '  end repeat\n'
+        'end tell\n'
+        'return "none"')
 
     def hang_up(self) -> bool:
+        """Press End: the red button on screen, or else the End button found by Accessibility."""
         try:
             spot = find_new_button(self._before, self.screen.grab(), RED)
         except Exception:
             spot = None
-        if spot is None:
-            return False
-        self.screen.click(*spot)
-        return True
+        if spot is not None:
+            self.screen.click(*spot)
+            self.hang_up_how = "the red button"
+            return True
+        try:
+            proc = self.run(["osascript", "-e", self.END_SCRIPT], capture_output=True, text=True, timeout=10)
+            if (proc.stdout or "").strip() == "clicked":
+                self.hang_up_how = "the End button (Accessibility)"
+                return True
+        except Exception:
+            pass
+        self.hang_up_how = "nothing found: end the call on the iPhone"
+        return False
 
     def take_over(self) -> None:
         self._restore()

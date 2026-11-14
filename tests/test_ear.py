@@ -195,3 +195,19 @@ def test_the_swift_helper_and_build_steps_exist():
     assert "setVoiceProcessingEnabled(true)" in source and '"ready"' in source and "done \\(id)" in source
     assert "argus-ear.swift" in (repo / "setup.sh").read_text()
     assert "argus-ear.swift" in (repo / "scripts" / "update.sh").read_text()
+
+
+def test_a_build_that_failed_isnt_retried_until_it_is_rebuilt(tmp_path):
+    marker = tmp_path / "run" / "argus-ear-failed"
+    binary = helper(tmp_path, "broken")
+    ear = Ear(binary, ready_timeout=3, failed_marker=marker)
+    assert not ear.start() and "voice processing" in marker.read_text()
+    again = Ear(binary, failed_marker=marker)
+    began = time.monotonic()
+    assert not again.start() and again.error.startswith("this build failed before")
+    assert time.monotonic() - began < 1
+    os.utime(binary, (time.time() + 10, time.time() + 10))      # rebuilt: newer than the marker
+    fresh = Ear(binary, ready_timeout=3, failed_marker=marker)
+    assert not fresh.start() and "voice processing" in fresh.error
+    unwritable = Ear(binary, ready_timeout=3, failed_marker=tmp_path / "x" / "\0bad")
+    assert not unwritable.start()

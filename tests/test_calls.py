@@ -391,6 +391,7 @@ def ctx():
 
 def test_the_tool_runs_a_call_and_reports(tmp_path):
     line = FakeLine(("speech", 1), ("silence", 1), ("speech", 1), ("silence", 1))
+    line.diagnostics = lambda: "call audio: 4 chunks, loudest 0.300"
     seen = {}
     script = Script(say("Hi, a table for two tomorrow at seven?"),
                     call("end_call", {"outcome": "done", "summary": "Booked for 7."}, text="Thanks, bye!"))
@@ -404,6 +405,7 @@ def test_the_tool_runs_a_call_and_reports(tmp_path):
     assert '"phone_call_started"' in log and '"outcome": "done"' in log
     record = (tmp_path / "calls.log").read_text()       # every call kept: who, why, what was said
     assert "Nopa (+14155550123)" in record and "Goal: book a table" in record and "Them: Hello, Nopa." in record
+    assert "Diagnostics: call audio: 4 chunks, loudest 0.300" in record
     assert oct((tmp_path / "calls.log").stat().st_mode & 0o777) == "0o600"
 
 
@@ -522,6 +524,7 @@ class Shell:
                  fail_switch=False):
         self.inputs, self.current, self.fail_switch = list(inputs), current, fail_switch
         self.calls = []
+        self.end_button = False
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
@@ -535,6 +538,8 @@ class Shell:
                 if self.fail_switch:
                     return SimpleNamespace(returncode=1, stdout="", stderr="no such device")
                 self.current = cmd[cmd.index("-s") + 1]
+        if cmd[0] == "osascript" and "Hang Up" in cmd[-1]:
+            out = "clicked" if self.end_button else "none"
         return SimpleNamespace(returncode=code, stdout=out, stderr="")
 
 
@@ -637,13 +642,37 @@ def test_no_call_button_means_no_call(tmp_path):
     line.close()
 
 
-def test_when_the_call_window_goes_the_call_is_over(tmp_path):
+def test_when_the_end_button_goes_away_the_call_is_over(tmp_path):
     blank = screen_with()
-    screen = Screen([blank, screen_with((60, 150, 7, GREEN_RGB)), blank])
-    line, _, _, t = mac_line(tmp_path, screen=screen)
+    with_end = screen_with((60, 150, 7, RED_RGB))
+    screen = Screen([blank, screen_with((60, 150, 7, GREEN_RGB)), with_end, blank, blank, blank])
+    shell = Shell()
+    line, _, _, t = mac_line(tmp_path, screen=screen, shell=shell)
     line.dial("4155550123")
     t[0] += 5
-    assert not line.connected() and not line.hang_up()
+    assert line.connected()                          # End button seen
+    assert line.connected() and line.connected()     # gone once, twice: could be the window redrawing
+    assert not line.connected()                      # three times in a row: the call is over
+    assert not line.hang_up() and "end the call on the iPhone" in line.hang_up_how
+
+
+def test_a_call_window_without_a_recognisable_end_button_doesnt_end_the_call(tmp_path):
+    blank = screen_with()
+    screen = Screen([blank, screen_with((60, 150, 7, GREEN_RGB)), blank])
+    shell = Shell()
+    line, _, _, t = mac_line(tmp_path, screen=screen, shell=shell)
+    line.dial("4155550123")
+    t[0] += 5
+    for _ in range(5):
+        assert line.connected()                      # never seen: rely on the audio, not the screen
+    assert "never recognised" in line.diagnostics() and "loudest 0.250" in line.diagnostics()
+    line.peak = 0.0
+    assert "heard nothing" in line.diagnostics()
+    shell.end_button = True                          # Accessibility finds the End button
+    assert line.hang_up() and line.hang_up_how == "the End button (Accessibility)"
+    assert "hung up by the End button" in line.diagnostics()
+    line.screen = type("Broken", (), {"grab": lambda self: 1 / 0})()
+    assert line.connected()
 
 
 def test_taking_over_gives_back_the_real_microphone_at_once(tmp_path):

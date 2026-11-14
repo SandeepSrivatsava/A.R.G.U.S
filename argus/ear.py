@@ -31,8 +31,12 @@ class Ear:
     """The argus-ear helper: the microphone (after echo cancellation) and a speaker for Argus's voice."""
 
     def __init__(self, binary: Path, *, voice_rate: int = 24000, popen=subprocess.Popen, ready_timeout: float = 6.0,
-                 block: int = 1024, max_backlog_seconds: float = 30.0, on_error: Callable[[str], None] = lambda m: None):
+                 block: int = 1024, max_backlog_seconds: float = 30.0, on_error: Callable[[str], None] = lambda m: None,
+                 failed_marker: Optional[Path] = None):
         self.binary, self.voice_rate, self.popen = Path(binary), voice_rate, popen
+        # When this build of the helper failed to start once, don't make every start of Argus wait for it again
+        # (a rebuilt helper, newer than the marker, gets a fresh try)
+        self.failed_marker = Path(failed_marker) if failed_marker else None
         self.ready_timeout, self.block = ready_timeout, block
         self.on_error = on_error
         self._proc: Optional[subprocess.Popen] = None
@@ -56,6 +60,13 @@ class Ear:
             if not self.binary.exists():
                 self.error = f"{self.binary.name} isn't built yet (scripts/update.sh builds it)"
                 return False
+            marker = self.failed_marker
+            try:
+                if marker is not None and marker.stat().st_mtime >= self.binary.stat().st_mtime:
+                    self.error = "this build failed before: " + marker.read_text()[:200].strip()
+                    return False
+            except (OSError, ValueError):
+                pass
             self._ready.clear()
             try:
                 proc = self.popen([str(self.binary), str(SAMPLE_RATE), str(self.voice_rate)], stdin=subprocess.PIPE,
@@ -72,6 +83,12 @@ class Ear:
             return True
         self.error = self.error or "argus-ear didn't get ready"
         self.stop_process()
+        if self.failed_marker is not None:
+            try:
+                self.failed_marker.parent.mkdir(parents=True, exist_ok=True)
+                self.failed_marker.write_text(self.error + "\n")
+            except (OSError, ValueError):
+                pass
         return False
 
     def stop_process(self) -> None:
