@@ -519,3 +519,31 @@ def test_argus_is_told_which_model_answers(tmp_path):
     first, second = (json.dumps(b["system"]) for b in script.bodies)
     assert f"this answer comes from {agent.settings.light_model} (the quick model)" in first
     assert "(the heavy model)" in second and "ask_council" in first and "Phone calls use" in first
+
+
+def test_argus_counts_as_quiet_the_moment_it_is_stopped(tmp_path):
+    import threading as th
+    from argus.voice import Speaker, Voice
+
+    class Slow(Voice):
+        def __init__(self):
+            self.making, self.release, self.spoken = th.Event(), th.Event(), []
+
+        def speak(self, text):
+            self.making.set()
+            self.release.wait(5)          # still making the sentence when it's stopped
+            self.spoken.append(text)
+
+        def stop(self):
+            pass
+    voice = Slow()
+    speaker = Speaker(voice)
+    speaker.say("A long sentence that is still being made.")
+    assert voice.making.wait(5) and speaker.speaking
+    speaker.stop()
+    assert not speaker.speaking and speaker.quiet_for() < 1
+    voice.release.set()
+    assert speaker.wait_idle(5) and not speaker.speaking
+    speaker.say("Next.")
+    assert speaker.speaking
+    assert speaker.wait_idle(5)

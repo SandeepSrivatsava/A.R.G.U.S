@@ -450,8 +450,10 @@ class Speaker:
                     self._queue.get_nowait()
                 except queue.Empty:
                     break
-            if not self._busy.is_set():
-                self._idle.set()
+            # Silent from now on: the sentence being made is thrown away when it's ready, so Argus counts as
+            # quiet at once (otherwise your next words were treated as talking over it for another second or two)
+            self._idle.set()
+            self._last_end = self.clock()
         self.voice.stop()
 
     def quiet_for(self) -> float:
@@ -492,6 +494,7 @@ class Speaker:
             finally:
                 with self._lock:
                     self._busy.clear()
-                    self._last_end = self.clock()
+                    if generation == self._generation:      # (a stopped sentence already counted as ended)
+                        self._last_end = self.clock()
                     if self._queue.empty():
                         self._idle.set()
