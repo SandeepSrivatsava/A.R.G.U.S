@@ -362,3 +362,11 @@ its own words.
 | Submitting needs your OK (code word or Touch ID) and is refused if the change adds a key, an email address or a phone number, because the branch is pushed to GitHub. It only ever pushes its own branch, never main. | `argus/policy.py`, `argus/selfcare.py` (`leaks`) |
 | Merging into main needs Touch ID every time, never a spoken yes, from Argus or from `argusctl fixes merge`. It refuses when `~/argus` has uncommitted changes or isn't on main. | `argus/policy.py` (`touch_only`), `argus/approvals.py`, `argus/__main__.py` |
 | Only you can start a fix (your voice, the phone app, the command line); scheduled tasks, loose-end checks and guests can't. | `argus/policy.py` |
+
+## 29. Echo cancellation, names, end of turn and recall
+
+| Protection | Where |
+|---|---|
+| Echo cancellation runs on the Mac: the argus-ear helper turns on Apple's voice processing and passes the microphone straight to Argus over a pipe. Nothing is recorded or sent anywhere; it closes with the microphone (locked Mac, a call, mic off) and quits when Argus quits. | `macos/argus-ear.swift`, `argus/ear.py` |
+| Name correction and end-of-turn detection work on the words already heard, on the Mac. The list of names is built from what you told Argus and what it looked up; names you add are kept in its database. | `argus/names.py`, `argus/turns.py` |
+| `recall` searches Argus's own database on the Mac (the last 30 days of conversations, your saved facts, lessons). Conversations with guests are never searched. What it finds goes to Claude like the rest of the conversation. | `argus/recall.py`, `argus/store.py` |

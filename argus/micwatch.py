@@ -25,7 +25,7 @@ log = logging.getLogger("argus.micwatch")
 ALWAYS_LISTENING = ("com.apple.corespeech", "com.apple.assistant", "com.apple.siri", "com.apple.speech",
                     "com.apple.SpeechRecognitionCore", "com.apple.accessibility", "com.apple.VoiceOver",
                     "com.apple.controlcenter", "com.apple.CoreSpeech", "com.apple.dictation",
-                    "com.argus.voice", "org.python.python")
+                    "com.argus.voice", "org.python.python", "argus-ear")
 NAMES = {"com.apple.FaceTime": "FaceTime", "com.apple.mobilephone": "Phone", "com.apple.TelephonyUtilities": "Phone",
          "com.apple.telephonyutilities.callservicesd": "Phone", "us.zoom.xos": "Zoom", "com.microsoft.teams": "Teams",
          "com.microsoft.teams2": "Teams", "com.cisco.webexmeetingsapp": "Webex", "net.whatsapp.WhatsApp": "WhatsApp",

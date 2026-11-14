@@ -208,7 +208,16 @@ class App:
         transcriber = transcriber or SherpaTranscriber(paths["asr"])
         calls = self._build_calls(transcriber, speaker, paths) if s.calls_enabled else None
         self.progress("opening the microphone")
-        argus = Argus(source=source or Microphone(s.mic_device or None),
+        if source is None:
+            source = Microphone(s.mic_device or None)
+            # Echo cancellation (ear.py): only with the Mac's default microphone, which voice processing uses
+            if s.echo_cancel and IS_MAC and not s.mic_device and (s.bin_dir / "argus-ear").exists():
+                from .ear import EchoCancelledMicrophone, Ear
+                from .voice import attach_sink
+                ear = Ear(s.bin_dir / "argus-ear")
+                source = EchoCancelledMicrophone(ear, source, audit=self.audit)
+                attach_sink(speaker.voice, ear)
+        argus = Argus(source=source,
                      segmenter=Segmenter(paths["vad"], threshold=s.vad_threshold, min_silence=s.end_of_speech_seconds),
                      transcriber=transcriber, listener=listener, speaker=speaker,
                      brain=brain, audit=self.audit, voiceprint=voiceprint, voice_lock=s.voice_lock,

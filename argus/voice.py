@@ -168,6 +168,7 @@ class _NeuralVoice(_ProcessVoice):
         self.upcoming: List[str] = []      # set by the Speaker: what comes after the sentence being spoken
         self.timings: Deque[Tuple[float, float, float]] = deque(maxlen=60)   # (when, seconds to make, seconds of sound)
         self._making = threading.Lock()    # one sentence at a time: two at once each take twice as long
+        self.sink = None                   # argus-ear (ear.py): plays through the echo canceller when it's running
 
     def _timed(self, text: str) -> Tuple[np.ndarray, int]:
         with self._making:
@@ -211,6 +212,8 @@ class _NeuralVoice(_ProcessVoice):
             self._made.clear()
             self._ready.clear()
         super().stop()
+        if self.sink is not None:
+            self.sink.stop()
 
     def speak(self, text: str) -> None:
         from .hearing import write_wav
@@ -223,7 +226,9 @@ class _NeuralVoice(_ProcessVoice):
         os.close(fd)
         try:
             write_wav(path, samples, rate)
-            self._run(self.player + [path])
+            sink = self.sink
+            if sink is None or not sink.play(path, stopped=lambda: self._stopped):
+                self._run(self.player + [path])
         finally:
             try:
                 os.unlink(path)
@@ -234,6 +239,16 @@ class _NeuralVoice(_ProcessVoice):
 # Kokoro's English voices (kokoro-en-v0_19), by speaker number. a = American, b = British; f/m = woman/man.
 KOKORO_VOICES = {"af": 0, "af_bella": 1, "af_nicole": 2, "af_sarah": 3, "af_sky": 4, "am_adam": 5,
                  "am_michael": 6, "bf_emma": 7, "bf_isabella": 8, "bm_george": 9, "bm_lewis": 10}
+
+
+def attach_sink(voice, sink) -> int:
+    """Play the natural voices through `sink` (argus-ear's echo-cancelled speaker). Returns how many."""
+    count = 0
+    for v in (voice, getattr(voice, "natural", None), getattr(voice, "quick", None)):
+        if isinstance(v, _NeuralVoice):
+            v.sink = sink
+            count += 1
+    return count
 
 
 def voice_label(name: str) -> str:

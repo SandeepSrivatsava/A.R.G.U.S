@@ -645,6 +645,18 @@ if [ "$IS_MAC" = 1 ]; then
   else
     warn "Couldn't build the call helper; say \"Argus, I'm on a call\" to pause it during calls"
   fi
+  # Echo cancellation (Apple's voice processing): macos/argus-ear.swift.
+  ear_sum="$(shasum -a 256 "$REPO_DIR/macos/argus-ear.swift" | cut -d' ' -f1)"
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '  [dry-run] build %s\n' "$ARGUS_HOME/bin/argus-ear"
+  elif [ -x "$ARGUS_HOME/bin/argus-ear" ] && [ "$(cat "$ARGUS_HOME/bin/argus-ear.sha256" 2>/dev/null)" = "$ear_sum" ]; then
+    ok "Echo cancellation helper is up to date"
+  elif swiftc -O -swift-version 5 -o "$ARGUS_HOME/bin/argus-ear" "$REPO_DIR/macos/argus-ear.swift" > /dev/null 2>&1; then
+    printf '%s\n' "$ear_sum" > "$ARGUS_HOME/bin/argus-ear.sha256"
+    ok "Built the echo cancellation helper (Argus hears you while it talks)"
+  else
+    warn "Couldn't build the echo cancellation helper; Argus uses the plain microphone"
+  fi
 else
   ok "Skipped (not a Mac)"
 fi

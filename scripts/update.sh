@@ -19,5 +19,20 @@ echo "Updating Argus's Python packages (hash-checked)..."
 "$VENV/bin/python3" -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: \
   -r "$REPO_DIR/requirements-dev.lock"
 
+# Echo cancellation helper (macos/argus-ear.swift), rebuilt when it changes
+BIN="${ARGUS_HOME:-$HOME/.argus}/bin"
+if command -v swiftc >/dev/null 2>&1 && [ -f "$REPO_DIR/macos/argus-ear.swift" ]; then
+  ear_sum="$(shasum -a 256 "$REPO_DIR/macos/argus-ear.swift" | cut -d' ' -f1)"
+  if [ "$(cat "$BIN/argus-ear.sha256" 2>/dev/null)" != "$ear_sum" ]; then
+    echo "Building the echo cancellation helper..."
+    mkdir -p "$BIN"
+    if swiftc -O -swift-version 5 -o "$BIN/argus-ear" "$REPO_DIR/macos/argus-ear.swift" > /dev/null 2>&1; then
+      printf '%s\n' "$ear_sum" > "$BIN/argus-ear.sha256"
+    else
+      echo "Couldn't build it; Argus keeps using the plain microphone."
+    fi
+  fi
+fi
+
 "$REPO_DIR/bin/argusctl" restart
 echo "Done."

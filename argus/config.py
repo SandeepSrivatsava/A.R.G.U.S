@@ -84,6 +84,7 @@ class Settings:
     ignore_mic_apps: List[str] = field(default_factory=list)   # apps that don't count as a call (names or IDs)
     end_of_speech_seconds: float = 0.6   # how long a pause ends a sentence (shorter = snappier)
     smart_turns: bool = True             # wait a little longer when a sentence is clearly unfinished (turns.py)
+    echo_cancel: bool = True             # Apple's echo cancellation through argus-ear, when it's built (ear.py)
     clap: str = "double"            # "double", "single" or "off": clapping wakes Argus up
     # voice
     voice_engine: str = "kokoro"
@@ -227,7 +228,7 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
               "history_messages": "history_messages", "workspace": "workspace_dir", "api_base": "api_base"},
     "listening": {k: k for k in ("followup_seconds", "conversation_idle_seconds", "extra_variants", "soft_variants",
                                  "voice_lock", "voice_lock_threshold", "mic_device", "vad_threshold", "clap",
-                                 "end_of_speech_seconds", "smart_turns", "guests", "guest_minutes",
+                                 "end_of_speech_seconds", "smart_turns", "echo_cancel", "guests", "guest_minutes",
                                  "pause_during_calls", "ignore_mic_apps", "barge_in", "talk_over_threshold")},
     "voice": {"engine": "voice_engine", "say_voice": "say_voice", "rate": "rate", "speed": "speed", "greeting": "greeting",
               "kokoro_voice": "kokoro_voice", "keep_natural": "keep_natural"},
