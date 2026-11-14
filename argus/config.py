@@ -132,6 +132,7 @@ class Settings:
     call_monitor: bool = True               # also play both sides of the call on the Mac's speakers
     call_international: bool = False        # allow numbers outside +1 (US/Canada)
     calls_per_hour: int = 6
+    calls_ask_first: bool = False           # False: "call them" from you (your voice, the phone app) dials with no OK
     call_input_device: str = "BlackHole 2ch"
     call_tap: str = "~/.argus/bin/audiotee"
     # built-in scheduled jobs ("" turns one off)
@@ -244,6 +245,7 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
     "mail": {"enabled": "mail_enabled", "days": "mail_days"},
     "calls": {"enabled": "calls_enabled", "model": "call_model", "max_minutes": "call_max_minutes",
               "monitor": "call_monitor", "international": "call_international", "per_hour": "calls_per_hour",
+              "ask_first": "calls_ask_first",
               "input_device": "call_input_device", "tap": "call_tap"},
     "schedule": {"morning_headlines": "morning_headlines", "morning_briefing": "morning_briefing"},
 }

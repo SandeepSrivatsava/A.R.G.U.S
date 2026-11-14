@@ -598,7 +598,7 @@ def test_the_mac_line_says_what_is_missing(tmp_path, version, which, inputs, pro
 def test_a_missing_call_recorder_is_reported(tmp_path):
     line = C.MacCallLine(tap=str(tmp_path / "nope"), run=Shell(), which=lambda n: "/x/" + n,
                          mac_version=lambda: "15.1")
-    assert any("call recorder isn't installed" in p for p in line.check())
+    assert any("call recorder (audiotee) isn't installed" in p for p in line.check())
 
 
 def test_dialing_through_the_iphone(tmp_path):
@@ -758,3 +758,30 @@ def test_blackhole_missing_and_not_yet_loaded_say_different_things(tmp_path):
                              exists=lambda path, present=present: present and path.endswith("BlackHole2ch.driver"))
         (problem,) = line.check()
         assert words in problem
+
+
+def test_calls_he_asks_for_dial_without_a_second_question(tmp_path):
+    from argus.policy import ALLOW, Policy
+    s = make_settings(tmp_path)
+    policy = Policy(s, workspace=s.workspace)
+    args = {"number": "(415) 555-0123", "business": "Nopa", "goal": "book a table"}
+    assert policy.check("phone_call", args, "voice").action == ASK      # voice not checked to be his: ask
+    policy.owner_verified = lambda: True                                 # voice lock on: only his voice
+    assert policy.check("phone_call", args, "voice").action == ALLOW
+    for channel in ("phone", "cli", "android"):
+        assert policy.check("phone_call", args, channel).action == ALLOW
+    for channel in ("guest", "scheduler", "followup", "trip", "glance"):
+        assert policy.check("phone_call", args, channel).action == ASK
+    assert policy.check("phone_call", {"number": "911", "goal": "x"}, "voice").action == BLOCK
+    policy.owner_verified = lambda: 1 / 0                                # a broken check never means yes
+    assert policy.check("phone_call", args, "voice").action == ASK
+    s.calls_ask_first = True
+    policy.owner_verified = lambda: True
+    assert policy.check("phone_call", args, "phone").action == ASK
+
+
+def test_everything_missing_for_calls_is_listed_at_once(tmp_path):
+    line = C.MacCallLine(tap=str(tmp_path / "nope"), run=Shell(), which=lambda n: None,
+                         mac_version=lambda: "15.1", exists=lambda p: False)
+    problems = line.check()
+    assert len(problems) == 3 and any("BlackHole" in p for p in problems) and any("audiotee" in p for p in problems)

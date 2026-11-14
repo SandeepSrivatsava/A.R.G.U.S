@@ -161,6 +161,20 @@ class Policy:
         self.desktop_state = desktop_state     # {"locked", "screen_private", "front_bundle", "front_name", "visible_apps",
         #                                         "front_title"}
         self.inspect_point = inspect_point     # screenshot coordinate -> {"role", "title", "description", "value"}
+        self.owner_verified: Callable[[], bool] = lambda: False   # the voice speaking was checked to be the owner's
+
+    def _from_owner(self, channel: str) -> bool:
+        """The request certainly came from the owner: the phone app and the command line (both need his key),
+        or the Mac's microphone with voice lock on (only his enrolled voice gets through). Never guests,
+        scheduled tasks, loose-end checks or anything else Argus starts by itself."""
+        if channel in ("phone", "cli", "android"):
+            return True
+        if channel == "voice":
+            try:
+                return bool(self.owner_verified())
+            except Exception:
+                return False
+        return False
 
     # ---- paths -------------------------------------------------------------------------------------
     def resolve(self, path: str) -> Path:
@@ -234,6 +248,8 @@ class Policy:
             who = business_name(args.get("business"))
             goal = " ".join(str(args.get("goal") or "").split())[:120]
             target = f"{who} at {spoken_number(number)}" if who else spoken_number(number)
+            if not getattr(self.settings, "calls_ask_first", False) and self._from_owner(channel):
+                return Verdict(ALLOW)               # he asked for the call himself: no second question
             # the screen shows the number and the reason; out loud it's just "May I call Jack in the Box?"
             return Verdict(ASK, f"call {target} from your number to {goal}", scope=f"call:{number}",
                            short=f"call {who or spoken_number(number)}")

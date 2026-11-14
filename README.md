@@ -117,7 +117,8 @@ The full list is in [SECURITY.md](SECURITY.md). The short version:
 
 * **It gets it done, on the phone.** "Find a good Indian place for 7 tonight": Argus checks Google's ratings
   and reviews, tells you its pick, and on your OK calls the restaurant from your own number, books the table
-  and tells you how it went. (Calls need `scripts/setup_calls.sh` once; every call asks for your OK first.
+  and tells you how it went. (Calls need `scripts/setup_calls.sh` once; when you say "call them" it dials
+  without asking again, as long as voice lock is on.
   While it's on the call it can't talk to you.)
 * **It follows up by itself.** When a plan leaves something open ("New York: no hotel yet"), Argus notes the
   loose end and looks into it every few days: prices, dates getting close, a reply that hasn't come. It

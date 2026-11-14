@@ -131,6 +131,8 @@ class App:
         self.phone: Optional[PhoneServer] = None
         if voice:
             self.argus = self._build_voice(transcriber, source, speaker_voice, approver)
+            argus = self.argus
+            self.policy.owner_verified = lambda: bool(argus.voice_lock_active)   # only his voice gets through
 
     # ---- pieces ------------------------------------------------------------------------------------
     def _secret_values(self, secrets: dict) -> list:

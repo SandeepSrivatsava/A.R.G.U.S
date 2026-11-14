@@ -179,7 +179,7 @@ or speech that wasn't for Argus. It rotates at 5 MB.
 
 | Protection | Where |
 |---|---|
-| Off until you run `scripts/setup_calls.sh`. Each call needs your OK (voice + code word or Touch ID), showing the number and the reason. | `argus/policy.py`, `argus/calls.py` |
+| Off until you run `scripts/setup_calls.sh`. A call you ask for yourself dials straight away: from the Mac's microphone only while voice lock is on (only your enrolled voice is answered), or from the phone app or command line (both need your key). Anything else (a guest, a scheduled task, a loose-end check, a voice that wasn't checked) still needs your OK (voice + code word or Touch ID). `calls_ask_first = true` under `[calls]` brings back the OK for every call. | `argus/policy.py`, `argus/calls.py` |
 | Argus always starts by saying it's your AI assistant and that the call is transcribed, before the model says anything. | `argus/calls.py` |
 | Never called: emergency numbers (911, 112, 999, 988…), service numbers (N11), pay-per-call numbers (900, 976), invalid numbers, and anything outside the US and Canada unless you switch that on. At most 6 calls an hour, the same number at most twice in 15 minutes, 6 minutes per call. | `argus/calls.py` |
 | The call model is told never to give card, bank, account or ID numbers or addresses and never to agree to costs; anything that passes the card-number checksum is also kept out of what's spoken. | `argus/calls.py` |
@@ -335,7 +335,7 @@ its own words.
 
 | Protection | Where |
 |---|---|
-| A call is still only made after your OK for that number (dialog + Touch ID, or your voice + code word), with the existing limits (no emergency or paid numbers, 6 an hour, never card numbers). | `argus/policy.py`, `argus/calls.py` |
+| A call is only made when you asked for it yourself (see above) or after your OK, with the existing limits (no emergency or paid numbers, 6 an hour, never card numbers). | `argus/policy.py`, `argus/calls.py` |
 | A loose-end check runs on its own channel with look-up tools only (search, places, weather, flights, calendar): no files, shell, mail, screen, calls or messages, and nothing can be approved there. At most 12, each for at most 90 days, quiet at night. | `argus/followups.py` |
 | Glances are off unless you set `glances_minutes`. Each glance sends one photo to Claude's quick model with a single tool (note where belongings are); people, screens and documents are not to be noted; the photo is dropped from the conversation store straight away and never written to disk or the logs. Sightings are a few words, kept 14 days in Argus's database on the Mac. At most one glance per interval; "stop watching" pauses them. | `argus/sightings.py`, `argus/phone.py` |
 | `argusctl key` takes a key hidden from the screen and never prints more than its last four characters. | `argus/__main__.py` |

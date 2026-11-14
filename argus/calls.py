@@ -517,7 +517,11 @@ class CallManager:
         line = self.line_factory()
         problems = line.check()
         if problems:
-            return CallResult("failed", "Calls aren't set up on this Mac yet: " + "; ".join(problems))
+            fix = ("" if all("restart the Mac" in p or "Terminal" in p or "macOS" in p for p in problems) else
+                   " To fix all of it at once, run scripts/setup_calls.sh in Terminal (it asks for the Mac password)."
+                   " Also check once: iPhone Settings > Apps > Phone > Calls on Other Devices (on, this Mac allowed),"
+                   " and FaceTime > Settings > General > Calls from iPhone.")
+            return CallResult("failed", "Calls aren't set up on this Mac yet: " + "; ".join(problems) + "." + fix)
         self._hang_up.clear()
         self._take_over.clear()
         if self.speaker is not None:
@@ -671,17 +675,18 @@ class MacCallLine(CallLine):
         if version < (14, 2):
             problems.append("macOS 14.2 or newer is needed to hear calls")
         if not os.path.exists(self.tap_path):
-            problems.append("the call recorder isn't installed (run scripts/setup_calls.sh)")
+            problems.append("the call recorder (audiotee) isn't installed")
+        driver = "/Library/Audio/Plug-Ins/HAL/" + self.input_device.replace(" ", "") + ".driver"
         if not self.which("SwitchAudioSource"):
-            problems.append("SwitchAudioSource isn't installed (run scripts/setup_calls.sh; it goes in "
-                            "/opt/homebrew/bin or /usr/local/bin)")
+            problems.append("SwitchAudioSource isn't installed")
+            if not self.exists(driver):            # list everything that's missing, not one thing at a time
+                problems.append(f"{self.input_device} isn't installed")
         else:
             try:
                 inputs = self._switch("-a", "-t", "input").splitlines()
             except (CallError, OSError, subprocess.SubprocessError):
                 inputs = []
             if self.input_device not in [i.strip() for i in inputs]:
-                driver = "/Library/Audio/Plug-Ins/HAL/" + self.input_device.replace(" ", "") + ".driver"
                 if self.exists(driver):
                     problems.append(f"{self.input_device} is installed but macOS hasn't loaded it yet: restart "
                                     "the Mac (or run scripts/setup_calls.sh in Terminal again)")
