@@ -642,7 +642,8 @@ class MacCallLine(CallLine):
     def __init__(self, *, input_device: str = "BlackHole 2ch", tap: str = "~/.argus/bin/audiotee",
                  monitor: bool = True, run=subprocess.run, popen=subprocess.Popen, screen=None, player=None,
                  which=find_tool, mac_version: Callable[[], str] = lambda: platform.mac_ver()[0],
-                 sleep=time.sleep, clock: Callable[[], float] = time.monotonic):
+                 sleep=time.sleep, clock: Callable[[], float] = time.monotonic, exists=os.path.exists):
+        self.exists = exists
         self.input_device, self.tap_path, self.monitor = input_device, os.path.expanduser(tap), monitor
         self.run, self.popen, self.screen, self.player = run, popen, screen, player
         self.which, self.mac_version, self.sleep, self.clock = which, mac_version, sleep, clock
@@ -680,7 +681,13 @@ class MacCallLine(CallLine):
             except (CallError, OSError, subprocess.SubprocessError):
                 inputs = []
             if self.input_device not in [i.strip() for i in inputs]:
-                problems.append(f"{self.input_device} isn't installed (run scripts/setup_calls.sh)")
+                driver = "/Library/Audio/Plug-Ins/HAL/" + self.input_device.replace(" ", "") + ".driver"
+                if self.exists(driver):
+                    problems.append(f"{self.input_device} is installed but macOS hasn't loaded it yet: restart "
+                                    "the Mac (or run scripts/setup_calls.sh in Terminal again)")
+                else:
+                    problems.append(f"{self.input_device} isn't installed: run scripts/setup_calls.sh yourself in "
+                                    "Terminal (it asks for your Mac password, which Argus can't type)")
         return problems
 
     # -- the call --

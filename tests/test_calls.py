@@ -748,3 +748,13 @@ def test_switchaudiosource_is_found_in_homebrew_when_launchd_path_lacks_it(tmp_p
     (tmp_path / "tap").write_text("")
     assert line.check() == []
     assert shell.calls[0][0] == str(tool)
+
+
+def test_blackhole_missing_and_not_yet_loaded_say_different_things(tmp_path):
+    (tmp_path / "tap").write_text("")
+    for present, words in ((False, "run scripts/setup_calls.sh yourself in Terminal"), (True, "restart the Mac")):
+        line = C.MacCallLine(tap=str(tmp_path / "tap"), run=Shell(inputs=("MacBook Air Microphone",)),
+                             which=lambda n: "/opt/homebrew/bin/" + n, mac_version=lambda: "15.1",
+                             exists=lambda path, present=present: present and path.endswith("BlackHole2ch.driver"))
+        (problem,) = line.check()
+        assert words in problem

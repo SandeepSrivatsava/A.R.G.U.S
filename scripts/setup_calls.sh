@@ -62,10 +62,27 @@ command -v brew >/dev/null || die "Homebrew is needed: https://brew.sh"
 command -v swift >/dev/null || die "Swift is needed to build the call recorder. Run: xcode-select --install"
 
 echo "Setting up phone calls from your own number…"
-brew list --cask blackhole-2ch >/dev/null 2>&1 || brew install --cask blackhole-2ch
-ok "BlackHole 2ch (the call's microphone during a call)"
+[ -t 0 ] || die "Run this yourself in Terminal: BlackHole is an audio driver, and installing it asks for your Mac password."
+if [ ! -d /Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver ]; then
+    echo "Installing BlackHole 2ch. macOS asks for your Mac password (it's an audio driver)."
+    if brew list --cask blackhole-2ch >/dev/null 2>&1; then
+        brew reinstall --cask blackhole-2ch          # Homebrew thinks it's there, but the driver isn't
+    else
+        brew install --cask blackhole-2ch
+    fi
+fi
+[ -d /Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver ] || die "BlackHole 2ch didn't install. Run this script again and enter your Mac password when asked."
 brew list switchaudio-osx >/dev/null 2>&1 || brew install switchaudio-osx
 ok "SwitchAudioSource"
+SWITCH="$(command -v SwitchAudioSource)"
+if ! "$SWITCH" -a -t input | grep -qx "BlackHole 2ch"; then
+    echo "macOS hasn't loaded BlackHole yet; restarting the Mac's sound service (asks for your password)…"
+    sudo killall coreaudiod || true
+    sleep 3
+fi
+"$SWITCH" -a -t input | grep -qx "BlackHole 2ch" \
+    || die "BlackHole 2ch is installed but macOS hasn't loaded it. Restart the Mac, then run this script again."
+ok "BlackHole 2ch (the call's microphone during a call)"
 
 mkdir -p "$BIN" "$(dirname "$SRC")"
 chmod 700 "$ARGUS_HOME" "$BIN"
