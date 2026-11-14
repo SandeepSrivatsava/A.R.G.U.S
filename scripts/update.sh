@@ -15,6 +15,9 @@ echo "Updating Argus's Python packages (hash-checked)..."
   -r "$REPO_DIR/requirements-build.lock"
 "$VENV/bin/python3" -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: \
   --no-binary rumps --no-build-isolation -r "$REPO_DIR/requirements-macos.lock"
+# pytest, so Argus can test a fix to its own code before offering it (hash-checked too)
+"$VENV/bin/python3" -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: \
+  -r "$REPO_DIR/requirements-dev.lock"
 
 "$REPO_DIR/bin/argusctl" restart
 echo "Done."

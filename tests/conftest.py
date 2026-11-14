@@ -20,3 +20,10 @@ def claude_requests_are_valid(request, monkeypatch):
         return
     problems = [problem for mock in created for problem in mock.invalid]
     assert not problems, f"requests the real Claude API would reject: {problems}"
+
+
+@pytest.fixture(autouse=True)
+def mac_permissions_granted(monkeypatch):
+    """Calls check Screen Recording and Accessibility; tests run as if both were on, unless they say otherwise."""
+    from argus import calls
+    monkeypatch.setattr(calls, "_own_permissions", lambda: {"screen_recording": True, "accessibility": True})

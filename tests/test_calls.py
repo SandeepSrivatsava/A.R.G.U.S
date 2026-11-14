@@ -806,8 +806,35 @@ def test_argusctl_calls_lists_every_piece_and_the_fix(tmp_path, monkeypatch, cap
     assert "FAIL" not in out and "Everything Argus can check is in place" in out
     no_switch = C.MacCallLine(tap=str(tmp_path / "tap"), run=Shell(), which=lambda n: None, mac_version=lambda: "",
                               exists=lambda p: False)
-    assert [ok for ok, _ in no_switch.checklist()] == [False, True, False, False, False]
+    assert [ok for ok, _ in no_switch.checklist()] == [False, True, False, False, False, True, True]
     failing = C.MacCallLine(tap=str(tmp_path / "tap"), run=Shell(fail_switch=True), which=lambda n: "/x/" + n,
                             mac_version=lambda: "15.1", exists=lambda p: True)
     failing._switch = lambda *a: (_ for _ in ()).throw(C.CallError("x"))
-    assert failing.checklist()[-1][0] is False
+    assert failing.checklist()[4][0] is False
+
+
+def test_calls_say_when_screen_recording_or_accessibility_is_off(tmp_path, capsys, monkeypatch):
+    (tmp_path / "tap").write_text("")
+    for perms, words in (({"screen_recording": False, "accessibility": True}, "Screen Recording is off"),
+                         ({"screen_recording": True, "accessibility": False}, "Accessibility is off"),
+                         ({}, "Screen Recording is off")):
+        line = C.MacCallLine(tap=str(tmp_path / "tap"), run=Shell(), which=lambda n: "/opt/homebrew/bin/" + n,
+                             mac_version=lambda: "15.1", exists=lambda p: True, permissions=lambda perms=perms: perms)
+        assert any(words in p for p in line.check())
+    broken = C.MacCallLine(tap=str(tmp_path / "tap"), run=Shell(), which=lambda n: "/x/" + n, mac_version=lambda: "15.1",
+                           exists=lambda p: True, permissions=lambda: 1 / 0)
+    assert len(broken.check()) == 2 and [ok for ok, _ in broken.checklist()][-2:] == [False, False]
+    from argus import __main__ as cli
+    s = make_settings(tmp_path)
+    s.calls_enabled = True
+    monkeypatch.setattr(cli.config_mod, "load", lambda: s)
+    off = C.MacCallLine(tap=str(tmp_path / "tap"), run=Shell(), which=lambda n: "/x/" + n, mac_version=lambda: "15.1",
+                        exists=lambda p: True, permissions=lambda: {})
+    assert cli.cmd_calls(None, line=off) == 1
+    assert "argusctl calls --open" in capsys.readouterr().out
+    opened = []
+    monkeypatch.setattr("subprocess.run", lambda cmd, **kw: opened.append(cmd))
+    assert cli.cmd_calls(SimpleNamespace(open=True), line=off) == 0
+    assert any("Privacy_ScreenCapture" in c[1] for c in opened) and opened[-1][:2] == ["open", "-R"]
+    monkeypatch.setattr(cli, "_send_quiet", lambda cmd: {"ok": False})
+    assert cli.cmd_calls(SimpleNamespace(open=False)) == 1

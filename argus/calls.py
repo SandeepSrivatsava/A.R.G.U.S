@@ -517,7 +517,8 @@ class CallManager:
         line = self.line_factory()
         problems = line.check()
         if problems:
-            fix = ("" if all("restart the Mac" in p or "Terminal" in p or "macOS" in p for p in problems) else
+            fix = ("" if all("restart the Mac" in p or "Terminal" in p or "macOS" in p or "Privacy" in p
+                             for p in problems) else
                    " To fix all of it at once, run scripts/setup_calls.sh in Terminal (it asks for the Mac password)."
                    " Also check once: iPhone Settings > Apps > Phone > Calls on Other Devices (on, this Mac allowed),"
                    " and FaceTime > Settings > General > Calls from iPhone.")
@@ -624,6 +625,21 @@ class MacScreen:  # pragma: no cover - needs a Mac screen
         MacBackend().click(x * self.STEP * self.scale, y * self.STEP * self.scale, "left", 1, [])
 
 
+PERMISSION_HELP = {
+    "screen_recording": "Screen Recording is off for Argus, so it can't see the Call button (System Settings > "
+                        "Privacy & Security > Screen & System Audio Recording: switch on Argus; if it isn't listed, "
+                        "press + and pick Argus in the Applications folder inside your home folder)",
+    "accessibility": "Accessibility is off for Argus, so it can't press the Call button (System Settings > "
+                     "Privacy & Security > Accessibility: switch on Argus; if it isn't listed, press + and pick "
+                     "Argus in the Applications folder inside your home folder)",
+}
+
+
+def _own_permissions() -> Dict[str, bool]:
+    from .computer import check_permissions
+    return check_permissions()
+
+
 TOOL_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "~/.argus/bin")
 
 
@@ -646,8 +662,10 @@ class MacCallLine(CallLine):
     def __init__(self, *, input_device: str = "BlackHole 2ch", tap: str = "~/.argus/bin/audiotee",
                  monitor: bool = True, run=subprocess.run, popen=subprocess.Popen, screen=None, player=None,
                  which=find_tool, mac_version: Callable[[], str] = lambda: platform.mac_ver()[0],
-                 sleep=time.sleep, clock: Callable[[], float] = time.monotonic, exists=os.path.exists):
+                 sleep=time.sleep, clock: Callable[[], float] = time.monotonic, exists=os.path.exists,
+                 permissions: Optional[Callable[[], Dict[str, bool]]] = None):
         self.exists = exists
+        self.permissions = permissions or _own_permissions
         self.input_device, self.tap_path, self.monitor = input_device, os.path.expanduser(tap), monitor
         self.run, self.popen, self.screen, self.player = run, popen, screen, player
         self.which, self.mac_version, self.sleep, self.clock = which, mac_version, sleep, clock
@@ -674,6 +692,13 @@ class MacCallLine(CallLine):
             return problems
         if version < (14, 2):
             problems.append("macOS 14.2 or newer is needed to hear calls")
+        try:
+            perms = self.permissions()
+        except Exception:
+            perms = {}
+        for key, help_text in PERMISSION_HELP.items():
+            if not perms.get(key):
+                problems.append(help_text)
         if not os.path.exists(self.tap_path):
             problems.append("the call recorder (audiotee) isn't installed")
         driver = "/Library/Audio/Plug-Ins/HAL/" + self.input_device.replace(" ", "") + ".driver"
@@ -711,6 +736,12 @@ class MacCallLine(CallLine):
             except (CallError, OSError, subprocess.SubprocessError):
                 loaded = False
         items.append((loaded, f"{self.input_device} loaded by macOS (shows up as a microphone)"))
+        try:
+            perms = self.permissions()
+        except Exception:
+            perms = {}
+        items.append((bool(perms.get("screen_recording")), "Screen Recording allowed for Argus (to see the Call button)"))
+        items.append((bool(perms.get("accessibility")), "Accessibility allowed for Argus (to press the Call button)"))
         return items
 
     # -- the call --

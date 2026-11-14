@@ -118,6 +118,17 @@ class App:
         # answers mail_search/mail_read instead of the Mail app. Access tokens are hidden from Claude like keys.
         self.google = google_mod.attach(settings, secrets, self.agent.tools, on_token=self.agent.add_secret)
         followups_mod.attach(self.store, self.agent.tools, tz=settings.timezone or None)     # loose ends
+        # Looking after itself: reading its own logs (read-only), and fixing its own code on a branch (selfcare.py)
+        from . import selfcare
+        from pathlib import Path
+        from .toolbox import child_env
+        selfcare.attach_logs(settings, self.agent.tools, self._secret_values(secrets))
+        self.fixer = selfcare.SelfFix(
+            Path(__file__).resolve().parent.parent, Path.home() / "argus-fixes", python=sys.executable,
+            secrets=self._secret_values(secrets), env=child_env, audit=self.audit,
+            sandbox=lambda: selfcare.test_sandbox(Path.home(), sys.executable),
+            notify=lambda text: self.push.send(text, title="Argus fixed something") if self.push else None)
+        selfcare.attach_fix(self.fixer, self.agent.tools, restart=self._restart_soon)
         self.agent.loose_ends = lambda: followups_mod.in_prompt(self.store)
         self.glancer = None
         if self.glasses is not None:                                    # where things were seen through the glasses
@@ -220,6 +231,17 @@ class App:
             self.argus.announce(text.replace("•", ""))
         if self.push is not None and (self.argus is None or not self.argus.present()):
             self.push.send(text)
+
+    def _restart_soon(self, delay: int = 8) -> None:
+        """Restart Argus in a few seconds (after it has said what it did), e.g. to run a merged fix."""
+        from pathlib import Path
+        argusctl = Path(__file__).resolve().parent.parent / "bin" / "argusctl"
+        try:
+            subprocess.Popen(["/bin/sh", "-c", f'sleep {int(delay)}; exec "$0" restart', str(argusctl)],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+        except OSError:
+            log.exception("couldn't schedule a restart")
 
     def run_task(self, text: str) -> str:
         session = self.store.session_for("scheduler", "tasks", 60)

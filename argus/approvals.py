@@ -52,6 +52,7 @@ class ApprovalRequest:
     money: bool = False            # paying or buying: Touch ID only
     code: str = ""                 # set when a spoken answer is allowed
     short: str = ""                # what to say out loud, when shorter than the description ("call Jack in the Box")
+    touch_only: bool = False       # Touch ID only (changing Argus's own code): no spoken yes
 
     @property
     def task_scope_offered(self) -> bool:
@@ -75,6 +76,8 @@ class ApprovalRequest:
     def spoken(self) -> str:
         if self.money:
             return "That involves paying, so please approve it on the screen with Touch ID."
+        if self.touch_only:
+            return f"To {self.spoken_action()}, I need your Touch ID. Please check the screen."
         if self.code:
             return f"May I {self.spoken_action()}? To allow, say yes, {self.code}. Or use the screen."
         if self.pattern_key.startswith("computer:"):
@@ -246,6 +249,8 @@ class MacApprover(Approver):
             message += f"\n\nWhy this needs approval: {request.description}"
         if request.money:
             message += "\n\nThis involves paying. \"Allow\" will ask for Touch ID."
+        elif request.touch_only:
+            message += "\n\nThis changes Argus's own code. \"Allow\" will ask for Touch ID."
         elif self.require_owner_auth:
             message += "\n\n\"Allow\" will ask for Touch ID."
         return message
@@ -267,7 +272,7 @@ class MacApprover(Approver):
                 time.sleep(0.1)
             button = (proc.stdout.read() if proc.stdout else "").strip()
             answer = {"Allow once": ONCE, "Allow for this task": TASK}.get(button, DENY)
-            if answer != DENY and (self.require_owner_auth or request.money):
+            if answer != DENY and (self.require_owner_auth or request.money or request.touch_only):
                 auth = self.auth or touch_id
                 if not auth("approve an action Argus wants to take", cancel=cancel):
                     if self.audit:
@@ -285,7 +290,7 @@ class VoiceOrScreenApprover(Approver):
         self.screen, self.gate, self.voice_ok, self.timeout, self.audit = screen, gate, voice_ok, timeout, audit
 
     def _spoken_allowed(self, request: ApprovalRequest) -> bool:
-        return request.origin == "voice" and not request.money and self.voice_ok()
+        return request.origin == "voice" and not request.money and not request.touch_only and self.voice_ok()
 
     def prepare(self, request: ApprovalRequest) -> None:
         request.code = self.gate.open() if self._spoken_allowed(request) else ""

@@ -416,6 +416,9 @@ else
     "$VENV/bin/python3" -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: \
       --no-binary rumps --no-build-isolation -r "$REPO_DIR/requirements-macos.lock" \
       || die "Installing Argus's Python packages failed."
+    # pytest: Argus tests a fix to its own code before offering it (code_fix)
+    "$VENV/bin/python3" -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: \
+      -r "$REPO_DIR/requirements-dev.lock" || warn "Couldn't install pytest; Argus can't test fixes to its own code"
     ok "Python packages installed (every file checked against its pinned hash)"
   fi
   site="$("$VENV/bin/python3" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"

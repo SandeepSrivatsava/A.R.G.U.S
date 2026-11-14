@@ -350,3 +350,15 @@ its own words.
 | A safe start (after two failed starts) only drops the voice models and glances; every protection stays on. | `argus/app.py`, `argus/runtime.py` (`Startup`) |
 | The copy of the logs in `~/Downloads/Logs` (on by default, `[logs] folder`) is owner-only (folders 700, files 600) and deleted after 30 days; it holds what the activity log holds (your requests, never keys), so it's as private as your Downloads folder. Only folders named like a date are ever deleted. | `argus/logkeeper.py` |
 | `run/startup.json` and `run/council-today.json` are owner-only and hold no personal data (a process id, a phase, counts). | `argus/runtime.py`, `argus/council.py` |
+
+## 28. Argus reading its logs and fixing its own code
+
+| Protection | Where |
+|---|---|
+| `own_logs` opens only Argus's log files (activity log summaries, `argus.log`, `crash.log`, `calls.log`, the voice logs, `threads.log`), read-only, with keys, emails and your home folder's name removed. Keys, the database and the voiceprint stay out of reach. | `argus/selfcare.py` |
+| A fix is made in a separate copy of the code (a git worktree in `~/argus-fixes`) on its own `argus-fix/…` branch. The code Argus runs from isn't touched, and nothing it writes runs for real until you merge it. | `argus/selfcare.py` (`SelfFix`) |
+| The safety code can never be changed by a fix: `policy.py`, `approvals.py`, `approve.applescript`, `protected.py`, `guard.py`, `audit.py`, `selfcare.py`, `toolbox.py`, `tests/conftest.py`, and nothing outside `argus/`, `tests/`, `docs/` and `README.md` (no setup scripts, macOS app or dependency lists). Checked on every edit and again on the whole change before it's committed. | `argus/selfcare.py` (`editable`, `check_submit`) |
+| Tests of a fix run inside the same kernel sandbox as Argus's commands (your keys and `~/.argus` unreadable, except Argus's own Python), with an environment that holds no keys. | `argus/selfcare.py` (`test_sandbox`), `argus/toolbox.py` |
+| Submitting needs your OK (code word or Touch ID) and is refused if the change adds a key, an email address or a phone number, because the branch is pushed to GitHub. It only ever pushes its own branch, never main. | `argus/policy.py`, `argus/selfcare.py` (`leaks`) |
+| Merging into main needs Touch ID every time, never a spoken yes, from Argus or from `argusctl fixes merge`. It refuses when `~/argus` has uncommitted changes or isn't on main. | `argus/policy.py` (`touch_only`), `argus/approvals.py`, `argus/__main__.py` |
+| Only you can start a fix (your voice, the phone app, the command line); scheduled tasks, loose-end checks and guests can't. | `argus/policy.py` |

@@ -33,6 +33,7 @@ class Verdict:
     scope: str = ""        # what an "Allow for this task" answer covers
     money: bool = False    # paying or buying: only Touch ID can approve it
     short: str = ""        # what Argus says out loud when it asks ("call Jack in the Box"), if not the reason
+    touch_only: bool = False   # only Touch ID can approve it (changing Argus's own code), never a spoken yes
 
 
 def _rx(patterns: Iterable[Tuple[str, str]]) -> List[Tuple[re.Pattern, str]]:
@@ -253,6 +254,18 @@ class Policy:
             # the screen shows the number and the reason; out loud it's just "May I call Jack in the Box?"
             return Verdict(ASK, f"call {target} from your number to {goal}", scope=f"call:{number}",
                            short=f"call {who or spoken_number(number)}")
+        if tool == "code_fix":
+            action = args.get("action")
+            if channel not in ("voice", "phone", "cli"):
+                return Verdict(BLOCK, "Argus only changes its own code when you ask it to.")
+            if action == "submit":
+                return Verdict(ASK, "commit this fix to Argus's code and push its branch to GitHub (not main)",
+                               scope="code_fix:submit", short="publish my fix on its own branch")
+            if action == "merge":
+                return Verdict(ASK, "put Argus's fix into its main code, push it to GitHub and restart Argus",
+                               scope="code_fix:merge:" + str(args.get("branch") or ""), touch_only=True,
+                               short="merge my fix into my code")
+            return Verdict(ALLOW)
         if tool == "schedule" and args.get("action") == "create" and args.get("mode") == "task":
             return Verdict(ASK, f"schedule a task to run by itself: {str(args.get('text'))[:120]}", scope="schedule:task")
         if tool == "glasses_look" and channel not in ("voice", "phone"):

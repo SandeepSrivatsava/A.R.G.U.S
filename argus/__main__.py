@@ -564,24 +564,87 @@ def cmd_calls(args, *, line=None) -> int:
     """Check every piece phone calls need, and say what to do about each missing one."""
     from .calls import MacCallLine
     settings = config_mod.load()
-    line = line or MacCallLine(input_device=settings.call_input_device, tap=settings.call_tap)
+    if line is None:
+        def running_argus_permissions():
+            # macOS grants these to Argus.app, not to Terminal: ask the running Argus what it has
+            reply = _send_quiet("permissions")
+            if not reply.get("ok"):
+                raise OSError("no answer")
+            return reply
+        line = MacCallLine(input_device=settings.call_input_device, tap=settings.call_tap,
+                           permissions=running_argus_permissions)
+    if getattr(args, "open", False):
+        import subprocess
+        for pane in ("Privacy_ScreenCapture", "Privacy_Accessibility"):
+            subprocess.run(["open", f"x-apple.systempreferences:com.apple.preference.security?{pane}"], check=False)
+        from pathlib import Path
+        subprocess.run(["open", "-R", str(Path.home() / "Applications" / "Argus.app")], check=False)
+        print("Opened Screen Recording and Accessibility in System Settings, and Argus.app in Finder.\n"
+              "In each list switch on Argus. If it isn't there, press + (or drag Argus.app from Finder into the list).\n"
+              "Then run: argusctl restart")
+        return 0
     print(f"{'PASS' if settings.calls_enabled else 'FAIL'}  calls switched on in the settings")
     items = line.checklist()
     for passed, text in items:
         print(f"{'PASS' if passed else 'FAIL'}  {text}")
     print("CHECK iPhone: Settings > Apps > Phone > Calls on Other Devices: on, and this Mac allowed")
     print("CHECK Mac: FaceTime > Settings > General > \"Calls from iPhone\" ticked")
-    print("CHECK Mac: System Settings > Privacy & Security > Accessibility and Screen Recording: Argus on")
     missing = [text for passed, text in items if not passed]
     driver_there = items[3][0]
+    perms_missing = not (items[5][0] and items[6][0])
     if not settings.calls_enabled or any(not p for p, _ in items[1:4]):
         print("\nTo fix: run this in Terminal (it asks for your Mac password once), then argusctl restart:\n"
               "  cd ~/argus && scripts/setup_calls.sh")
-    elif missing and driver_there:
+    elif not items[4][0] and driver_there:
         print(f"\n{line.input_device} is installed but macOS hasn't loaded it. Restart the Mac, then argusctl calls again.")
-    elif not missing:
+    if perms_missing:
+        print("\nScreen Recording and Accessibility must be on for Argus (not Terminal): run argusctl calls --open,\n"
+              "switch Argus on in both lists (press + if it isn't listed), then argusctl restart.\n"
+              "(If Argus isn't running, these show as FAIL because only Argus itself can check them.)")
+    if not missing and settings.calls_enabled:
         print("\nEverything Argus can check is in place. Try: \"Argus, call <a place> and ask when they close.\"")
     return 0 if settings.calls_enabled and not missing else 1
+
+
+def cmd_fixes(args, *, fixer=None, auth=None, restart=None) -> int:
+    """Fixes Argus made to its own code: list them, see one, or merge one (Touch ID)."""
+    from pathlib import Path
+    from . import selfcare
+    repo = Path(__file__).resolve().parent.parent
+    fixer = fixer or selfcare.SelfFix(repo, Path.home() / "argus-fixes")
+    action = getattr(args, "action", "list") or "list"
+    branch = getattr(args, "branch", "") or ""
+    try:
+        waiting = fixer.fixes()
+        if action == "list":
+            state = fixer.current()
+            if state:
+                print(f"Being worked on: {state['title']} ({state['branch']})")
+            print("\n".join(f"Ready to merge: {b}" for b in waiting) or "No fixes waiting to be merged.")
+            if waiting:
+                print("See one: argusctl fixes show <branch>    Use it: argusctl fixes merge <branch>")
+            return 0
+        branch = branch or (waiting[-1] if waiting else "")
+        if not branch:
+            print("No fixes waiting to be merged.")
+            return 1
+        if action == "show":
+            print(fixer._git("log", "-1", "--format=%B", branch))
+            print(fixer._git("diff", "main..." + branch))
+            return 0
+        if action == "merge":
+            from .approvals import touch_id
+            if not (auth or touch_id)("merge a fix into Argus's own code"):
+                print("Not merged (Touch ID wasn't confirmed).")
+                return 1
+            print(fixer.merge(branch))
+            (restart or (lambda: cmd_restart(SimpleNamespace(force=False, wait=60))))()
+            return 0
+    except selfcare.FixError as exc:
+        print(exc)
+        return 1
+    print("action must be list, show or merge")
+    return 2
 
 
 def cmd_doctor(args) -> int:
@@ -825,7 +888,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--no-voiceprint", action="store_true", help="only learn how you say the name")
     s = sub.add_parser("transcribe", help="test speech recognition on a WAV file")
     s.add_argument("file")
-    sub.add_parser("calls", help="check everything phone calls need, and what to do about anything missing")
+    s = sub.add_parser("fixes", help="fixes Argus made to its own code: list, show <branch>, merge <branch> (Touch ID)")
+    s.add_argument("action", nargs="?", default="list", choices=["list", "show", "merge"])
+    s.add_argument("branch", nargs="?", default="")
+    s = sub.add_parser("calls", help="check everything phone calls need, and what to do about anything missing")
+    s.add_argument("--open", action="store_true", help="open the two privacy settings Argus needs, and Argus.app in Finder")
     s = sub.add_parser("doctor", help="check that everything Argus needs is in place")
     s.add_argument("--offline", action="store_true", help="skip the check that calls the Claude API")
     sub.add_parser("usage", help="estimated Claude API spend today and this month")
@@ -907,6 +974,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_doctor(args)
     if args.cmd == "calls":
         return cmd_calls(args)
+    if args.cmd == "fixes":
+        return cmd_fixes(args)
 
     simple = {
         "say": lambda: _send("say", text=" ".join(args.text)),

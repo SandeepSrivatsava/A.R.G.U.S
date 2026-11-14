@@ -12,6 +12,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import time
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -396,7 +397,8 @@ class Agent:
         if verdict.action == ASK and verdict.scope not in grants:
             request = ApprovalRequest(run_id=session_id, command=what, description=verdict.reason,
                                       choices=["once", "session", "deny"], pattern_key=verdict.scope, origin=channel,
-                                      money=verdict.money, short=verdict.short)
+                                      money=verdict.money, short=verdict.short,
+                                      touch_only=verdict.touch_only)
             try:
                 choice = events.approve(request)
             except Exception as exc:   # a broken dialog must never count as a yes
@@ -457,6 +459,8 @@ class Agent:
         if getattr(s, "council", None):
             parts.append("ask_council gets second opinions from the other AI models set up with argusctl brains.")
         parts.append(f"Phone calls use {getattr(s, 'call_model', '') or s.model}.")
+        code = Path(__file__).resolve().parent.parent
+        parts.append(f"Your own code is in {code} (setup scripts in {code}/scripts; the user runs them in Terminal).")
         return " ".join(parts)
 
     def run(self, *, session_id: str, channel: str, content: Any, events: Events,

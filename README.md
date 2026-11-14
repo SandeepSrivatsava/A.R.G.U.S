@@ -65,6 +65,7 @@ Android: the same brain runs on the phone (Termux). Mac off: an always-on server
 | "Argus, write a Python script that renames my photos by date" | Hard work goes to the heavy model ("Let me think that through properly"); everyday questions go to the quick one. |
 | "Argus, remember that my sister's birthday is 12 March" | Remembers across conversations. "What do you remember?" / "Forget number 3." |
 | "Argus, remind me at 6 to call Mom" / "every weekday at 8, check the weather" | Reminders and scheduled tasks, spoken at the Mac. If you're away (Mac locked or microphone off), Argus keeps them and tells you when you're back. |
+| "Argus, check your logs and fix what you can" | Reads its own logs, finds the cause, and fixes its own code on a separate branch: tests it, asks your OK, pushes the branch to GitHub and tells you. "Merge the fix" (Touch ID) puts it in and restarts. Problems that aren't code (a permission, a setting) it tells you how to fix. |
 | "Argus, stop" | Stops talking and cancels the current task, even mid-sentence. |
 | "Argus, go to sleep" / "Argus, wake up" (or a double clap) | Sleep: nothing is sent anywhere until you wake it. |
 | "Argus, turn off the microphone" | Closes the microphone; turn it back on from the menu bar. |
@@ -531,6 +532,8 @@ argusctl push on|test|off  # reminders on your phone while you're away (ntfy)
 argusctl maps-token ...    # a year-long Apple Maps token from your Maps key (docs/SERVER.md)
 argusctl doctor            # check models, keys, Claude, the app and its permissions
 argusctl calls             # check every piece phone calls need, and what to do about anything missing
+argusctl calls --open      # open the two privacy settings calls need (Screen Recording, Accessibility)
+argusctl fixes             # fixes Argus made to its own code; show <branch>, merge <branch> (Touch ID)
 argusctl restart           # after editing ~/.argus/config.toml; says when Argus is back (or why not)
 argusctl quit              # stop it until the next restart or login
 ./scripts/doctor.sh        # doctor, plus file privacy, login item and stay-awake checks
