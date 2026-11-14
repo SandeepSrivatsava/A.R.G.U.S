@@ -6,6 +6,7 @@
 
 * A check can only look things up (web and Google search, places, weather, flights, the calendar): it runs on
   its own restricted channel, like trip checks, so nothing can be sent, bought or changed.
+* Checked every few days by default; every hour at most, for things that change within a day (tickets).
 * Quiet from 9 at night to 8 in the morning. At most 12 loose ends, each for at most 90 days.
 * "What's still open?" lists them; "forget the hotel one" or sorting it out closes it.
 """
@@ -97,7 +98,7 @@ def due(task: Dict[str, Any], now: float, check: Optional[Callable[[Dict[str, An
     said = check(end)
     if said:
         deliver(said)
-    nxt = out_of_quiet_hours(now + max(1.0, float(end.get("every") or 3)) * 86400, tz)
+    nxt = out_of_quiet_hours(now + max(1 / 24, float(end.get("every") or 3)) * 86400, tz)
     return nxt if nxt <= float(end["until"]) else None
 
 
@@ -114,6 +115,9 @@ SCHEMA = {"type": "object", "additionalProperties": False, "required": ["action"
     "check": {"type": "string", "description": "What to look up at each check, e.g. 'hotel prices in Midtown Manhattan for Dec 12-15, 2026'."},
     "first_in_days": {"type": "number", "minimum": 0.02, "maximum": 60, "description": "When to look first (default 2)."},
     "every_days": {"type": "number", "minimum": 1, "maximum": 30, "description": "How often after that (default 3)."},
+    "every_hours": {"type": "number", "minimum": 1, "maximum": 24, "description":
+                    "Instead of every_days, for things that change within a day (tickets going on sale, seats "
+                    "opening up). The shortest is every hour; nothing checks minute by minute."},
     "for_days": {"type": "number", "minimum": 1, "maximum": MAX_DAYS, "description": "Give up after (default 30)."},
     "id": {"type": "integer"}}}
 
@@ -152,7 +156,8 @@ def attach(store, tools: Dict[str, Any], *, tz: Optional[str] = None, clock: Cal
             return ToolOutput.error(f"{MAX_OPEN} loose ends are open already; close one first (list, then done).")
         now = clock()
         end = {"what": what, "check": " ".join(str(args.get("check") or "").split())[:400],
-               "every": number(args, "every_days", 3, 1, 30),
+               "every": (number(args, "every_hours", 24, 1, 24) / 24 if "every_hours" in args
+                         else number(args, "every_days", 3, 1, 30)),
                "until": now + number(args, "for_days", 30, 1, MAX_DAYS) * 86400}
         first = out_of_quiet_hours(now + number(args, "first_in_days", 2, 0.02, 60) * 86400, tz)
         task_id = store.add_task(json.dumps(end), MODE, due=first, origin=getattr(ctx, "channel", "voice"))

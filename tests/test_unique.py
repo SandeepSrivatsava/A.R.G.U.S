@@ -491,3 +491,20 @@ def test_a_clear_match_of_your_voice_stops_argus_at_once(tmp_path):
     argus._maybe_barge_in()
     assert stopped == [1, 1]
     argus.speaker._idle.set()
+
+
+def test_ticket_watches_can_check_every_hour_but_no_faster(tmp_path):
+    store, tools = Store(tmp_path / "a.db"), {}
+    followups.attach(store, tools, tz=TZ, clock=lambda: NOON)
+    ctx = ctx_for(tmp_path)
+    tools["follow_up"].run({"action": "add", "what": "film tickets", "check": "seats", "every_hours": 0.1,
+                            "first_in_days": 0.02}, ctx)
+    (task,) = store.tasks()
+    end = json.loads(task["text"])
+    assert end["every"] == 1 / 24                                         # clamped to an hour
+    asked = []
+    scheduler = Scheduler(store, deliver=lambda s: None, run_task=lambda t: "", headlines=lambda: "", tz=TZ,
+                          follow_check=lambda e: asked.append(e["what"]) or "")
+    scheduler.tick(task["next_run"] + 1)
+    assert asked == ["film tickets"]
+    assert abs(store.tasks()[0]["next_run"] - (task["next_run"] + 1 + 3600)) < 2

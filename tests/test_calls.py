@@ -526,7 +526,7 @@ class Shell:
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
         out, code = "", 0
-        if cmd[0] == "SwitchAudioSource":
+        if cmd[0].rsplit("/", 1)[-1] == "SwitchAudioSource":
             if "-a" in cmd:
                 out = "\n".join(self.inputs)
             elif "-c" in cmd:
@@ -730,3 +730,21 @@ def test_asking_to_call_is_one_short_question_without_the_address(tmp_path):
     assert business_name(None) == "" and business_name("Nopa") == "Nopa"
     assert Policy(s, workspace=s.workspace).check("phone_call", {"number": "415 555 0123"}, "voice").short == \
         "call 415 555 0123"
+
+
+def test_switchaudiosource_is_found_in_homebrew_when_launchd_path_lacks_it(tmp_path, monkeypatch):
+    folder = tmp_path / "brew"
+    folder.mkdir()
+    tool = folder / "SwitchAudioSource"
+    tool.write_text("#!/bin/sh\n")
+    tool.chmod(0o755)
+    monkeypatch.setattr(C, "TOOL_DIRS", ("/nowhere", str(folder)))
+    assert C.find_tool("SwitchAudioSource", which=lambda n: None) == str(tool)
+    assert C.find_tool("SwitchAudioSource", which=lambda n: "/usr/bin/x") == "/usr/bin/x"
+    assert C.find_tool("audiotee-missing", which=lambda n: None) is None
+    shell = Shell()
+    line = C.MacCallLine(tap=str(tmp_path / "tap"), run=shell, which=lambda n: C.find_tool(n, which=lambda _: None),
+                         mac_version=lambda: "15.1")
+    (tmp_path / "tap").write_text("")
+    assert line.check() == []
+    assert shell.calls[0][0] == str(tool)

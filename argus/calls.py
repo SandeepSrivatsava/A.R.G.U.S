@@ -620,12 +620,28 @@ class MacScreen:  # pragma: no cover - needs a Mac screen
         MacBackend().click(x * self.STEP * self.scale, y * self.STEP * self.scale, "left", 1, [])
 
 
+TOOL_DIRS = ("/opt/homebrew/bin", "/usr/local/bin", "~/.argus/bin")
+
+
+def find_tool(name: str, which=shutil.which) -> Optional[str]:
+    """The full path of a tool Argus needs. Argus runs in the background (launchd), whose PATH is only
+    /usr/bin:/bin:/usr/sbin:/sbin, so Homebrew's folders are looked in as well."""
+    found = which(name)
+    if found:
+        return found
+    for folder in TOOL_DIRS:
+        path = os.path.join(os.path.expanduser(folder), name)
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+
 class MacCallLine(CallLine):
     """A call placed through the iPhone from the Mac (see the module notes)."""
 
     def __init__(self, *, input_device: str = "BlackHole 2ch", tap: str = "~/.argus/bin/audiotee",
                  monitor: bool = True, run=subprocess.run, popen=subprocess.Popen, screen=None, player=None,
-                 which=shutil.which, mac_version: Callable[[], str] = lambda: platform.mac_ver()[0],
+                 which=find_tool, mac_version: Callable[[], str] = lambda: platform.mac_ver()[0],
                  sleep=time.sleep, clock: Callable[[], float] = time.monotonic):
         self.input_device, self.tap_path, self.monitor = input_device, os.path.expanduser(tap), monitor
         self.run, self.popen, self.screen, self.player = run, popen, screen, player
@@ -639,7 +655,8 @@ class MacCallLine(CallLine):
 
     # -- setup checks --
     def _switch(self, *args: str) -> str:
-        proc = self.run(["SwitchAudioSource", *args], capture_output=True, text=True, timeout=10)
+        proc = self.run([self.which("SwitchAudioSource") or "SwitchAudioSource", *args], capture_output=True,
+                        text=True, timeout=10)
         if proc.returncode != 0:
             raise CallError(f"couldn't change the Mac's audio ({(proc.stderr or '').strip()[:120]})")
         return (proc.stdout or "").strip()
@@ -655,7 +672,8 @@ class MacCallLine(CallLine):
         if not os.path.exists(self.tap_path):
             problems.append("the call recorder isn't installed (run scripts/setup_calls.sh)")
         if not self.which("SwitchAudioSource"):
-            problems.append("SwitchAudioSource isn't installed (run scripts/setup_calls.sh)")
+            problems.append("SwitchAudioSource isn't installed (run scripts/setup_calls.sh; it goes in "
+                            "/opt/homebrew/bin or /usr/local/bin)")
         else:
             try:
                 inputs = self._switch("-a", "-t", "input").splitlines()
