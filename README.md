@@ -171,7 +171,8 @@ and weighs what they say. Restart after adding one (`argusctl restart`).
   (two checks in a row, about a second). Until you enroll, say its name: "Argus, stop" or "Argus, what about
   tomorrow?". (Comparing words alone made it stop itself mid-sentence on a laptop's speakers and then answer
   its own words, so that's only used with `barge_in = "words"` under `[listening]`, for headphones.)
-  `barge_in = "name"` keeps it to the name even after enrolling.
+  `barge_in = "name"` keeps it to the name even after enrolling. If it still talks on when you speak, lower
+  `talk_over_threshold` under `[listening]` (0.38; Argus's own voice scores far below that).
 * **A back-and-forth, not a lecture.** Tell it "I'm going to New York next month" and it reacts, asks what
   kind of trip it is, then offers two or three ideas and narrows down from your answer. It remembers what
   you like (budget, food, how you travel), so next time it asks less.
@@ -181,7 +182,8 @@ and weighs what they say. Restart after adding one (`argusctl restart`).
   af_sky), `argusctl voice af_sky --try` plays it first, `argusctl voice --speed 1.1` changes the pace and
   `argusctl voices` plays them all. While one sentence plays, the next is being made. If your Mac can't make
   the natural voice fast enough (gaps between sentences), Argus notices after a few sentences and switches by
-  itself to a quick American voice; `argusctl voice --natural` tries the natural one again.
+  itself to a quick American voice, unless you picked the voice with `argusctl voice <name>`: then it keeps
+  that one (`keep_natural`); `argusctl voice --natural` goes back to it too.
 * **It can write and run code.** For things that need working out (comparing many options, numbers, data, a
   schedule), Claude writes Python and runs it in Anthropic's sandbox, which has no internet and can't reach your
   Mac (`code_execution = false` under `[brain]` turns it off). Searching is still done with Google, Gemini, the

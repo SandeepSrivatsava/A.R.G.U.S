@@ -161,6 +161,7 @@ class App:
         speaker = Speaker(speaker_voice or make_voice(engine, say_voice=s.say_voice, rate=s.rate,
                                                       piper_dir=paths["tts"], speed=s.speed, tmp_dir=str(s.run_dir),
                                                       kokoro_dir=paths["kokoro"], kokoro_voice=s.kokoro_voice,
+                                                      keep_natural=s.keep_natural,
                                                       on_switch=lambda rate: self.audit.log(
                                                           "voice_switched", to="quick", work_per_second=round(rate, 2))))
         listener = Listener(name_matcher(s), followup_seconds=s.followup_seconds,
@@ -187,7 +188,7 @@ class App:
                      transcriber=transcriber, listener=listener, speaker=speaker,
                      brain=brain, audit=self.audit, voiceprint=voiceprint, voice_lock=s.voice_lock,
                      greeting=s.greeting, clap=ClapDetector(s.clap) if s.clap != "off" else None,
-                     gate=gate, voice_approval_threshold=s.voice_approval_threshold, guests=s.guests, barge_in=s.barge_in,
+                     gate=gate, voice_approval_threshold=s.voice_approval_threshold, guests=s.guests, barge_in=s.barge_in, talk_over_threshold=s.talk_over_threshold,
                      guest_minutes=s.guest_minutes, owner_name=s.user_name, calls=calls, notify=notify)
         argus.extra_status = lambda: {"version": self.version, "voice": describe_voice(speaker.voice),
                                       "safe_start": self.safe}

@@ -77,6 +77,9 @@ class Settings:
     # Talking over Argus stops it: "voice" = your enrolled voice (argusctl enroll; until then, its name),
     # "name" = only "Argus, stop" / "Argus, ...", "words" = any new words (only with headphones)
     barge_in: str = "voice"
+    # How close to your voiceprint is enough to stop Argus while it talks. Lower than voice lock: its own voice
+    # from the speakers is mixed in, and two matches in a row are needed anyway.
+    talk_over_threshold: float = 0.38
     pause_during_calls: bool = True      # stop listening while another app uses a microphone (a call at the Mac)
     ignore_mic_apps: List[str] = field(default_factory=list)   # apps that don't count as a call (names or IDs)
     end_of_speech_seconds: float = 0.6   # how long a pause ends a sentence (shorter = snappier)
@@ -86,6 +89,7 @@ class Settings:
     say_voice: str = "Daniel"
     rate: int = 190
     speed: float = 1.2
+    keep_natural: bool = False   # never switch to the quick voice, even if the natural one is a little slow
     kokoro_voice: str = "am_michael"   # American man; also am_adam, af_bella, af_sarah, af_nicole, af_sky...
     greeting: str = "Online and listening."
     # security
@@ -222,9 +226,9 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
     "listening": {k: k for k in ("followup_seconds", "conversation_idle_seconds", "extra_variants", "soft_variants",
                                  "voice_lock", "voice_lock_threshold", "mic_device", "vad_threshold", "clap",
                                  "end_of_speech_seconds", "guests", "guest_minutes",
-                                 "pause_during_calls", "ignore_mic_apps", "barge_in")},
+                                 "pause_during_calls", "ignore_mic_apps", "barge_in", "talk_over_threshold")},
     "voice": {"engine": "voice_engine", "say_voice": "say_voice", "rate": "rate", "speed": "speed", "greeting": "greeting",
-              "kokoro_voice": "kokoro_voice"},
+              "kokoro_voice": "kokoro_voice", "keep_natural": "keep_natural"},
     "security": {k: k for k in ("approval_needs_touch_id", "pause_when_locked", "screen_control",
                                 "blocked_apps", "blocked_sites", "voice_approvals", "voice_approval_threshold")},
     "phone": {"type": "phone_type", "enabled": "phone_enabled", "host": "phone_host", "port": "phone_port"},
@@ -331,6 +335,7 @@ def _validate(s: "Settings") -> None:
     checks = (("listening.followup_seconds", s.followup_seconds >= 0),
               ("listening.conversation_idle_seconds", s.conversation_idle_seconds >= 0),
               ("listening.voice_lock_threshold", 0 <= s.voice_lock_threshold <= 1),
+              ("listening.talk_over_threshold", 0 <= s.talk_over_threshold <= 1),
               ("listening.vad_threshold", 0 < s.vad_threshold < 1),
               ("listening.end_of_speech_seconds", 0.3 <= s.end_of_speech_seconds <= 2.0),
               ("brain.max_steps", s.max_steps >= 1), ("brain.max_turn_tokens", s.max_turn_tokens >= 1000),

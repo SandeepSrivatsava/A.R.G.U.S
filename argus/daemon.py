@@ -38,7 +38,7 @@ class Argus:
     def __init__(self, *, source, segmenter: Segmenter, transcriber: Transcriber, listener: Listener,
                  speaker: Speaker, brain: Brain, audit: Audit, voiceprint: Optional[VoicePrint] = None,
                  voice_lock: bool = False, greeting: str = "", min_utterance_seconds: float = 0.35,
-                 barge_in_interval: float = 0.5, barge_in: str = "voice", on_change: Callable[[], None] = lambda: None, clap=None,
+                 barge_in_interval: float = 0.5, barge_in: str = "voice", talk_over_threshold: float = 0.38, on_change: Callable[[], None] = lambda: None, clap=None,
                  gate=None, voice_approval_threshold: float = 0.55, guests: str = "ask", guest_minutes: float = 60.0,
                  owner_name: str = "", clock: Callable[[], float] = time.monotonic, calls=None,
                  notify: Callable[[str], None] = lambda text: None):
@@ -54,6 +54,7 @@ class Argus:
         self.greeting = greeting
         self.min_samples = int(min_utterance_seconds * SAMPLE_RATE)
         self.barge_in_interval = barge_in_interval
+        self.talk_over_threshold = talk_over_threshold
         self.barge_in = barge_in        # "voice": talking over Argus stops it; "name": only "Argus, stop"
         self._speech_since: Optional[float] = None
         self._barged_at = -1e9
@@ -324,7 +325,7 @@ class Argus:
         audio = self.segmenter.recent_audio()[-int(min(talking + 0.3, 2.5) * SAMPLE_RATE):]
         if by_voice:
             score = self.voiceprint.score(audio)
-            if score >= self.voiceprint.threshold:
+            if score >= self.talk_over_threshold:
                 if self._barge_hits >= 1:           # twice in a row: one lucky match isn't enough to stop
                     return self._barge(now, "your voice", score=round(score, 3))
                 self._barge_hits += 1

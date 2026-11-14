@@ -665,3 +665,28 @@ def test_a_pause_for_an_app_says_why_and_the_app_can_be_ignored(home, tmp_path, 
     assert cmd_ignore_app(args, restart=lambda: 0) == 0 and config.load().ignore_mic_apps == ["WhatsApp"]
     assert cmd_ignore_app(SimpleNamespace(app="whatsapp", undo=True), restart=lambda: 0) == 0
     assert config.load().ignore_mic_apps == [] and restarted == [1]
+
+
+def test_a_chosen_natural_voice_is_kept(home, tmp_path, monkeypatch):
+    import argus.voice as voice_mod
+    from argus.__main__ import cmd_voice
+    assert cmd_voice(voice_args("af_sky", no_restart=True)) == 0 and config.load().keep_natural is True
+    monkeypatch.setattr(voice_mod, "PiperVoice", lambda *a, **k: "quick")
+    monkeypatch.setattr(voice_mod, "KokoroVoice", lambda *a, **k: "natural")
+    (tmp_path / "natural-voice-too-slow").write_text("1.02\n")
+    assert voice_mod.make_voice("kokoro", tmp_dir=str(tmp_path)) == "quick"
+    assert voice_mod.make_voice("kokoro", tmp_dir=str(tmp_path), keep_natural=True) == "natural"
+
+
+def test_talking_over_needs_a_looser_match_than_voice_lock(tmp_path):
+    argus, voice, _ = make_argus(tmp_path, [], voiceprint=FakeVoicePrint(0.40, 0.40))
+    assert argus.talk_over_threshold == 0.38 and argus.voiceprint.threshold > 0.40
+    from test_conversation import talking
+    talking(argus)
+    stopped = []
+    argus.brain.cancel = lambda: stopped.append(1)
+    for _ in range(2):
+        argus._last_barge_check = 0.0
+        argus._maybe_barge_in()
+    assert stopped == [1]
+    argus.speaker._idle.set()

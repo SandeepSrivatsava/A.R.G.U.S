@@ -385,7 +385,7 @@ class AdaptiveVoice:
 
 def make_voice(engine: str, *, say_voice: str = "Daniel", rate: int = 190, piper_dir: str = "",
                speed: float = 1.0, tmp_dir: Optional[str] = None, kokoro_dir: str = "",
-               kokoro_voice: str = "am_michael", on_switch: Callable[[float], None] = lambda _rate: None) -> Voice:
+               kokoro_voice: str = "am_michael", keep_natural: bool = False, on_switch: Callable[[float], None] = lambda _rate: None) -> Voice:
     quick: Optional[Voice] = None
     if engine in ("kokoro", "piper"):
         try:        # Piper's pace at 1.0 is already brisk; go a little easier on the speed-up
@@ -394,12 +394,14 @@ def make_voice(engine: str, *, say_voice: str = "Daniel", rate: int = 190, piper
             log.warning("Piper voice unavailable (%s)", exc)
     if engine == "kokoro":
         marker = Path(tmp_dir) / "natural-voice-too-slow" if tmp_dir else None
+        if keep_natural:                 # you chose this voice: keep it, small gaps and all
+            marker = None
         if marker is not None and marker.exists() and quick is not None:
             log.info("using the quick voice: the natural one was too slow here (%s)", marker)
             return quick
         try:
             natural = KokoroVoice(kokoro_dir, voice=kokoro_voice, speed=speed, tmp_dir=tmp_dir)
-            return AdaptiveVoice(natural, quick, marker, on_switch) if quick is not None else natural
+            return AdaptiveVoice(natural, quick, marker, on_switch) if quick is not None and not keep_natural else natural
         except Exception as exc:
             log.warning("Kokoro voice unavailable (%s); using the Piper voice", exc)
     if quick is not None:

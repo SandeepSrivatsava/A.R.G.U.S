@@ -489,12 +489,14 @@ def cmd_voice(args, *, make=None, restart=None, ask=input, hello=None) -> int:
               "Hear them all:  argusctl voices")
         return 0
     changes = []
+    if args.natural:
+        changes.append(("keep_natural", "true"))
     if name in ("quick", "piper"):
         changes.append(("engine", '"piper"'))
     elif name in ("mac", "say"):
         changes.append(("engine", '"say"'))
     elif name in KOKORO_VOICES:
-        changes += [("engine", '"kokoro"'), ("kokoro_voice", json.dumps(name))]
+        changes += [("engine", '"kokoro"'), ("kokoro_voice", json.dumps(name)), ("keep_natural", "true")]
     elif name:
         print(f"There's no voice called {name}. Choose from: {', '.join(KOKORO_VOICES)}, quick, mac")
         return 1
