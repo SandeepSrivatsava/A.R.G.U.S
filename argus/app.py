@@ -212,7 +212,8 @@ class App:
                      brain=brain, audit=self.audit, voiceprint=voiceprint, voice_lock=s.voice_lock,
                      greeting=s.greeting, clap=ClapDetector(s.clap) if s.clap != "off" else None,
                      gate=gate, voice_approval_threshold=s.voice_approval_threshold, guests=s.guests, barge_in=s.barge_in, talk_over_threshold=s.talk_over_threshold,
-                     guest_minutes=s.guest_minutes, owner_name=s.user_name, calls=calls, notify=notify)
+                     guest_minutes=s.guest_minutes, owner_name=s.user_name, calls=calls, notify=notify,
+                     smart_turns=s.smart_turns)
         argus.extra_status = lambda: {"version": self.version, "voice": describe_voice(speaker.voice),
                                       "safe_start": self.safe}
         return argus

@@ -13,6 +13,7 @@ import numpy as np
 from .audit import Audit
 from .brain import Brain
 from .hearing import SAMPLE_RATE, Segmenter, Transcriber, VoicePrint
+from . import turns
 from .micwatch import friendly
 from .listener import ACK, ASK, COMMAND, IGNORE, Listener
 from .voice import Speaker
@@ -41,8 +42,10 @@ class Argus:
                  barge_in_interval: float = 0.25, barge_in: str = "voice", talk_over_threshold: float = 0.38, on_change: Callable[[], None] = lambda: None, clap=None,
                  gate=None, voice_approval_threshold: float = 0.55, guests: str = "ask", guest_minutes: float = 60.0,
                  owner_name: str = "", clock: Callable[[], float] = time.monotonic, calls=None,
-                 notify: Callable[[str], None] = lambda text: None):
+                 notify: Callable[[str], None] = lambda text: None, smart_turns: bool = False):
         self.source = source
+        self.smart_turns = smart_turns  # wait a little longer for the rest of an unfinished sentence (turns.py)
+        self._turn: Optional[tuple] = None   # (audio so far, its words, wait until)
         self.segmenter = segmenter
         self.transcriber = transcriber
         self.listener = listener
@@ -273,13 +276,16 @@ class Argus:
             if chunk is None:
                 if getattr(self.source, "finished", False):
                     for utterance in self.segmenter.flush():
-                        self.handle_utterance(utterance)
+                        self._utterance(utterance)
+                    self._release_turn()
                     return
+                self._check_turn()
                 continue
             if self.clap is not None and self.clap.feed(chunk):
                 self.on_clap()
             for utterance in self.segmenter.feed(chunk):
-                self.handle_utterance(utterance)
+                self._utterance(utterance)
+            self._check_turn()
             if self.segmenter.speech_active and not self.listener.sleeping:
                 self.brain.warm()       # someone is talking: have a connection to Claude ready (sends nothing)
             self._maybe_barge_in()
@@ -369,6 +375,41 @@ class Argus:
             return self.voiceprint.score(samples) >= self.voiceprint.threshold
         return True
 
+    # ---- end of turn (turns.py) ----------------------------------------------------------------------
+    def _utterance(self, samples: np.ndarray) -> None:
+        """A stretch of speech ended with a pause. If the sentence is clearly unfinished, wait a moment for
+        the rest and join them; otherwise handle it now."""
+        if self._turn is not None:
+            held, _, _ = self._turn
+            self._turn = None
+            samples = np.concatenate([held, np.zeros(int(0.2 * SAMPLE_RATE), dtype=np.float32), samples])
+        if (not self.smart_turns or samples.size < self.min_samples or (self.gate is not None and self.gate.pending)
+                or (self.calls is not None and self.calls.active) or self.speaker.speaking
+                or samples.size > turns.MAX_HELD_SECONDS * SAMPLE_RATE or not self.mic_wanted or self.closed):
+            return self.handle_utterance(samples)
+        text = self.transcriber.transcribe(samples)
+        if turns.unfinished(text):
+            self._turn = (samples, text, time.monotonic() + turns.HOLD_SECONDS)
+            return
+        self.handle_utterance(samples, text=text)
+
+    def _check_turn(self) -> None:
+        """Waited long enough for the rest of an unfinished sentence: handle what there is."""
+        if self._turn is None:
+            return
+        if self.segmenter.speech_active:              # still talking: the rest is coming
+            samples, text, _ = self._turn
+            self._turn = (samples, text, time.monotonic() + turns.HOLD_SECONDS)
+            return
+        if time.monotonic() >= self._turn[2]:
+            self._release_turn()
+
+    def _release_turn(self) -> None:
+        if self._turn is not None:
+            samples, text, _ = self._turn
+            self._turn = None
+            self.handle_utterance(samples, text=text)
+
     def _fix_names(self, text: str) -> str:
         """Put right names the speech model garbled ("jacket in the box" -> "Jack in the Box"), see names.py."""
         known = getattr(self, "names", None)
@@ -384,11 +425,11 @@ class Argus:
             self.audit.log("names_fixed", changes=[f"{a} -> {b}" for a, b in changes][:5])
         return fixed
 
-    def handle_utterance(self, samples: np.ndarray) -> None:
+    def handle_utterance(self, samples: np.ndarray, text: Optional[str] = None) -> None:
         if samples.size < self.min_samples or not self.mic_wanted or self.closed:
             return
         began = time.monotonic()
-        text = self.transcriber.transcribe(samples)
+        text = self.transcriber.transcribe(samples) if text is None else text
         text = self._fix_names(text)
         self._heard = {"speech_to_text_s": round(time.monotonic() - began, 2),
                        "spoken_s": round(samples.size / SAMPLE_RATE, 1)}
