@@ -290,23 +290,24 @@ class MacBackend(Backend):
         return float(loc.x), float(loc.y)
 
 
-def check_permissions(prompt: bool = False) -> Dict[str, bool]:
+def check_permissions(prompt: bool = False) -> Dict[str, Any]:
     """Whether this process (Argus.app) may record the screen and send clicks and keys (Accessibility).
-    With prompt=True, macOS shows its request dialogs for whatever is missing (it does so only once)."""
-    result = {"screen_recording": False, "accessibility": False}
+    With prompt=True, macOS shows its request dialogs for whatever is missing (it does so only once).
+    "errors" says why a check couldn't run at all (a missing piece of Python, not a permission)."""
+    result: Dict[str, Any] = {"screen_recording": False, "accessibility": False, "errors": []}
     try:
         import Quartz
         granted = bool(Quartz.CGPreflightScreenCaptureAccess())
         if not granted and prompt:
             granted = bool(Quartz.CGRequestScreenCaptureAccess())
         result["screen_recording"] = granted
-    except Exception:
-        pass
+    except Exception as exc:
+        result["errors"].append(f"screen recording check: {type(exc).__name__}: {exc}"[:200])
     try:
         from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
         result["accessibility"] = bool(AXIsProcessTrustedWithOptions({kAXTrustedCheckOptionPrompt: bool(prompt)}))
-    except Exception:
-        pass
+    except Exception as exc:
+        result["errors"].append(f"accessibility check: {type(exc).__name__}: {exc}"[:200])
     return result
 
 

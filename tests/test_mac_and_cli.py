@@ -173,12 +173,13 @@ def test_permission_checks(quartz, monkeypatch):
     monkeypatch.setitem(sys.modules, "ApplicationServices", module(
         "ApplicationServices", kAXTrustedCheckOptionPrompt="AXTrustedCheckOptionPrompt",
         AXIsProcessTrustedWithOptions=lambda opts: opts == {"AXTrustedCheckOptionPrompt": False}))
-    assert computer_mod.check_permissions() == {"screen_recording": True, "accessibility": True}
+    assert computer_mod.check_permissions() == {"screen_recording": True, "accessibility": True, "errors": []}
     quartz.state["screen_ok"] = False
-    assert computer_mod.request_permissions() == {"screen_recording": False, "accessibility": False}
+    assert computer_mod.request_permissions() == {"screen_recording": False, "accessibility": False, "errors": []}
     assert quartz.state["requested"]
     monkeypatch.setitem(sys.modules, "ApplicationServices", None)              # library missing
-    assert computer_mod.check_permissions()["accessibility"] is False
+    result = computer_mod.check_permissions()
+    assert result["accessibility"] is False and result["errors"][0].startswith("accessibility check")
 
 
 def test_missing_pyobjc_means_no_screen_control(monkeypatch):

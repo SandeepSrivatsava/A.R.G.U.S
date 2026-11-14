@@ -838,3 +838,30 @@ def test_calls_say_when_screen_recording_or_accessibility_is_off(tmp_path, capsy
     assert any("Privacy_ScreenCapture" in c[1] for c in opened) and opened[-1][:2] == ["open", "-R"]
     monkeypatch.setattr(cli, "_send_quiet", lambda cmd: {"ok": False})
     assert cli.cmd_calls(SimpleNamespace(open=False)) == 1
+
+
+def test_argusctl_calls_reset_and_why_a_check_failed(tmp_path, monkeypatch, capsys):
+    from argus import __main__ as cli
+    s = make_settings(tmp_path)
+    s.calls_enabled = True
+    monkeypatch.setattr(cli.config_mod, "load", lambda: s)
+    ran, restarted = [], []
+    monkeypatch.setattr("subprocess.run", lambda cmd, **kw: ran.append(cmd))
+    assert cli.cmd_calls(SimpleNamespace(reset=True, open=False, restart=lambda: restarted.append(1))) == 0
+    assert ran == [["tccutil", "reset", "ScreenCapture", "com.argus.voice"],
+                   ["tccutil", "reset", "Accessibility", "com.argus.voice"]] and restarted == [1]
+    (tmp_path / "tap").write_text("")
+    line = C.MacCallLine(tap=str(tmp_path / "tap"), run=Shell(), which=lambda n: "/x/" + n, mac_version=lambda: "15.1",
+                         exists=lambda p: True,
+                         permissions=lambda: {"errors": ["accessibility check: ImportError: no ApplicationServices"]})
+    capsys.readouterr()
+    assert cli.cmd_calls(SimpleNamespace(reset=False, open=False), line=line) == 1
+    out = capsys.readouterr().out
+    assert "NOTE  accessibility check: ImportError" in out and "argusctl calls --reset" in out
+
+
+def test_permission_checks_say_why_they_couldnt_run():
+    from argus.computer import check_permissions
+    result = check_permissions()
+    assert set(result) == {"screen_recording", "accessibility", "errors"}
+    assert len(result["errors"]) == 2                # no Quartz or ApplicationServices off a Mac

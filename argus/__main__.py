@@ -573,6 +573,17 @@ def cmd_calls(args, *, line=None) -> int:
             return reply
         line = MacCallLine(input_device=settings.call_input_device, tap=settings.call_tap,
                            permissions=running_argus_permissions)
+    if getattr(args, "reset", False):
+        # A switch that's on but doesn't count usually belongs to an older build of Argus.app (macOS ties the
+        # permission to the exact app). Clearing Argus's own entries makes macOS ask again for this build.
+        import subprocess
+        for service in ("ScreenCapture", "Accessibility"):
+            subprocess.run(["tccutil", "reset", service, "com.argus.voice"], check=False)
+        print("Cleared Argus's Screen Recording and Accessibility entries. Restarting Argus: macOS will ask for\n"
+              "both. Allow them (System Settings opens: switch Argus on in Screen & System Audio Recording and in\n"
+              "Device Control and Data Access), then run: argusctl restart && argusctl calls")
+        (getattr(args, "restart", None) or (lambda: cmd_restart(SimpleNamespace(force=False, wait=60))))()
+        return 0
     if getattr(args, "open", False):
         import subprocess
         for pane in ("Privacy_ScreenCapture", "Privacy_Accessibility"):   # (macOS 27 calls it Device Control and Data Access)
@@ -590,6 +601,12 @@ def cmd_calls(args, *, line=None) -> int:
         print(f"{'PASS' if passed else 'FAIL'}  {text}")
     print("CHECK iPhone: Settings > Apps > Phone > Calls on Other Devices: on, and this Mac allowed")
     print("CHECK Mac: FaceTime > Settings > General > \"Calls from iPhone\" ticked")
+    try:
+        why = (line.permissions() or {}).get("errors") or []
+    except Exception:
+        why = []
+    for problem in why:
+        print(f"NOTE  {problem}")
     missing = [text for passed, text in items if not passed]
     driver_there = items[3][0]
     perms_missing = not (items[5][0] and items[6][0])
@@ -601,6 +618,7 @@ def cmd_calls(args, *, line=None) -> int:
     if perms_missing:
         print("\nScreen Recording and Accessibility must be on for Argus (not Terminal): run argusctl calls --open,\n"
               "switch Argus on in both lists (press + if it isn't listed), then argusctl restart.\n"
+              "Already on but still FAIL? The switch belongs to an older build of Argus: run argusctl calls --reset.\n"
               "(If Argus isn't running, these show as FAIL because only Argus itself can check them.)")
     if not missing and settings.calls_enabled:
         print("\nEverything Argus can check is in place. Try: \"Argus, call <a place> and ask when they close.\"")
@@ -913,6 +931,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("branch", nargs="?", default="")
     s = sub.add_parser("calls", help="check everything phone calls need, and what to do about anything missing")
     s.add_argument("--open", action="store_true", help="open the two privacy settings Argus needs, and Argus.app in Finder")
+    s.add_argument("--reset", action="store_true", help="clear Argus's Screen Recording and Accessibility entries and ask again")
     s = sub.add_parser("doctor", help="check that everything Argus needs is in place")
     s.add_argument("--offline", action="store_true", help="skip the check that calls the Claude API")
     sub.add_parser("usage", help="estimated Claude API spend today and this month")
