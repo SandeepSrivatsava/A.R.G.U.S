@@ -369,11 +369,27 @@ class Argus:
             return self.voiceprint.score(samples) >= self.voiceprint.threshold
         return True
 
+    def _fix_names(self, text: str) -> str:
+        """Put right names the speech model garbled ("jacket in the box" -> "Jack in the Box"), see names.py."""
+        known = getattr(self, "names", None)
+        if known is None or not text:
+            return text
+        try:
+            from .names import correct
+            fixed, changes = correct(text, known.all())
+        except Exception:
+            log.exception("name correction failed")
+            return text
+        if changes:
+            self.audit.log("names_fixed", changes=[f"{a} -> {b}" for a, b in changes][:5])
+        return fixed
+
     def handle_utterance(self, samples: np.ndarray) -> None:
         if samples.size < self.min_samples or not self.mic_wanted or self.closed:
             return
         began = time.monotonic()
         text = self.transcriber.transcribe(samples)
+        text = self._fix_names(text)
         self._heard = {"speech_to_text_s": round(time.monotonic() - began, 2),
                        "spoken_s": round(samples.size / SAMPLE_RATE, 1)}
         heard = self.listener.matcher.hear(text)

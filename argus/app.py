@@ -130,6 +130,15 @@ class App:
             notify=lambda text: self.push.send(text, title="Argus fixed something") if self.push else None)
         selfcare.attach_fix(self.fixer, self.agent.tools, restart=self._restart_soon)
         self.agent.loose_ends = lambda: followups_mod.in_prompt(self.store)
+        # Names speech recognition may garble: its own, yours, your city, ones you added, ones in your facts,
+        # and the latest places and names it read or said (names.py)
+        from . import names as names_mod
+        self.names = names_mod.KnownNames(
+            fixed=[settings.name, settings.user_name, settings.city],
+            sources=[lambda: names_mod.added(self.store),
+                     lambda: names_mod.names_in(" ".join(f for _, f in self.store.facts(limit=200)))])
+        self.agent.known_names = self.names.all
+        self.agent.notice = self.names.notice
         self.glancer = None
         if self.glasses is not None:                                    # where things were seen through the glasses
             if settings.glances_minutes and not safe:
@@ -143,6 +152,7 @@ class App:
         if voice:
             self.argus = self._build_voice(transcriber, source, speaker_voice, approver)
             argus = self.argus
+            argus.names = self.names
             self.policy.owner_verified = lambda: bool(argus.voice_lock_active)   # only his voice gets through
 
     # ---- pieces ------------------------------------------------------------------------------------

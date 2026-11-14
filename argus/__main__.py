@@ -647,6 +647,22 @@ def cmd_fixes(args, *, fixer=None, auth=None, restart=None) -> int:
     return 2
 
 
+def cmd_names(args, *, store=None) -> int:
+    """Names Argus should hear right (people, places, businesses): list, add, remove."""
+    from . import names as names_mod
+    from .store import Store
+    store = store or Store(config_mod.load().db_path)
+    words = " ".join(getattr(args, "name", []) or [])
+    if args.action == "add":
+        print(f"Added: {words}" if names_mod.add_name(store, words) else "Already there (or empty).")
+    elif args.action == "remove":
+        print(f"Removed: {words}" if names_mod.remove_name(store, words) else "That name wasn't in the list.")
+    else:
+        current = names_mod.added(store)
+        print("\n".join(current) if current else "No names added yet. Add one: argusctl names add Udupi Palace")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     from pathlib import Path
     from .llm import Claude, LLMError
@@ -888,6 +904,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--no-voiceprint", action="store_true", help="only learn how you say the name")
     s = sub.add_parser("transcribe", help="test speech recognition on a WAV file")
     s.add_argument("file")
+    s = sub.add_parser("names", help="names Argus should hear right (people, places, businesses): list, add, remove")
+    s.add_argument("action", nargs="?", default="list", choices=["list", "add", "remove"])
+    s.add_argument("name", nargs="*")
     s = sub.add_parser("fixes", help="fixes Argus made to its own code: list, show <branch>, merge <branch> (Touch ID)")
     s.add_argument("action", nargs="?", default="list", choices=["list", "show", "merge"])
     s.add_argument("branch", nargs="?", default="")
@@ -976,6 +995,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_calls(args)
     if args.cmd == "fixes":
         return cmd_fixes(args)
+    if args.cmd == "names":
+        return cmd_names(args)
 
     simple = {
         "say": lambda: _send("say", text=" ".join(args.text)),

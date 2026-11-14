@@ -267,6 +267,8 @@ class Agent:
         self.glasses = glasses
         self.glasses_status = glasses_status
         self.loose_ends: Callable[[], Sequence[Tuple[int, str]]] = lambda: ()     # set by followups (app.py)
+        self.known_names: Callable[[], Sequence[str]] = lambda: ()       # names speech may garble (names.py)
+        self.notice: Callable[[str], None] = lambda _text: None          # names in what Argus read or said
         # Argus's own keys and tokens: never shown to Claude, never sent anywhere by a tool.
         self.secrets = sorted({str(v) for v in secrets if v and len(str(v)) >= 8}, key=len, reverse=True)
         self._lock = threading.Lock()
@@ -427,6 +429,11 @@ class Agent:
         if time.monotonic() - started > 5:
             self.audit.log("tool_slow", tool=name, seconds=round(time.monotonic() - started, 1))
         result["content"] = self._redact(out.content)
+        if not out.is_error and isinstance(result["content"], str) and channel != "guest":
+            try:
+                self.notice(result["content"])      # places it looked up: the names you may say next
+            except Exception:
+                pass
         if out.is_error:
             result["is_error"] = True
         return result
@@ -495,7 +502,16 @@ class Agent:
             tier = before[0]          # "yes", "do it", "and tomorrow?": the answer to what a bigger model just said
             model = tiers.model_for(tier, self.settings)
         turn.model = model
-        system = system[:-1] + [dict(system[-1], text=system[-1]["text"] + "\n\n" + self._models_note(model, tier))]
+        extra = self._models_note(model, tier)
+        if channel in ("voice", "phone", "android"):
+            try:
+                from .names import prompt_line
+                line = prompt_line(self.known_names())
+            except Exception:
+                line = ""
+            if line:
+                extra += "\n\n" + line
+        system = system[:-1] + [dict(system[-1], text=system[-1]["text"] + "\n\n" + extra)]
         getattr(events, "working", lambda _tier: None)(tier)
         resumes, said_before = 0, ""
         for _ in range(self.settings.max_steps):
@@ -618,6 +634,11 @@ class Agent:
                        web_searches=turn.usage.get("web_search_requests"), cost_usd=round(turn.cost, 4),
                        timings=turn.timings or None)
         self._last_tier[session_id] = (tier, time.monotonic())
+        if channel != "guest":
+            try:
+                self.notice(turn.text)
+            except Exception:
+                pass
         turn.links = list(dict.fromkeys(ctx.links))
         if self.reflector is not None and channel in ("voice", "phone", "cli", "android") and not turn.stopped:
             self.reflector.learn_later(asked, turn.steps, turn.text)
