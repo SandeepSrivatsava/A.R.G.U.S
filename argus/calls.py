@@ -695,6 +695,24 @@ class MacCallLine(CallLine):
                                     "Terminal (it asks for your Mac password, which Argus can't type)")
         return problems
 
+    def checklist(self) -> List[Tuple[bool, str]]:
+        """Every piece a call needs, each with whether it's in place (argusctl calls)."""
+        version = tuple(int(p) for p in re.findall(r"\d+", self.mac_version() or "")[:2])
+        switch = self.which("SwitchAudioSource")
+        driver = "/Library/Audio/Plug-Ins/HAL/" + self.input_device.replace(" ", "") + ".driver"
+        items = [(bool(version) and version >= (14, 2), f"macOS 14.2 or newer (this Mac: {self.mac_version() or 'not a Mac'})"),
+                 (os.path.exists(self.tap_path), f"call recorder (audiotee) at {self.tap_path}"),
+                 (bool(switch), f"SwitchAudioSource ({switch or 'not found in /opt/homebrew/bin or /usr/local/bin'})"),
+                 (self.exists(driver), f"{self.input_device} driver installed ({driver})")]
+        loaded = False
+        if switch:
+            try:
+                loaded = self.input_device in [i.strip() for i in self._switch("-a", "-t", "input").splitlines()]
+            except (CallError, OSError, subprocess.SubprocessError):
+                loaded = False
+        items.append((loaded, f"{self.input_device} loaded by macOS (shows up as a microphone)"))
+        return items
+
     # -- the call --
     def dial(self, number: str) -> None:
         if self.screen is None:

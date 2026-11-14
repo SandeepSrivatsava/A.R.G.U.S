@@ -336,3 +336,19 @@ def test_computer_actions():
     assert c.run("left_click", {"coordinate": [5000, 5]}).is_error
     assert c.run("key", {"text": "hyperkey"}).is_error
     assert parse_combo("Return") == ([], "return") and parse_combo("ctrl+alt+Delete") == (["ctrl", "option"], "delete")
+
+
+def test_notes_are_changed_in_place_not_replaced(ctx, ws):
+    w = toolbox.write_file
+    assert not w({"path": "notes.txt", "content": "1. calls: SwitchAudioSource\n2. dates\n"}, ctx).is_error
+    again = w({"path": "notes.txt", "content": "only the new entry\n"}, ctx)
+    assert again.is_error and "already exists" in again.content
+    assert (ws / "notes.txt").read_text() == "1. calls: SwitchAudioSource\n2. dates\n"
+    assert not w({"path": "notes.txt", "old": "SwitchAudioSource", "content": "BlackHole"}, ctx).is_error
+    assert (ws / "notes.txt").read_text() == "1. calls: BlackHole\n2. dates\n"
+    assert "exactly once" in w({"path": "notes.txt", "old": "nope", "content": "x"}, ctx).content
+    assert "exactly once" in w({"path": "notes.txt", "old": "", "content": "x"}, ctx).content
+    assert w({"path": "missing.txt", "old": "a", "content": "b"}, ctx).is_error
+    assert not w({"path": "notes.txt", "content": "3. names\n", "append": True}, ctx).is_error
+    assert not w({"path": "notes.txt", "content": "fresh\n", "overwrite": True}, ctx).is_error
+    assert (ws / "notes.txt").read_text() == "fresh\n"

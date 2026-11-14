@@ -508,3 +508,14 @@ def test_ticket_watches_can_check_every_hour_but_no_faster(tmp_path):
     scheduler.tick(task["next_run"] + 1)
     assert asked == ["film tickets"]
     assert abs(store.tasks()[0]["next_run"] - (task["next_run"] + 1 + 3600)) < 2
+
+
+def test_argus_is_told_which_model_answers(tmp_path):
+    script = Script(say("Haiku."), say("Opus."))
+    agent, _ = make_agent(tmp_path, script)
+    agent.settings.routing, agent.settings.council = "auto", ["x"]
+    agent.run(session_id="m", channel="voice", content="what time is it", events=Events())
+    agent.run(session_id="n", channel="voice", content="debug my python script", events=Events())
+    first, second = (json.dumps(b["system"]) for b in script.bodies)
+    assert f"this answer comes from {agent.settings.light_model} (the quick model)" in first
+    assert "(the heavy model)" in second and "ask_council" in first and "Phone calls use" in first

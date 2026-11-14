@@ -560,6 +560,30 @@ def cmd_timing(args) -> int:
     return 0
 
 
+def cmd_calls(args, *, line=None) -> int:
+    """Check every piece phone calls need, and say what to do about each missing one."""
+    from .calls import MacCallLine
+    settings = config_mod.load()
+    line = line or MacCallLine(input_device=settings.call_input_device, tap=settings.call_tap)
+    print(f"{'PASS' if settings.calls_enabled else 'FAIL'}  calls switched on in the settings")
+    items = line.checklist()
+    for passed, text in items:
+        print(f"{'PASS' if passed else 'FAIL'}  {text}")
+    print("CHECK iPhone: Settings > Apps > Phone > Calls on Other Devices: on, and this Mac allowed")
+    print("CHECK Mac: FaceTime > Settings > General > \"Calls from iPhone\" ticked")
+    print("CHECK Mac: System Settings > Privacy & Security > Accessibility and Screen Recording: Argus on")
+    missing = [text for passed, text in items if not passed]
+    driver_there = items[3][0]
+    if not settings.calls_enabled or any(not p for p, _ in items[1:4]):
+        print("\nTo fix: run this in Terminal (it asks for your Mac password once), then argusctl restart:\n"
+              "  cd ~/argus && scripts/setup_calls.sh")
+    elif missing and driver_there:
+        print(f"\n{line.input_device} is installed but macOS hasn't loaded it. Restart the Mac, then argusctl calls again.")
+    elif not missing:
+        print("\nEverything Argus can check is in place. Try: \"Argus, call <a place> and ask when they close.\"")
+    return 0 if settings.calls_enabled and not missing else 1
+
+
 def cmd_doctor(args) -> int:
     from pathlib import Path
     from .llm import Claude, LLMError
@@ -801,6 +825,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--no-voiceprint", action="store_true", help="only learn how you say the name")
     s = sub.add_parser("transcribe", help="test speech recognition on a WAV file")
     s.add_argument("file")
+    sub.add_parser("calls", help="check everything phone calls need, and what to do about anything missing")
     s = sub.add_parser("doctor", help="check that everything Argus needs is in place")
     s.add_argument("--offline", action="store_true", help="skip the check that calls the Claude API")
     sub.add_parser("usage", help="estimated Claude API spend today and this month")
@@ -880,6 +905,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_ignore_app(args)
     if args.cmd == "doctor":
         return cmd_doctor(args)
+    if args.cmd == "calls":
+        return cmd_calls(args)
 
     simple = {
         "say": lambda: _send("say", text=" ".join(args.text)),

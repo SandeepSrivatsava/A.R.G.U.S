@@ -443,6 +443,22 @@ class Agent:
         return True
 
     # ---- a whole turn -------------------------------------------------------------------------------
+    def _models_note(self, model: str, tier: str) -> str:
+        """Which model is answering and how the others are used, so Argus can say so when asked."""
+        s = self.settings
+        kind = {tiers.LIGHT: "the quick model", tiers.HEAVY: "the heavy model"}.get(tier, "the main model")
+        parts = [f"Models: this answer comes from {model} ({kind})."]
+        if getattr(s, "routing", "auto") == "auto":
+            parts.append(f"Argus picks by the request: everyday questions {s.light_model or s.model}; tasks, "
+                         f"advice, plans and recommendations {s.model}; code, analysis and long writing "
+                         f"{s.heavy_model or s.model}.")
+        if getattr(s, "gemini_model", ""):
+            parts.append(f"google_search runs on Google's {s.gemini_model}.")
+        if getattr(s, "council", None):
+            parts.append("ask_council gets second opinions from the other AI models set up with argusctl brains.")
+        parts.append(f"Phone calls use {getattr(s, 'call_model', '') or s.model}.")
+        return " ".join(parts)
+
     def run(self, *, session_id: str, channel: str, content: Any, events: Events,
             cancel: Optional[threading.Event] = None, location: Optional[Dict[str, float]] = None,
             locate: Optional[Callable[[], Optional[Dict[str, float]]]] = None) -> Turn:
@@ -475,6 +491,7 @@ class Agent:
             tier = before[0]          # "yes", "do it", "and tomorrow?": the answer to what a bigger model just said
             model = tiers.model_for(tier, self.settings)
         turn.model = model
+        system = system[:-1] + [dict(system[-1], text=system[-1]["text"] + "\n\n" + self._models_note(model, tier))]
         getattr(events, "working", lambda _tier: None)(tier)
         resumes, said_before = 0, ""
         for _ in range(self.settings.max_steps):

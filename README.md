@@ -530,6 +530,7 @@ argusctl lessons           # what Argus has learned (forget L3 / clear)
 argusctl push on|test|off  # reminders on your phone while you're away (ntfy)
 argusctl maps-token ...    # a year-long Apple Maps token from your Maps key (docs/SERVER.md)
 argusctl doctor            # check models, keys, Claude, the app and its permissions
+argusctl calls             # check every piece phone calls need, and what to do about anything missing
 argusctl restart           # after editing ~/.argus/config.toml; says when Argus is back (or why not)
 argusctl quit              # stop it until the next restart or login
 ./scripts/doctor.sh        # doctor, plus file privacy, login item and stay-awake checks
@@ -576,7 +577,7 @@ made on the Mac (Kokoro, American); `argusctl voice` changes it, and `argusctl v
 * **It won't take my spoken "yes".** Say "yes" and the code word it read out, in your normal voice. If it
   keeps refusing, enroll again, or use Touch ID.
 * **On a call, they can't hear Argus.** In FaceTime's Video menu, check the microphone isn't fixed to
-  one particular mic. `argusctl doctor` checks the call setup.
+  one particular mic. `argusctl calls` checks the call setup piece by piece.
 * **Claps don't work.** Clap sharply twice, less than a second apart, in a quiet moment. Soft claps or
   claps far from the Mac's microphone may not register. `clap = "off"` under `[listening]` turns it off.
 * **"I can't reach Claude right now."** Run `argusctl doctor`: it checks the internet, the key and

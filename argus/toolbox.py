@@ -181,6 +181,27 @@ def read_file(args: Dict[str, Any], ctx: Context) -> ToolOutput:
 def write_file(args: Dict[str, Any], ctx: Context) -> ToolOutput:
     path = _path(ctx, args.get("path"))
     content = str(args.get("content") or "")
+    if args.get("old") is not None:
+        # change one part of a file and keep the rest ("update the notes": not a fresh copy that drops entries)
+        old = str(args.get("old"))
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return ToolOutput.error(f"can't read {path}: {exc}")
+        count = text.count(old) if old else 0
+        if count != 1:
+            return ToolOutput.error(f"'old' must appear exactly once in {path.name} (found {count}); read the file "
+                                    "and copy the exact text to change")
+        text = text.replace(old, content, 1)
+        tmp = path.with_name(f".{path.name}.argus-tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+        return ToolOutput(f"changed part of {path} ({len(old)} characters replaced with {len(content)})")
+    if (not args.get("append") and not args.get("overwrite") and path.is_file()
+            and path.stat().st_size > 0):
+        return ToolOutput.error(f"{path.name} already exists. Read it first, then change only what's different "
+                                "(old + content), add to the end (append), or, if the user wants it all replaced, "
+                                "overwrite: true")
     path.parent.mkdir(parents=True, exist_ok=True)
     if args.get("append"):
         with path.open("a", encoding="utf-8") as fh:
@@ -543,8 +564,12 @@ def build_tools(*, mac: bool = True, glasses: bool = True, commands: bool = True
                    "cwd": {"type": "string", "description": "folder to run in (default: workspace)"}}, ["command"]), run_command),
         Tool("read_file", "Read a text file or image.",
              _obj({"path": {"type": "string"}, "max_chars": {"type": "integer"}}, ["path"]), read_file),
-        Tool("write_file", "Create or overwrite (or append to) a text file. Inside the workspace no approval is needed.",
-             _obj({"path": {"type": "string"}, "content": {"type": "string"}, "append": {"type": "boolean"}},
+        Tool("write_file", "Create a text file, add to the end of one (append), or change one part of it: 'old' is the "
+             "exact text to replace and 'content' its replacement, everything else is kept. An existing file is only "
+             "replaced whole with overwrite: true. Read a file before changing it. Inside the workspace no approval is "
+             "needed.",
+             _obj({"path": {"type": "string"}, "content": {"type": "string"}, "append": {"type": "boolean"},
+                   "old": {"type": "string"}, "overwrite": {"type": "boolean"}},
                   ["path", "content"]), write_file),
         Tool("list_files", "List a folder's contents.", _obj({"path": {"type": "string"}, "include_hidden": {"type": "boolean"}}),
              list_files),

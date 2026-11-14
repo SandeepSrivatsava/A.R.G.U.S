@@ -785,3 +785,29 @@ def test_everything_missing_for_calls_is_listed_at_once(tmp_path):
                          mac_version=lambda: "15.1", exists=lambda p: False)
     problems = line.check()
     assert len(problems) == 3 and any("BlackHole" in p for p in problems) and any("audiotee" in p for p in problems)
+
+
+def test_argusctl_calls_lists_every_piece_and_the_fix(tmp_path, monkeypatch, capsys):
+    from argus import __main__ as cli
+    s = make_settings(tmp_path)
+    s.calls_enabled = True
+    monkeypatch.setattr(cli.config_mod, "load", lambda: s)
+    (tmp_path / "tap").write_text("")
+    def line(inputs, driver):
+        return C.MacCallLine(tap=str(tmp_path / "tap"), run=Shell(inputs=inputs), which=lambda n: "/opt/homebrew/bin/" + n,
+                             mac_version=lambda: "15.1", exists=lambda p: driver)
+    assert cli.cmd_calls(None, line=line(("MacBook Air Microphone",), False)) == 1
+    out = capsys.readouterr().out
+    assert "FAIL  BlackHole 2ch driver installed" in out and "scripts/setup_calls.sh" in out
+    assert cli.cmd_calls(None, line=line(("MacBook Air Microphone",), True)) == 1
+    assert "Restart the Mac" in capsys.readouterr().out
+    assert cli.cmd_calls(None, line=line(("BlackHole 2ch",), True)) == 0
+    out = capsys.readouterr().out
+    assert "FAIL" not in out and "Everything Argus can check is in place" in out
+    no_switch = C.MacCallLine(tap=str(tmp_path / "tap"), run=Shell(), which=lambda n: None, mac_version=lambda: "",
+                              exists=lambda p: False)
+    assert [ok for ok, _ in no_switch.checklist()] == [False, True, False, False, False]
+    failing = C.MacCallLine(tap=str(tmp_path / "tap"), run=Shell(fail_switch=True), which=lambda n: "/x/" + n,
+                            mac_version=lambda: "15.1", exists=lambda p: True)
+    failing._switch = lambda *a: (_ for _ in ()).throw(C.CallError("x"))
+    assert failing.checklist()[-1][0] is False
