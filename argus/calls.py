@@ -391,6 +391,17 @@ class CallEngine:
         def result(outcome: str, summary: str) -> CallResult:
             return CallResult(outcome, summary, transcript, self.clock() - started, round(self.cost, 4))
 
+        disclosure = DISCLOSURE.format(owner=plan.owner)
+        ready: Dict[str, Any] = {}
+
+        def prepare() -> None:                # made while the phone rings, so it plays the moment they answer
+            try:
+                ready["audio"] = self.tts.synthesize(disclosure)
+            except Exception:
+                log.exception("couldn't prepare the opening line")
+        maker = threading.Thread(target=prepare, name="argus-call-opening", daemon=True)
+        if not take_over.is_set():
+            maker.start()
         try:
             self.line.dial(plan.number)
         except CallError as exc:
@@ -399,8 +410,12 @@ class CallEngine:
         if heard is None:
             return self._finish(result, transcript, why, "No one answered.", stop, take_over)
         transcript.append(("them", heard))
-        disclosure = DISCLOSURE.format(owner=plan.owner)
-        self._say(disclosure, stop)
+        if maker.is_alive():
+            maker.join(timeout=10)
+        if "audio" in ready and not stop():
+            self.line.play(*ready["audio"])
+        else:
+            self._say(disclosure, stop)
         transcript.append(("argus", disclosure))
         system = [{"type": "text", "cache_control": {"type": "ephemeral"}, "text": CALL_PROMPT.format(
             owner=plan.owner, business=plan.business or plan.number, goal=plan.goal, details=plan.details or "none",
@@ -730,6 +745,8 @@ class MacCallLine(CallLine):
         self._connected = True
         self._end_seen = False       # the red End button was found on screen at least once
         self._end_missing = 0        # checks in a row without it, after it had been seen
+        self.facetime_mic_note = ""
+        self._facetime_before = ""
         self.peak = 0.0              # loudest call audio heard (diagnostics in calls.log)
         self.chunks = 0
         self.hang_up_how = ""
@@ -738,7 +755,8 @@ class MacCallLine(CallLine):
         return (f"call audio: {self.chunks} chunks, loudest {self.peak:.3f}"
                 f"{' (silence: Argus heard nothing from the call)' if self.peak < 0.01 else ''}; "
                 f"End button {'seen' if self._end_seen else 'never recognised on screen'}"
-                f"{'; hung up by ' + self.hang_up_how if self.hang_up_how else ''}")
+                f"{'; hung up by ' + self.hang_up_how if self.hang_up_how else ''}"
+                f"{'; ' + self.facetime_mic_note if self.facetime_mic_note else ''}")
 
     # -- setup checks --
     def _switch(self, *args: str) -> str:
@@ -809,6 +827,46 @@ class MacCallLine(CallLine):
         return items
 
     # -- the call --
+    FACETIME_MIC_SCRIPT = (
+        'on run argv\n'
+        '  set wanted to item 1 of argv\n'
+        '  set before to ""\n'
+        '  tell application "System Events"\n'
+        '    if not (exists process "FaceTime") then return "NOFACETIME"\n'
+        '    tell process "FaceTime"\n'
+        '      set theMenu to menu 1 of menu bar item "Video" of menu bar 1\n'
+        '      repeat with i in menu items of theMenu\n'
+        '        try\n'
+        '          if value of attribute "AXMenuItemMarkChar" of i is not missing value then '
+        'set before to before & (name of i) & linefeed\n'
+        '        end try\n'
+        '      end repeat\n'
+        '      click menu item wanted of theMenu\n'
+        '    end tell\n'
+        '  end tell\n'
+        '  return "OK" & linefeed & before\n'
+        'end run')
+
+    def _facetime_mic(self, device: str, inputs: Sequence[str] = ()) -> str:
+        """Choose `device` as FaceTime's microphone (iPhone calls on the Mac use FaceTime's own choice, which can
+        ignore the Mac's default input). Returns the microphone that was ticked before, "" if unknown."""
+        try:
+            proc = self.run(["osascript", "-e", self.FACETIME_MIC_SCRIPT, device], capture_output=True, text=True,
+                            timeout=10)
+        except Exception as exc:
+            self.facetime_mic_note = f"FaceTime microphone not changed ({exc})"
+            return ""
+        out = (proc.stdout or "").strip().splitlines()
+        if proc.returncode != 0 or not out or out[0] != "OK":
+            why = "FaceTime isn't open" if out and out[0] == "NOFACETIME" else \
+                (proc.stderr or "").strip()[:120] or "no reason given"
+            self.facetime_mic_note = f"FaceTime microphone not changed ({why})"
+            return ""
+        ticked = [name.strip() for name in out[1:] if name.strip()]
+        before = next((name for name in ticked if name in inputs and name != device), "")
+        self.facetime_mic_note = f"FaceTime microphone set to {device}" + (f" (was {before})" if before else "")
+        return before
+
     def dial(self, number: str) -> None:
         if self.screen is None:
             self.screen = MacScreen()
@@ -830,6 +888,11 @@ class MacCallLine(CallLine):
             if spot is not None:
                 self.screen.click(*spot)
                 self._connected_at = self.clock()
+                try:
+                    inputs = [i.strip() for i in self._switch("-a", "-t", "input").splitlines()]
+                except Exception:
+                    inputs = []
+                self._facetime_before = self._facetime_mic(self.input_device, inputs)
                 return
         raise CallError("macOS didn't show the Call button (is Calls from iPhone turned on?)")
 
@@ -938,6 +1001,13 @@ class MacCallLine(CallLine):
             tap.terminate()
 
     def _restore(self) -> None:
+        facetime, self._facetime_before = getattr(self, "_facetime_before", ""), ""
+        if facetime:                                  # FaceTime's own microphone choice back as it was
+            try:
+                self.run(["osascript", "-e", self.FACETIME_MIC_SCRIPT, facetime], capture_output=True, text=True,
+                         timeout=10)
+            except Exception as exc:
+                log.error("couldn't put FaceTime's microphone back to %s: %s", facetime, exc)
         previous, self._previous_input = self._previous_input, None
         if previous:
             try:

@@ -241,6 +241,15 @@ KOKORO_VOICES = {"af": 0, "af_bella": 1, "af_nicole": 2, "af_sarah": 3, "af_sky"
                  "am_michael": 6, "bf_emma": 7, "bf_isabella": 8, "bm_george": 9, "bm_lewis": 10}
 
 
+def call_voice(voice, choice: str = "quick"):
+    """The voice for phone calls. "quick" (default): the fast voice, which renders about ten times faster on a
+    small Mac (a phone line hides the difference); "natural": the same voice as at the Mac."""
+    quick = getattr(voice, "quick", None)
+    if choice == "quick" and quick is not None and hasattr(quick, "synthesize"):
+        return quick
+    return voice
+
+
 def attach_sink(voice, sink) -> int:
     """Play the natural voices through `sink` (argus-ear's echo-cancelled speaker). Returns how many."""
     count = 0

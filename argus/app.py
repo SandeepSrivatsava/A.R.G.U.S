@@ -42,7 +42,7 @@ from .runtime import setup_logging, single_instance
 from .scheduler import Scheduler, sync_default_jobs
 from .store import Store
 from .toolbox import build_tools
-from .voice import Speaker, describe_voice, make_voice
+from .voice import Speaker, call_voice, describe_voice, make_voice
 from .wake import DEFAULT_SOFT_VARIANTS, DEFAULT_VARIANTS, NameMatcher
 
 log = logging.getLogger("argus")
@@ -243,7 +243,8 @@ class App:
         manager = CallManager(
             s, line_factory or (lambda: MacCallLine(input_device=s.call_input_device, tap=s.call_tap,
                                                     monitor=s.call_monitor)),
-            self.llm, transcriber, speaker.voice, audit=self.audit, speaker=speaker, cost=request_cost,
+            self.llm, transcriber, call_voice(speaker.voice, s.call_voice), audit=self.audit, speaker=speaker,
+            cost=request_cost,
             segmenter_factory=lambda: Segmenter(paths["vad"], threshold=s.vad_threshold, min_silence=0.8))
         self.agent.tools["phone_call"] = Tool("phone_call", CALL_TOOL_DESCRIPTION, CALL_TOOL_SCHEMA, manager.tool,
                                               frozenset({"voice"}))

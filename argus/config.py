@@ -134,6 +134,7 @@ class Settings:
     call_monitor: bool = True               # also play both sides of the call on the Mac's speakers
     call_international: bool = False        # allow numbers outside +1 (US/Canada)
     calls_per_hour: int = 6
+    call_voice: str = "quick"               # "quick" (fast, for the phone line) or "natural"
     calls_ask_first: bool = False           # False: "call them" from you (your voice, the phone app) dials with no OK
     call_input_device: str = "BlackHole 2ch"
     call_tap: str = "~/.argus/bin/audiotee"
@@ -248,6 +249,7 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
     "calls": {"enabled": "calls_enabled", "model": "call_model", "max_minutes": "call_max_minutes",
               "monitor": "call_monitor", "international": "call_international", "per_hour": "calls_per_hour",
               "ask_first": "calls_ask_first",
+              "voice": "call_voice",
               "input_device": "call_input_device", "tap": "call_tap"},
     "schedule": {"morning_headlines": "morning_headlines", "morning_briefing": "morning_briefing"},
 }
@@ -344,6 +346,7 @@ def _validate(s: "Settings") -> None:
               ("listening.conversation_idle_seconds", s.conversation_idle_seconds >= 0),
               ("listening.voice_lock_threshold", 0 <= s.voice_lock_threshold <= 1),
               ("listening.talk_over_threshold", 0 <= s.talk_over_threshold <= 1),
+              ("calls.voice", s.call_voice in ("quick", "natural")),
               ("listening.vad_threshold", 0 < s.vad_threshold < 1),
               ("listening.end_of_speech_seconds", 0.3 <= s.end_of_speech_seconds <= 2.0),
               ("brain.max_steps", s.max_steps >= 1), ("brain.max_turn_tokens", s.max_turn_tokens >= 1000),

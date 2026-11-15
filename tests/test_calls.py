@@ -261,7 +261,7 @@ def test_no_answer(tmp_path):
     line = FakeLine(("tone", 50))
     engine, voice = engine_for(tmp_path, line, Words(), Script(), answer_timeout=10)
     result = run(engine)
-    assert result.outcome == "no answer" and line.hung and voice.said == []
+    assert result.outcome == "no answer" and line.hung and line.played == []    # prepared, never played
 
 
 def test_they_hang_up_before_answering(tmp_path):
@@ -540,6 +540,10 @@ class Shell:
                 self.current = cmd[cmd.index("-s") + 1]
         if cmd[0] == "osascript" and "Hang Up" in cmd[-1]:
             out = "clicked" if self.end_button else "none"
+        if cmd[0] == "osascript" and "AXMenuItemMarkChar" in cmd[2]:
+            self.facetime = getattr(self, "facetime", [])
+            self.facetime.append(cmd[3])
+            out = getattr(self, "facetime_reply", "OK\nFaceTime HD Camera\nMacBook Air Microphone\n")
         return SimpleNamespace(returncode=code, stdout=out, stderr="")
 
 
@@ -941,3 +945,68 @@ def test_calling_a_person_dials_and_hands_the_call_over(tmp_path):
     manager, speaker = manager_for(tmp_path, line, Words("Hi!"), Script())
     out = manager.tool({"number": "415-555-0123", "goal": "call Roshini for the user", "for_user": True}, ctx())
     assert out.content.startswith("Outcome: handed to you.") and line.dialed and line.taken
+
+
+def test_facetimes_own_microphone_is_switched_for_the_call_and_back(tmp_path):
+    shell = Shell()
+    screen = Screen([screen_with(), screen_with((60, 150, 7, GREEN_RGB))])
+    line, _, _, _ = mac_line(tmp_path, shell=shell, screen=screen)
+    line.dial("4155550123")
+    assert shell.facetime == ["BlackHole 2ch"]
+    assert "FaceTime microphone set to BlackHole 2ch (was MacBook Air Microphone)" in line.diagnostics()
+    line.close()
+    assert shell.facetime == ["BlackHole 2ch", "MacBook Air Microphone"]       # put back as it was
+
+
+def test_when_facetimes_microphone_cant_be_changed_it_says_why(tmp_path):
+    for reply, why in (("NOFACETIME", "FaceTime isn't open"), ("", "no reason given")):
+        shell = Shell()
+        shell.facetime_reply = reply
+        screen = Screen([screen_with(), screen_with((60, 150, 7, GREEN_RGB))])
+        line, _, _, _ = mac_line(tmp_path, shell=shell, screen=screen)
+        line.dial("4155550123")
+        assert f"FaceTime microphone not changed ({why})" in line.diagnostics()
+        line.close()
+        assert shell.facetime == ["BlackHole 2ch"]                              # nothing to put back
+
+    def broken(cmd, **kw):
+        if cmd[0] == "osascript" and "AXMenuItemMarkChar" in cmd[2]:
+            raise OSError("no osascript")
+        return Shell()(cmd, **kw)
+    line, _, _, _ = mac_line(tmp_path, shell=broken, screen=Screen([screen_with(), screen_with((60, 150, 7, GREEN_RGB))]))
+    assert line._facetime_mic("BlackHole 2ch") == "" and "no osascript" in line.facetime_mic_note
+
+
+def test_the_opening_line_is_ready_when_they_answer(tmp_path):
+    line = FakeLine(("speech", 1), ("silence", 1))
+    script = Script(call("end_call", {"outcome": "done", "summary": "ok"}, text="Bye!"))
+    engine, voice = engine_for(tmp_path, line, Words("Hello?"), script)
+    run(engine)
+    assert voice.said[0].startswith("Hi, this is Sandeep's AI") and line.played      # made before, played once
+
+    class Broken(Voice):
+        def synthesize(self, text):
+            if text.startswith("Hi, this is"):
+                raise RuntimeError("voice broke")
+            return super().synthesize(text)
+    line = FakeLine(("speech", 1), ("silence", 1))
+    engine, _ = engine_for(tmp_path, line, Words("Hello?"), Script(call("end_call", {"outcome": "done",
+                                                                                     "summary": "ok"})))
+    engine.tts = Broken()
+    with pytest.raises(RuntimeError):             # not prepared, so it's said then (the call manager reports it)
+        run(engine)
+
+
+def test_calls_use_the_quick_voice(tmp_path, monkeypatch):
+    from argus.voice import call_voice
+    adaptive = SimpleNamespace(quick=Voice(), natural=Voice(), synthesize=lambda t: None)
+    assert call_voice(adaptive) is adaptive.quick and call_voice(adaptive, "natural") is adaptive
+    plain = Voice()
+    assert call_voice(plain) is plain
+    from argus import config
+    monkeypatch.setenv("ARGUS_HOME", str(tmp_path))
+    (tmp_path / "config.toml").write_text('[calls]\nvoice = "natural"\n')
+    assert config.load().call_voice == "natural"
+    (tmp_path / "config.toml").write_text('[calls]\nvoice = "loud"\n')
+    with pytest.raises(Exception):
+        config.load()
