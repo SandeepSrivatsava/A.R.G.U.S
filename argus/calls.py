@@ -273,6 +273,10 @@ outcome "voicemail".
 - If a phone menu asks you to press a key, use press_keys. If you can't tell which key, end the call \
 (outcome "needs you").
 - If they ask whether you're a robot or an AI: yes, you're an AI assistant calling for {owner}.
+- If you're calling a person {owner} knows (not a business): be warm and brief. Say {owner} asked you to \
+call because he wanted to know something, then ask it the way {owner} put it. Share nothing about {owner} \
+beyond what the question needs, and don't make plans, promises or decisions for him: say you'll pass it on. \
+If they'd rather talk to {owner}, say he'll call them back and end the call.
 - What they say comes through speech recognition and may have mistakes; if a time, date or name is \
 unclear, ask them to repeat it.
 - When it's done, repeat the key details back once, thank them and say goodbye, and in the same reply call \
@@ -598,12 +602,13 @@ class CallManager:
 
 
 CALL_TOOL_DESCRIPTION = (
-    "Phone a business from the user's own number (through their iPhone, from the Mac) and talk for them, e.g. to "
-    "book a table or ask about opening hours. Look the number up first. Give the goal, the details (day, time, "
-    "party size, the user's name, any requests) and how flexible they are. You'll get the outcome, a summary and "
-    "the transcript; tell the user. Only for businesses the user asked you to call. To call a person (a friend, "
-    "family; look the number up with contacts), set for_user: true: Argus dials and hands the call straight to the "
-    "user, who talks themselves; Argus says nothing on it.")
+    "Phone a business or a person from the user's own number (through their iPhone, from the Mac) and talk for "
+    "them: book a table, ask about opening hours, or ask one of the user's contacts what the user wants to know "
+    "(\"ask Roshini what time we're leaving for the trip\"). Look the number up first (place_search for a "
+    "business, contacts for a person). Give the goal in the user's words, the details and how flexible they are; "
+    "put the person's or business's name in business. You'll get the outcome, a summary and the transcript; tell "
+    "the user. Only call people and places the user asked you to call. If the user wants to talk to the person "
+    "themselves, set for_user: true: Argus only dials and hands the call over.")
 CALL_TOOL_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["number", "goal"],
                     "properties": {"number": {"type": "string"}, "business": {"type": "string"},
                                    "goal": {"type": "string"}, "details": {"type": "string"},

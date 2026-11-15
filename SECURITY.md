@@ -376,4 +376,4 @@ its own words.
 | Protection | Where |
 |---|---|
 | Argus looks people up through the Mac's Contacts app with one fixed AppleScript that only reads (no script adds, changes or deletes a contact; macOS asks once to allow it). At most 8 people matching the spoken name come back, with phone numbers (emails only when asked), so the rest of the address book never reaches Claude. Only from you (your voice, the phone app, the command line). | `argus/contacts.py` |
-| Calling a person: Argus only dials and hands the call to you (`for_user`); it doesn't talk to people for you. | `argus/calls.py` |
+| Calling a person: only people you ask it to call. It says at once that it's your AI assistant and that the call is transcribed for you, asks only what you asked, shares nothing about you beyond that, and makes no plans or promises for you. `for_user` just dials and hands the call to you. | `argus/calls.py` |
