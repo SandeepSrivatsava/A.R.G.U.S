@@ -370,3 +370,10 @@ its own words.
 | Echo cancellation runs on the Mac: the argus-ear helper turns on Apple's voice processing and passes the microphone straight to Argus over a pipe. Nothing is recorded or sent anywhere; it closes with the microphone (locked Mac, a call, mic off) and quits when Argus quits. | `macos/argus-ear.swift`, `argus/ear.py` |
 | Name correction and end-of-turn detection work on the words already heard, on the Mac. The list of names is built from what you told Argus and what it looked up; names you add are kept in its database. | `argus/names.py`, `argus/turns.py` |
 | `recall` searches Argus's own database on the Mac (the last 30 days of conversations, your saved facts, lessons). Conversations with guests are never searched. What it finds goes to Claude like the rest of the conversation. | `argus/recall.py`, `argus/store.py` |
+
+## 30. Contacts
+
+| Protection | Where |
+|---|---|
+| Argus looks people up through the Mac's Contacts app with one fixed AppleScript that only reads (no script adds, changes or deletes a contact; macOS asks once to allow it). At most 8 people matching the spoken name come back, with phone numbers (emails only when asked), so the rest of the address book never reaches Claude. Only from you (your voice, the phone app, the command line). | `argus/contacts.py` |
+| Calling a person: Argus only dials and hands the call to you (`for_user`); it doesn't talk to people for you. | `argus/calls.py` |

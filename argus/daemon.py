@@ -39,7 +39,7 @@ class Argus:
     def __init__(self, *, source, segmenter: Segmenter, transcriber: Transcriber, listener: Listener,
                  speaker: Speaker, brain: Brain, audit: Audit, voiceprint: Optional[VoicePrint] = None,
                  voice_lock: bool = False, greeting: str = "", min_utterance_seconds: float = 0.35,
-                 barge_in_interval: float = 0.25, barge_in: str = "voice", talk_over_threshold: float = 0.38, on_change: Callable[[], None] = lambda: None, clap=None,
+                 barge_in_interval: float = 0.25, barge_in: str = "voice", talk_over_threshold: float = 0.42, on_change: Callable[[], None] = lambda: None, clap=None,
                  gate=None, voice_approval_threshold: float = 0.55, guests: str = "ask", guest_minutes: float = 60.0,
                  owner_name: str = "", clock: Callable[[], float] = time.monotonic, calls=None,
                  notify: Callable[[str], None] = lambda text: None, smart_turns: bool = False):

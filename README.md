@@ -65,6 +65,7 @@ Android: the same brain runs on the phone (Termux). Mac off: an always-on server
 | "Argus, write a Python script that renames my photos by date" | Hard work goes to the heavy model ("Let me think that through properly"); everyday questions go to the quick one. |
 | "Argus, remember that my sister's birthday is 12 March" | Remembers across conversations. "What do you remember?" / "Forget number 3." |
 | "Argus, remind me at 6 to call Mom" / "every weekday at 8, check the weather" | Reminders and scheduled tasks, spoken at the Mac. If you're away (Mac locked or microphone off), Argus keeps them and tells you when you're back. |
+| "Argus, call Roshini" | Looks her up in your Contacts (read-only; macOS asks once to let Argus use Contacts), dials from your iPhone and hands the call to you. Businesses it calls and talks to itself. |
 | "Argus, what did I say about the hotel last week?" | Searches the last 30 days of conversations, your saved facts and lessons (on the Mac), and answers from what it finds. |
 | Talking over Argus, or pausing mid-sentence | Apple's echo cancellation (the argus-ear helper) lets it hear you clearly while it talks. A sentence that's clearly unfinished ("book a table for, um...") waits for the rest; a finished one is answered right away. |
 | Names it keeps mishearing | It corrects names it knows by how they sound ("jacket in the box" → Jack in the Box): places it looked up, things you told it, and any you add with `argusctl names add Udupi Palace`. |

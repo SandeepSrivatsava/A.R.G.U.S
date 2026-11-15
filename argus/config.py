@@ -79,7 +79,7 @@ class Settings:
     barge_in: str = "voice"
     # How close to your voiceprint is enough to stop Argus while it talks. Lower than voice lock: its own voice
     # from the speakers is mixed in, and two matches in a row are needed anyway.
-    talk_over_threshold: float = 0.38
+    talk_over_threshold: float = 0.42   # his real interruptions score 0.45-0.8; Argus's own voice ~0.39
     pause_during_calls: bool = True      # stop listening while another app uses a microphone (a call at the Mac)
     ignore_mic_apps: List[str] = field(default_factory=list)   # apps that don't count as a call (names or IDs)
     end_of_speech_seconds: float = 0.6   # how long a pause ends a sentence (shorter = snappier)
@@ -296,6 +296,8 @@ def _validate(s: "Settings") -> None:
             raise ValueError('council.extra entries look like "Name | https://.../chat/completions | model | KEY_NAME"')
     if not 0 <= s.council_paid_per_day <= 1000:
         raise ValueError("council.paid_per_day must be between 0 and 1000")
+    if s.talk_over_threshold == 0.38:            # the old default let Argus's own voice (0.39) stop it
+        s.talk_over_threshold = 0.42
     if s.voice_lock_threshold == 0.45:            # the old default was too strict: his own voice scored 0.41-0.44
         s.voice_lock_threshold = 0.40
     if s.gemini_model in RETIRED_GEMINI:          # Google stopped serving it (404 "no longer available")

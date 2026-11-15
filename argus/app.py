@@ -109,6 +109,9 @@ class App:
         self.search = search_mod.attach(settings, secrets, tools, where=phone_here)   # Google reviews, Google search
         self.council = council_mod.attach(settings, secrets, tools)          # second opinions from other AIs
         self.mail = mail_mod.attach(settings, tools) if IS_MAC else None     # read-only; off until switched on
+        if IS_MAC:
+            from . import contacts as contacts_mod
+            contacts_mod.attach(tools)                    # read-only look-ups in the Contacts app (contacts.py)
         self.push = push_from(settings, secrets, self.audit)    # reminders reach the phone while you're away
         self.agent = Agent(self.llm, self.store, self.policy, tools,
                            settings=settings, audit=self.audit, computer=computer, glasses=self.glasses,

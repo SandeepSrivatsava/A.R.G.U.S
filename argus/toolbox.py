@@ -7,6 +7,7 @@ import http.client
 import ipaddress
 import json
 import os
+import stat
 import re
 import signal
 import socket
@@ -158,10 +159,25 @@ def _path(ctx: Context, raw: Any) -> Path:
     return (p if p.is_absolute() else ctx.workspace / p).resolve()
 
 
+def _file_problem(path: Path) -> str:
+    """Why `path` can't be read as a file ("" if it can). Path.is_file() says "no" for every error, which made
+    files that were there look like they had vanished; this keeps the real reason (permission, a folder...)."""
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return f"no such file: {path}"
+    except OSError as exc:
+        return f"can't open {path}: {exc.strerror or exc} (the file may be there; this isn't 'missing')"
+    if not stat.S_ISREG(st.st_mode):
+        return f"{path} is a folder, not a file" if stat.S_ISDIR(st.st_mode) else f"{path} isn't a regular file"
+    return ""
+
+
 def read_file(args: Dict[str, Any], ctx: Context) -> ToolOutput:
     path = _path(ctx, args.get("path"))
-    if not path.is_file():
-        return ToolOutput.error(f"no such file: {path}")
+    problem = _file_problem(path)
+    if problem:
+        return ToolOutput.error(problem)
     if path.suffix.lower() in IMAGE_TYPES:
         data = path.read_bytes()
         if len(data) > 5 * 1024 * 1024:
@@ -197,7 +213,10 @@ def write_file(args: Dict[str, Any], ctx: Context) -> ToolOutput:
         tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, path)
         return ToolOutput(f"changed part of {path} ({len(old)} characters replaced with {len(content)})")
-    if (not args.get("append") and not args.get("overwrite") and path.is_file()
+    exists_problem = _file_problem(path)
+    if exists_problem and not exists_problem.startswith("no such file") and not args.get("overwrite"):
+        return ToolOutput.error(exists_problem + "; not writing over it")
+    if (not args.get("append") and not args.get("overwrite") and not exists_problem
             and path.stat().st_size > 0):
         return ToolOutput.error(f"{path.name} already exists. Read it first, then change only what's different "
                                 "(old + content), add to the end (append), or, if the user wants it all replaced, "

@@ -109,3 +109,13 @@ def test_claude_is_told_the_names_and_argus_notices_new_ones(tmp_path):
     agent.known_names = lambda: 1 / 0
     agent.notice = lambda text: 1 / 0
     agent.run(session_id="t", channel="voice", content="hi", events=Events())       # broken name lists never break a turn
+
+
+def test_what_went_wrong_on_his_mac_doesnt_happen_again():
+    said = "Sorry, I can't do that. Contacts aren't connected. I called Jack in the Box on Stevenson Boulevard."
+    known = names.names_in(said)
+    assert "Sorry" not in known and "Contacts" not in known
+    assert "Jack in the Box" in known and "Stevenson Boulevard" in known
+    for heard in ("sir, can you hear me", "read my contact list", "call the Stevenson Boulevard one"):
+        assert names.correct(heard, known + ["Sorry", "Contacts"])[1] == [], heard
+    assert names.correct("go to stevenson bulevard", known)[0] == "go to Stevenson Boulevard"

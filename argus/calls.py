@@ -227,6 +227,7 @@ class CallPlan:
     details: str = ""
     flexible: str = ""
     owner: str = "the user"
+    for_user: bool = False      # dial, then hand the call to the user at once (calling a person, not a business)
 
 
 @dataclass
@@ -245,6 +246,8 @@ class CallResult:
             lines.append("Transcript:\n" + (said if len(said) <= limit else said[:limit] + " …"))
         return "\n".join(lines)
 
+
+UNCLEAR = "(they said something, but it didn't come through clearly)"
 
 DISCLOSURE = "Hi, this is {owner}'s AI assistant calling. This call is transcribed for {owner}."
 
@@ -298,8 +301,17 @@ class CallEngine:
         self.line, self.llm, self.transcriber, self.tts = line, llm, transcriber, tts
         self.model, self.audit, self.clock, self.cost_of = model, audit, clock, cost
         self.segmenter = segmenter or EnergySegmenter()
+        # A second, simpler detector (loudness that isn't a ringing tone), so a muffled "Hello?" that the
+        # speech model misses still counts as them speaking
+        self.backup = EnergySegmenter() if segmenter is not None else None
         self.answer_timeout, self.silence_timeout, self.max_seconds = answer_timeout, silence_timeout, max_minutes * 60
         self.cost = 0.0
+        self.stats = {"speech": 0, "unclear": 0, "by_loudness": 0}
+
+    def diagnostics(self) -> str:
+        s = self.stats
+        return (f"heard {s['speech']} bit(s) of speech, {s['unclear']} not made out by speech-to-text, "
+                f"{s['by_loudness']} caught only by loudness")
 
     # -- pieces --
     def _say(self, text: str, stop: Callable[[], bool]) -> None:
@@ -327,11 +339,23 @@ class CallEngine:
             chunk = self.line.read(0.2)
             if chunk is None:
                 continue
-            for utterance in self.segmenter.feed(chunk):
+            utterances = self.segmenter.feed(chunk)
+            backup = self.backup.feed(chunk) if self.backup is not None else []
+            if not utterances and backup:
+                self.stats["by_loudness"] += 1
+                utterances = backup
+            for utterance in utterances:
+                self.stats["speech"] += 1
+                if self.backup is not None:
+                    self.backup = EnergySegmenter()         # start the backup fresh with each heard sentence
                 text = " ".join(str(self.transcriber.transcribe(resample(utterance, RATE, RATE))).split())
-                if text:
-                    return text, ""
-            if self.segmenter.speech_active:
+                if not text:
+                    # Someone spoke, but the words didn't come through (phone audio is muffled). Still an answer:
+                    # staying silent is what made people hang up
+                    self.stats["unclear"] += 1
+                    text = UNCLEAR
+                return text, ""
+            if self.segmenter.speech_active or (self.backup is not None and self.backup.speech_active):
                 deadline = max(deadline, self.clock() + 2.0)     # let them finish the sentence
         return None, "timeout"
 
@@ -436,8 +460,14 @@ class CallEngine:
             self.line.take_over()
             return result("handed to you", "You took over the call.")
         if why == "ended":
-            return result("ended", "The other side hung up." if transcript else "The call ended before anyone "
-                                                                                 "answered.")
+            if transcript:
+                return result("ended", "The other side hung up.")
+            if getattr(self.line, "peak", 0.0) >= 0.05:
+                # sound came down the line: they may well have picked up and hung up on silence
+                return result("ended", "The call ended. There was sound on the line (they may have answered), but "
+                                       "Argus couldn't make out anyone speaking, so it said nothing. Ask the user "
+                                       "what they heard before calling again.")
+            return result("ended", "The call ended before anyone answered.")
         if why == "stopped":
             self.line.hang_up()
             return result("cancelled", "You asked Argus to hang up.")
@@ -486,7 +516,7 @@ class CallManager:
                 return ToolOutput.error(f"not calling: {why}")
             plan = CallPlan(number=number, goal=goal, business=str(args.get("business") or ""),
                             details=str(args.get("details") or ""), flexible=str(args.get("flexible") or ""),
-                            owner=self.settings.user_name or "the user")
+                            owner=self.settings.user_name or "the user", for_user=bool(args.get("for_user")))
             result = self._run(plan, ctx.cancel)
         finally:
             self._lock.release()
@@ -527,6 +557,8 @@ class CallManager:
             return CallResult("failed", "Calls aren't set up on this Mac yet: " + "; ".join(problems) + "." + fix)
         self._hang_up.clear()
         self._take_over.clear()
+        if plan.for_user:
+            self._take_over.set()             # Argus only dials; the user talks
         if self.speaker is not None:
             self.speaker.wait_idle(timeout=8)     # don't let the call hear Argus talking to you
             self.speaker.muted = True
@@ -538,7 +570,10 @@ class CallManager:
                                 model=self.settings.call_model or self.settings.model, audit=self.audit,
                                 segmenter=self.segmenter_factory(), max_minutes=self.settings.call_max_minutes,
                                 cost=self.cost, clock=self.engine_clock)
-            return engine.run(plan, cancel, self._hang_up, self._take_over)
+            try:
+                return engine.run(plan, cancel, self._hang_up, self._take_over)
+            finally:
+                self._engine_notes = engine.diagnostics()
         except Exception as exc:
             log.exception("the call failed")
             try:
@@ -552,6 +587,9 @@ class CallManager:
                 self._last_line_notes = line.diagnostics() if hasattr(line, "diagnostics") else ""
             except Exception:
                 self._last_line_notes = ""
+            if getattr(self, "_engine_notes", ""):
+                self._last_line_notes = "; ".join(n for n in (self._last_line_notes, self._engine_notes) if n)
+            self._engine_notes = ""
             try:
                 line.close()
             finally:
@@ -563,11 +601,14 @@ CALL_TOOL_DESCRIPTION = (
     "Phone a business from the user's own number (through their iPhone, from the Mac) and talk for them, e.g. to "
     "book a table or ask about opening hours. Look the number up first. Give the goal, the details (day, time, "
     "party size, the user's name, any requests) and how flexible they are. You'll get the outcome, a summary and "
-    "the transcript; tell the user. Only for businesses the user asked you to call.")
+    "the transcript; tell the user. Only for businesses the user asked you to call. To call a person (a friend, "
+    "family; look the number up with contacts), set for_user: true: Argus dials and hands the call straight to the "
+    "user, who talks themselves; Argus says nothing on it.")
 CALL_TOOL_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["number", "goal"],
                     "properties": {"number": {"type": "string"}, "business": {"type": "string"},
                                    "goal": {"type": "string"}, "details": {"type": "string"},
-                                   "flexible": {"type": "string", "description": "e.g. 'any time 6:30 to 8 is fine'"}}}
+                                   "flexible": {"type": "string", "description": "e.g. 'any time 6:30 to 8 is fine'"},
+                                   "for_user": {"type": "boolean", "description": "dial, then give the call to the user"}}}
 
 
 # ---- the Mac line (Continuity calls through the iPhone) ----------------------------------------------------------

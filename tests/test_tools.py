@@ -352,3 +352,23 @@ def test_notes_are_changed_in_place_not_replaced(ctx, ws):
     assert not w({"path": "notes.txt", "content": "3. names\n", "append": True}, ctx).is_error
     assert not w({"path": "notes.txt", "content": "fresh\n", "overwrite": True}, ctx).is_error
     assert (ws / "notes.txt").read_text() == "fresh\n"
+
+
+def test_a_file_that_cant_be_opened_isnt_called_missing_or_overwritten(ctx, ws, monkeypatch):
+    import errno
+    (ws / "notes.txt").write_text("keep me")
+    real = toolbox.os.stat
+
+    def blocked(path, *a, **k):
+        if str(path).endswith("notes.txt"):
+            raise PermissionError(errno.EPERM, "Operation not permitted")
+        return real(path, *a, **k)
+    monkeypatch.setattr(toolbox.os, "stat", blocked)
+    out = toolbox.read_file({"path": "notes.txt"}, ctx)
+    assert out.is_error and "Operation not permitted" in out.content and "isn't 'missing'" in out.content
+    out = toolbox.write_file({"path": "notes.txt", "content": "new"}, ctx)
+    assert out.is_error and "not writing over it" in out.content
+    monkeypatch.setattr(toolbox.os, "stat", real)
+    assert (ws / "notes.txt").read_text() == "keep me"
+    assert "is a folder" in toolbox.read_file({"path": "."}, ctx).content
+    assert "no such file" in toolbox.read_file({"path": "nope.txt"}, ctx).content

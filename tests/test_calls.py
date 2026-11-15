@@ -894,3 +894,50 @@ def test_permission_checks_say_why_they_couldnt_run():
     result = check_permissions()
     assert set(result) == {"screen_recording", "accessibility", "errors"}
     assert len(result["errors"]) == 2                # no Quartz or ApplicationServices off a Mac
+
+
+class DeafSegmenter:
+    """The speech model missing muffled phone audio altogether."""
+    speech_active = False
+
+    def feed(self, chunk):
+        return []
+
+
+def test_a_muffled_hello_still_counts_as_an_answer(tmp_path):
+    line = FakeLine(("speech", 1), ("silence", 1), ("speech", 1), ("silence", 1))
+    script = Script(say("Sorry, could you say that again?"),
+                    call("end_call", {"outcome": "done", "summary": "Closes at 4."}, text="Thanks, bye!"))
+    engine, voice = engine_for(tmp_path, line, Words("", "We close at 4."), script)
+    result = run(engine)
+    assert result.transcript[0] == ("them", C.UNCLEAR) and voice.said[0].startswith("Hi, this is Sandeep's AI")
+    assert engine.stats["unclear"] == 1 and "1 not made out" in engine.diagnostics()
+
+
+def test_speech_the_speech_model_misses_is_caught_by_loudness(tmp_path):
+    line = FakeLine(("speech", 1), ("silence", 1), ("speech", 1), ("silence", 1))
+    script = Script(call("end_call", {"outcome": "done", "summary": "ok"}, text="Bye!"))
+    engine, voice = engine_for(tmp_path, line, Words("Hello, Jack in the Box.", "Sure."), script,
+                               segmenter=DeafSegmenter())
+    result = run(engine)
+    assert result.transcript[0] == ("them", "Hello, Jack in the Box.") and engine.stats["by_loudness"] >= 1
+
+
+def test_a_call_that_ended_with_sound_on_the_line_says_they_may_have_answered(tmp_path):
+    line = FakeLine(("tone", 2), ("hangup",))
+    line.peak = 0.3
+    engine, _ = engine_for(tmp_path, line, Words(), Script())
+    line.connected = lambda: line.alive
+    result = run(engine)
+    assert result.outcome == "ended" and "they may have answered" in result.summary
+    line2 = FakeLine(("tone", 2), ("hangup",))
+    line2.connected = lambda: line2.alive
+    engine2, _ = engine_for(tmp_path, line2, Words(), Script())
+    assert run(engine2).summary == "The call ended before anyone answered."
+
+
+def test_calling_a_person_dials_and_hands_the_call_over(tmp_path):
+    line = FakeLine(("speech", 1), ("silence", 1))
+    manager, speaker = manager_for(tmp_path, line, Words("Hi!"), Script())
+    out = manager.tool({"number": "415-555-0123", "goal": "call Roshini for the user", "for_user": True}, ctx())
+    assert out.content.startswith("Outcome: handed to you.") and line.dialed and line.taken

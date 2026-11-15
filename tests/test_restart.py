@@ -679,8 +679,8 @@ def test_a_chosen_natural_voice_is_kept(home, tmp_path, monkeypatch):
 
 
 def test_talking_over_needs_a_looser_match_than_voice_lock(tmp_path):
-    argus, voice, _ = make_argus(tmp_path, [], voiceprint=FakeVoicePrint(0.40, 0.40))
-    assert argus.talk_over_threshold == 0.38 and argus.voiceprint.threshold > 0.40
+    argus, voice, _ = make_argus(tmp_path, [], voiceprint=FakeVoicePrint(0.44, 0.44))
+    assert argus.talk_over_threshold == 0.42 and argus.voiceprint.threshold > 0.44
     from test_conversation import talking
     talking(argus)
     stopped = []

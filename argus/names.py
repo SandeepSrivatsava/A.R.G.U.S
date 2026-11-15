@@ -107,8 +107,11 @@ _NOT_NAMES = frozenset("i i'm i'll i'd i've a the it its this that there here he
 def names_in(text: str) -> List[str]:
     """Capitalised names in a piece of text ("Jack in the Box", "Dune Part Three", "Stevenson Blvd")."""
     found = []
-    for match in _PROPER.finditer(str(text)):
+    text = str(text)
+    for match in _PROPER.finditer(text):
         words = match.group(0).split()
+        before = text[:match.start()].rstrip()
+        sentence_start = not before or before[-1] in ".!?:;\n\"'(-—"
         while words and (words[0].lower() in _NOT_NAMES | {"in", "of", "and", "&", "the"}
                          or len(words) > 1 and words[0].lower() in COMMON):
             words = words[1:]                  # "The" at the start of a sentence isn't part of a name
@@ -116,8 +119,9 @@ def names_in(text: str) -> List[str]:
             continue
         name = " ".join(words)
         if len(words) == 1 and (words[0].lower() in COMMON or words[0].lower() in _NOT_NAMES or len(name) < 3
-                                or name.isupper() and len(name) < 4):
-            continue
+                                or name.isupper() and len(name) < 4
+                                or sentence_start and words[0] == match.group(0).split()[0]):
+            continue        # one capitalised word starting a sentence ("Sorry", "Contacts") isn't a name
         found.append(name)
     return found
 
@@ -193,9 +197,16 @@ def correct(text: str, names: Sequence[str], min_score: float = MIN_SCORE) -> Tu
             for name, n_words in known:
                 if abs(n_words - size) > 1:
                     continue
+                name_words = name.lower().split()
+                if (bare[0].lower() in COMMON and bare[0].lower() != name_words[0]) or \
+                        (bare[-1].lower() in COMMON and bare[-1].lower() != name_words[-1]):
+                    continue        # "the Stevenson Boulevard": the "the" isn't part of the name
+                if phrase.lower().rstrip("s") == name.lower().rstrip("s") and phrase.lower() != name.lower():
+                    continue        # "contact" vs "Contacts": the same word, nothing to put right
                 score = similarity(phrase, name)
-                if score < min_score:
-                    continue
+                needed = max(min_score, 0.93) if size == 1 and len(phrase) <= 4 else min_score
+                if score < needed:
+                    continue        # a short word ("sir") needs a near-perfect match
                 if all(b.lower() in COMMON for b in bare) and score < 0.95:
                     continue                 # everyday words that already make sense: leave them
                 if best is None or score > best[0] + 1e-9:

@@ -181,3 +181,12 @@ def test_the_old_voice_lock_bar_is_loosened(tmp_path, monkeypatch):
     assert config.load().voice_lock_threshold == 0.40
     (tmp_path / "config.toml").write_text("[listening]\nvoice_lock_threshold = 0.5\n")
     assert config.load().voice_lock_threshold == 0.5
+
+
+def test_the_old_talk_over_bar_is_raised(tmp_path, monkeypatch):
+    # Argus's own voice scored about 0.39 and stopped it at the old 0.38.
+    monkeypatch.setenv("ARGUS_HOME", str(tmp_path))
+    (tmp_path / "config.toml").write_text("[listening]\ntalk_over_threshold = 0.38\n")
+    assert config.load().talk_over_threshold == 0.42
+    (tmp_path / "config.toml").write_text("[listening]\ntalk_over_threshold = 0.5\n")
+    assert config.load().talk_over_threshold == 0.5
