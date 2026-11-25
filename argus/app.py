@@ -143,6 +143,14 @@ class App:
         self.agent.known_names = self.names.all
         from . import recall as recall_mod
         recall_mod.attach(self.store, self.agent.tools)                  # search past conversations (BM25)
+        # The crew: big jobs divided into tasks for background workers, Paperclip-style (crew.py)
+        from . import crew as crew_mod
+        self.crew = crew_mod.Crew(self.store, self.agent, settings, deliver=lambda text: self.deliver(text),
+                                  workspace=settings.workspace, audit=self.audit)
+        crew_mod.attach(self.crew, self.agent.tools)
+        # Paperclip, if a Paperclip server is set up (paperclip.py)
+        from . import paperclip as paperclip_mod
+        paperclip_mod.attach(settings, self.agent.tools, secrets.get("PAPERCLIP_API_KEY", ""))
         self.agent.notice = self.names.notice
         self.glancer = None
         if self.glasses is not None:                                    # where things were seen through the glasses
@@ -289,6 +297,7 @@ class App:
             self.logkeeper.start()
         sync_default_jobs(self.store, s.morning_headlines, s.morning_briefing, s.timezone or None)
         self.scheduler.start()
+        self.crew.resume()                                # crew jobs that were running before a restart
         if s.phone_enabled:
             host = bind_address(s)
             if host:

@@ -50,7 +50,7 @@ READ_ONLY_SCREEN = ("screenshot", "zoom", "cursor_position", "wait")
 # Tools that only look things up. When Claude asks for several of these at once ("weather in Austin and in
 # Chicago", "search mail and the calendar"), they run at the same time instead of one after another.
 CODE_EXECUTION = {"type": "code_execution_20250825", "name": "code_execution"}
-CODE_CHANNELS = frozenset({"voice", "phone", "cli", "android"})      # you asking, not guests or scheduled jobs
+CODE_CHANNELS = frozenset({"voice", "phone", "cli", "android", "crew"})      # you asking, not guests or scheduled jobs
 PARALLEL_SAFE = frozenset({"weather", "route", "get_news", "fetch_page", "recall", "read_file", "list_files",
                            "search_files", "mail_search", "mail_read", "drive_search", "drive_read", "calendar",
                            "flight_history", "place_search", "google_search", "ask_council"})
@@ -487,7 +487,7 @@ class Agent:
                                facts=() if guest else self.store.facts(limit=40),
                                lessons=[(i, text) for i, text, _ in lessons],
                                glasses=None if guest else self.glasses_status(), device=self.device,
-                               loose_ends=() if guest or channel in ("glance", "followup") else self.loose_ends(),
+                               loose_ends=() if guest or channel in ("glance", "followup", "crew") else self.loose_ends(),
                                phone=getattr(self.settings, "phone_type", "iphone"),
                                location_known=bool(location or locate) and not guest)
         ctx = Context(channel=channel, workspace=self.settings.workspace, store=self.store, cancel=cancel,

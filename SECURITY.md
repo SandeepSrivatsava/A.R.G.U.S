@@ -377,3 +377,12 @@ its own words.
 |---|---|
 | Argus looks people up through the Mac's Contacts app with one fixed AppleScript that only reads (no script adds, changes or deletes a contact; macOS asks once to allow it). At most 8 people matching the spoken name come back, with phone numbers (emails only when asked), so the rest of the address book never reaches Claude. Only from you (your voice, the phone app, the command line). | `argus/contacts.py` |
 | Calling a person: only people you ask it to call. It says at once that it's your AI assistant and that the call is transcribed for you, asks only what you asked, shares nothing about you beyond that, and makes no plans or promises for you. `for_user` just dials and hands the call to you. | `argus/calls.py` |
+
+## 31. The crew and Paperclip
+
+| Protection | Where |
+|---|---|
+| Crew workers run on their own "crew" channel with only look-up tools, Argus's workspace files and Anthropic's code sandbox: no shell, screen, calls, messages, memory changes, scheduling or other crews. Anything that would need your OK is refused there; the task comes back marked "needs you". | `argus/crew.py` (`CREW_TOOLS`), `argus/agent.py` |
+| Each job has a budget (default $1, at most $10, raised only by you); work pauses when it's spent. Only you can start, cancel or extend a job. | `argus/crew.py` |
+| A task is claimed by one worker at a time (an update that only matches a task still to do), so two workers never do the same thing. The lead's plan is cleaned: known roles only, at most 8 tasks, and a task can only wait on earlier ones, so there are no loops. | `argus/crew.py` (`checkout`, `clean_plan`) |
+| Paperclip: Argus only talks to a server on this Mac or on Tailscale (localhost, 100.64.0.0/10, `*.ts.net`), checked when the setting is read and again before any request. Only the ticket's title and description are sent; the key lives in secrets.env and never reaches Claude. | `argus/paperclip.py`, `argus/config.py` |

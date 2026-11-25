@@ -66,6 +66,8 @@ Android: the same brain runs on the phone (Termux). Mac off: an always-on server
 | "Argus, remember that my sister's birthday is 12 March" | Remembers across conversations. "What do you remember?" / "Forget number 3." |
 | "Argus, remind me at 6 to call Mom" / "every weekday at 8, check the weather" | Reminders and scheduled tasks, spoken at the Mac. If you're away (Mac locked or microphone off), Argus keeps them and tells you when you're back. |
 | "Argus, call Roshini and ask what time we leave for the trip" | Looks her up in your Contacts (read-only; macOS asks once), calls from your iPhone, says it's your AI assistant calling for you, asks your question, and tells you the answer. "Call Roshini, I want to talk" just dials and hands the call to you. |
+| "Argus, have the crew plan the New York trip: a hotel near Midtown under $250, a dinner each night, and the best way from JFK" | Big jobs go to the **crew** (ideas from [Paperclip](https://github.com/paperclipai/paperclip)): a lead splits the job into tasks for a researcher, analyst, writer or coder; workers take the ready ones two at a time (each sees the goal and what earlier tasks found), within a budget (default $1). Steps that need you (calls, buying, choices) come back to you. It tells you when it's done and saves the write-up in `argus-workspace/crew/`. `argusctl crew` lists jobs. |
+| "Argus, put this on Paperclip for the CEO" | If you run your own [Paperclip](https://github.com/paperclipai/paperclip) server, Argus creates the ticket there, assigns it, and reads back its progress. `argusctl paperclip setup` connects it (this Mac or Tailscale only). |
 | "Argus, what did I say about the hotel last week?" | Searches the last 30 days of conversations, your saved facts and lessons (on the Mac), and answers from what it finds. |
 | Talking over Argus, or pausing mid-sentence | Apple's echo cancellation (the argus-ear helper) lets it hear you clearly while it talks. A sentence that's clearly unfinished ("book a table for, um...") waits for the rest; a finished one is answered right away. |
 | Names it keeps mishearing | It corrects names it knows by how they sound ("jacket in the box" → Jack in the Box): places it looked up, things you told it, and any you add with `argusctl names add Udupi Palace`. |
@@ -539,6 +541,8 @@ argusctl calls             # check every piece phone calls need, and what to do 
 argusctl calls --open      # open the two privacy settings calls need (Screen Recording, Accessibility)
 argusctl fixes             # fixes Argus made to its own code; show <branch>, merge <branch> (Touch ID)
 argusctl names             # names Argus should hear right: add <name>, remove <name>
+argusctl crew              # crew jobs (big jobs split into tasks): show <job>, cancel <job>
+argusctl paperclip setup   # connect your own Paperclip server; argusctl paperclip test checks it
 argusctl restart           # after editing ~/.argus/config.toml; says when Argus is back (or why not)
 argusctl quit              # stop it until the next restart or login
 ./scripts/doctor.sh        # doctor, plus file privacy, login item and stay-awake checks

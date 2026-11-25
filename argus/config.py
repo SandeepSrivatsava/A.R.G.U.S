@@ -45,6 +45,8 @@ class Settings:
     light_model: str = "claude-haiku-5-5"   # everyday questions ("" = use `model`)
     heavy_model: str = "claude-opus-5-5"    # coding, analysis, long writing ("" = use `model`)
     heavy_effort: str = "high"
+    paperclip_url: str = ""                 # a Paperclip server on this Mac or Tailscale (paperclip.py)
+    paperclip_company: str = ""
     gemini_model: str = "gemini-3.8-flash"   # google_search (free tier includes Google Search grounding)
     # More brains for ask_council: "Name | https://.../chat/completions | model | KEY_NAME_IN_SECRETS"
     council: List[str] = field(default_factory=list)
@@ -252,6 +254,7 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
               "voice": "call_voice",
               "input_device": "call_input_device", "tap": "call_tap"},
     "schedule": {"morning_headlines": "morning_headlines", "morning_briefing": "morning_briefing"},
+    "paperclip": {"url": "paperclip_url", "company": "paperclip_company"},
 }
 
 
@@ -347,6 +350,7 @@ def _validate(s: "Settings") -> None:
               ("listening.voice_lock_threshold", 0 <= s.voice_lock_threshold <= 1),
               ("listening.talk_over_threshold", 0 <= s.talk_over_threshold <= 1),
               ("calls.voice", s.call_voice in ("quick", "natural")),
+              ("paperclip.url (only this Mac or Tailscale)", not s.paperclip_url or _local_or_tailscale(s.paperclip_url)),
               ("listening.vad_threshold", 0 < s.vad_threshold < 1),
               ("listening.end_of_speech_seconds", 0.3 <= s.end_of_speech_seconds <= 2.0),
               ("brain.max_steps", s.max_steps >= 1), ("brain.max_turn_tokens", s.max_turn_tokens >= 1000),
@@ -465,6 +469,11 @@ def write_secret(path: Path, key: str, value: str) -> None:
     except BaseException:
         os.unlink(tmp)
         raise
+
+
+def _local_or_tailscale(url: str) -> bool:
+    from .paperclip import allowed_url
+    return allowed_url(url)
 
 
 def set_setting(path: Path, section: str, key: str, value: str) -> None:

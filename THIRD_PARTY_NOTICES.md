@@ -118,3 +118,10 @@ Google Maps Places API (New) and the Gemini API are used with your own keys, und
 
 The quick voice `en_US-ryan-medium` (Piper) was trained on RyanSpeech, licensed CC BY-NC-SA 4.0: fine for your
 own use, not for a product you sell. Groq and OpenRouter are used with your own keys, under their terms.
+
+## Paperclip (ideas)
+
+Argus's crew (`argus/crew.py`) follows the design of Paperclip (https://github.com/paperclipai/paperclip,
+MIT License, Copyright (c) 2026 Paperclip Labs, Inc.): tickets for roles, blocker links, atomic checkout,
+goal ancestry, per-job budgets and owner approvals. No Paperclip code is included; `argus/paperclip.py` talks
+to a Paperclip server through its public REST API.

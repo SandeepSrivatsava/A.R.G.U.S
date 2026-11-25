@@ -342,6 +342,7 @@ KNOWN_KEYS = {
     "GROQ_API_KEY": "Groq (free): another opinion in the council",
     "MISTRAL_API_KEY": "Mistral (free): another opinion in the council",
     "OPENROUTER_API_KEY": "OpenRouter (free models): another opinion in the council",
+    "PAPERCLIP_API_KEY": "Paperclip: a board API key for your own Paperclip server",
     "ANTHROPIC_API_KEY": "Claude",
 }
 
@@ -682,6 +683,60 @@ def cmd_names(args, *, store=None) -> int:
     return 0
 
 
+def cmd_crew(args, *, crew=None) -> int:
+    """Crew jobs: list them, show one, cancel one."""
+    from . import crew as crew_mod
+    from .store import Store
+    settings = config_mod.load()
+    crew = crew or crew_mod.Crew(Store(settings.db_path), None, settings, start_threads=False)
+    action, job = getattr(args, "action", "list") or "list", int(getattr(args, "job", 0) or 0)
+    if action == "show":
+        print(crew.describe(job or (crew.jobs(1)[0]["id"] if crew.jobs(1) else 0)))
+    elif action == "cancel":
+        print(crew.cancel(job))
+    else:
+        jobs = crew.jobs(20)
+        print("\n".join(f"Job {j['id']} [{j['status']}] ${j['spent']:.2f}/${j['budget']:.2f}  {j['goal'][:90]}"
+                        for j in jobs) or "No crew jobs yet. Say: \"Argus, have the crew plan ...\"")
+    return 0
+
+
+def cmd_paperclip(args, *, ask=input, ask_secret=None, client=None) -> int:
+    """Connect Argus to your own Paperclip server, or check the connection."""
+    from . import paperclip as pc
+    settings = config_mod.load()
+    if getattr(args, "action", "test") == "setup":
+        url = (ask(f"Paperclip address [{settings.paperclip_url or 'http://localhost:3100'}]: ").strip()
+               or settings.paperclip_url or "http://localhost:3100")
+        if not pc.allowed_url(url):
+            print("That address isn't on this Mac or Tailscale; Argus only talks to a Paperclip server there.")
+            return 1
+        company = ask(f"Company ID (in Paperclip's address bar or settings) [{settings.paperclip_company}]: ").strip() \
+            or settings.paperclip_company
+        if not company:
+            print("A company ID is needed.")
+            return 1
+        config_mod.set_setting(settings.home / "config.toml", "paperclip", "url", json.dumps(url))
+        config_mod.set_setting(settings.home / "config.toml", "paperclip", "company", json.dumps(company))
+        cmd_key(SimpleNamespace(name="PAPERCLIP_API_KEY", remove=False), ask_secret=ask_secret)
+        settings = config_mod.load()
+    if not settings.paperclip_url:
+        print("Paperclip isn't set up. Run: argusctl paperclip setup")
+        return 1
+    key = config_mod.read_secrets(settings.secrets_path).get("PAPERCLIP_API_KEY", "")
+    try:
+        client = client or pc.Paperclip(settings.paperclip_url, settings.paperclip_company, key)
+        client.health()
+        agents = client.agents()
+    except pc.PaperclipError as exc:
+        print(f"Paperclip: {exc}")
+        return 1
+    print(f"Paperclip at {settings.paperclip_url} answers; {len(agents)} agent(s): "
+          + ", ".join(str(a.get("name")) for a in agents[:10]))
+    print("Restart Argus to use it: argusctl restart")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     from pathlib import Path
     from .llm import Claude, LLMError
@@ -923,6 +978,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--no-voiceprint", action="store_true", help="only learn how you say the name")
     s = sub.add_parser("transcribe", help="test speech recognition on a WAV file")
     s.add_argument("file")
+    s = sub.add_parser("crew", help="crew jobs (big jobs split into tasks): list, show <job>, cancel <job>")
+    s.add_argument("action", nargs="?", default="list", choices=["list", "show", "cancel"])
+    s.add_argument("job", nargs="?", type=int, default=0)
+    s = sub.add_parser("paperclip", help="connect to your own Paperclip server (setup), or check it (test)")
+    s.add_argument("action", nargs="?", default="test", choices=["setup", "test"])
     s = sub.add_parser("names", help="names Argus should hear right (people, places, businesses): list, add, remove")
     s.add_argument("action", nargs="?", default="list", choices=["list", "add", "remove"])
     s.add_argument("name", nargs="*")
@@ -1017,6 +1077,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_fixes(args)
     if args.cmd == "names":
         return cmd_names(args)
+    if args.cmd == "crew":
+        return cmd_crew(args)
+    if args.cmd == "paperclip":
+        return cmd_paperclip(args)
 
     simple = {
         "say": lambda: _send("say", text=" ".join(args.text)),
