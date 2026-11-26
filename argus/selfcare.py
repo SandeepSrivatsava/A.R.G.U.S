@@ -36,7 +36,9 @@ LOG_FILES = ("argus.log", "crash.log", "calls.log", "voice.err.log", "voice.out.
 # Code Argus may change, and code it never may.
 EDITABLE = ("argus/", "tests/", "docs/", "README.md")
 LOCKED = ("argus/policy.py", "argus/approvals.py", "argus/approve.applescript", "argus/protected.py",
-          "argus/guard.py", "argus/audit.py", "argus/selfcare.py", "argus/toolbox.py", "tests/conftest.py")
+          "argus/guard.py", "argus/audit.py", "argus/selfcare.py", "argus/toolbox.py", "tests/conftest.py",
+          "argus/skills.py")
+LOCKED_DIRS = ("argus/skills/",)      # instructions Argus reads: it can't rewrite its own
 BRANCH_PREFIX = "argus-fix/"
 MAX_READ = 400            # lines per read
 TEST_TIMEOUT = 900
@@ -96,7 +98,7 @@ def editable(rel: str) -> bool:
     rel = rel.replace("\\", "/")
     if rel.startswith("/") or ".." in rel.split("/") or "/." in "/" + rel:
         return False
-    if rel in LOCKED:
+    if rel in LOCKED or rel.startswith(LOCKED_DIRS):
         return False
     return any(rel == e or (e.endswith("/") and rel.startswith(e)) for e in EDITABLE)
 

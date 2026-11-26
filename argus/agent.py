@@ -148,6 +148,19 @@ def without_old_thinking(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return out
 
 
+MAX_FALLBACKS = 2          # other models tried in one turn when the first is overloaded or retired
+
+
+def switch_model(exc: "LLMError") -> bool:
+    """Would another model help? Yes when this one is overloaded, rate-limited, erroring or retired (404);
+    no when the network is down, the key is wrong, the account is out of credit, or the request is bad."""
+    if exc.partial or exc.status in (400, 401, 402, 403, 413):
+        return False
+    if exc.status == 404 or exc.kind == "not_found_error":
+        return True
+    return exc.retryable and (exc.status > 0 or exc.kind in ("overloaded_error", "rate_limit_error", "api_error"))
+
+
 def request_cost(model: str, usage: Dict[str, int]) -> float:
     """Estimated USD for one API request, from the usage numbers the API returned."""
     prompt = sum(usage.get(k, 0) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
@@ -261,6 +274,13 @@ class Agent:
         self.store = store
         self.policy = policy
         self.tools = tools
+        self._skills: Tuple[float, Dict[str, Any]] = (float("-inf"), {})
+        from . import skills as skills_mod
+        skills_mod.attach(store, self.tools, frozenset({"voice", "phone", "cli", "android"}))
+        from .squeeze import Squeezer, attach as attach_squeeze
+        self.squeezer = Squeezer()            # long tool results go in shortened, the rest kept on the Mac
+        attach_squeeze(self.squeezer, self.tools,
+                       frozenset({"voice", "phone", "scheduler", "cli", "android", "crew"}))
         self.settings = settings
         self.audit = audit
         self.computer = computer
@@ -273,6 +293,24 @@ class Agent:
         self.secrets = sorted({str(v) for v in secrets if v and len(str(v)) >= 8}, key=len, reverse=True)
         self._lock = threading.Lock()
         self._last_tier: Dict[str, Tuple[str, float]] = {}     # per conversation: which kind of model answered last
+
+    def skills(self) -> Dict[str, Any]:
+        """Built-in skills and yours (~/.argus/skills), looked at again at most once a minute."""
+        loaded_at, found = self._skills
+        if time.monotonic() - loaded_at > 60:
+            from . import skills as skills_mod
+            folder = getattr(self.settings, "skills_dir", None)
+            try:
+                found, problems = skills_mod.load([folder] if folder else [])
+            except Exception:
+                log.exception("loading skills failed")
+                found, problems = {}, []
+            if problems != getattr(self, "_skill_problems", None):
+                for problem in problems:
+                    self.audit.log("skill_skipped", problem=problem)
+                self._skill_problems = problems
+            self._skills = (time.monotonic(), found)
+        return found
 
     def add_secret(self, value: str) -> None:
         if value and len(value) >= 8 and value not in self.secrets:
@@ -296,7 +334,8 @@ class Agent:
 
     # ---- request building --------------------------------------------------------------------------
     def _tools_for(self, channel: str, model: str = "", tier: str = tiers.MAIN) -> List[Dict[str, Any]]:
-        specs = [t.spec() for t in self.tools.values() if channel in t.channels]
+        specs = [t.spec() for t in self.tools.values() if channel in t.channels
+                 and (t.name != "expand_result" or self.squeezer.kept())]   # only once something was shortened
         if tier == tiers.LIGHT:
             specs.append(dict(tiers.HAND_OVER))
         if self.settings.web_search and channel != "glance":
@@ -391,6 +430,9 @@ class Agent:
             tool = self.tools.get(name)
             if tool is None or channel not in tool.channels:
                 return fail(f"The tool {name} isn't available here.")
+        if name == "send_text" and isinstance(args.get("message"), str):
+            from .humanize import humanize
+            args = dict(args, message=humanize(args["message"]))   # you approve, and they get, the tidy text
         verdict = self.policy.check(name, args, channel, toolset)
         what = f"use the screen: {name.replace('_', ' ')}" if toolset == "computer" else describe_call(name, args)
         if verdict.action == BLOCK:
@@ -429,6 +471,11 @@ class Agent:
         if time.monotonic() - started > 5:
             self.audit.log("tool_slow", tool=name, seconds=round(time.monotonic() - started, 1))
         result["content"] = self._redact(out.content)
+        if channel != "guest":                # guests can't read kept results, so theirs go in whole
+            whole = result["content"]
+            result["content"] = self.squeezer.squeeze(name, whole)
+            if result["content"] is not whole and isinstance(whole, str):
+                self.audit.log("result_shortened", tool=name, chars=len(whole), sent=len(result["content"]))
         if not out.is_error and isinstance(result["content"], str) and channel != "guest":
             try:
                 self.notice(result["content"])      # places it looked up: the names you may say next
@@ -511,9 +558,16 @@ class Agent:
                 line = ""
             if line:
                 extra += "\n\n" + line
+        if not guest:
+            from . import skills as skills_mod
+            chosen = skills_mod.pick(self.skills(), asked, brief=skills_mod.is_brief(self.store))
+            if chosen:
+                extra += "\n\n" + skills_mod.prompt_text(chosen)
+                self.audit.log("skills_used", channel=channel, skills=[k.name for k in chosen])
         system = system[:-1] + [dict(system[-1], text=system[-1]["text"] + "\n\n" + extra)]
         getattr(events, "working", lambda _tier: None)(tier)
         resumes, said_before = 0, ""
+        tried = {model}
         for _ in range(self.settings.max_steps):
             if cancel.is_set():
                 turn.stopped = True
@@ -550,6 +604,18 @@ class Agent:
                             self.store.append(session_id, role, block)
                         said_before = (said_before + " " + said).strip()
                     self.audit.log("reply_resumed", channel=channel, after_chars=len(said))
+                    continue
+                spare = [m for m in tiers.fallbacks(model, self.settings) if m not in tried]
+                if switch_model(exc) and spare and len(tried) <= MAX_FALLBACKS and not cancel.is_set():
+                    # This model is busy, rate-limited or gone; another one answers instead of silence.
+                    for key, value in acc.usage.items():
+                        turn.usage[key] = turn.usage.get(key, 0) + value
+                    turn.cost += request_cost(model, acc.usage)
+                    self.audit.log("model_fallback", channel=channel, failed=model, to=spare[0],
+                                   status=exc.status or None, kind=exc.kind or None)
+                    model = spare[0]
+                    tried.add(model)
+                    turn.model = model
                     continue
                 turn.error = str(exc)
                 break

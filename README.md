@@ -319,6 +319,32 @@ lessons it reads before every request, kept in its database on your Mac (no serv
   Lessons that mention approvals or safety, links, addresses, long numbers or keys, or tell Argus to send
   something somewhere, are refused.
 
+## Better every day
+
+* **A morning review.** At 7:41 (`[schedule] daily_review`, "" turns it off) Argus reads yesterday's activity
+  log (what failed, how fast answers started, what it cost; never what you said), compares it with the week
+  before, and speaks up only when something is worth hearing: a tool that kept failing, slower answers, your
+  voice not being recognised. A crash in its own code comes with the words to say to fix it ("Argus, fix the
+  weather crash from yesterday"); the fix still needs your Touch ID to merge. `argusctl today` (or
+  `argusctl review 2026-11-24`) shows the full report.
+* **Another model when Claude is busy.** If the model answering is overloaded, rate-limited or retired,
+  the next one answers instead of silence (main, then heavy, then light). Bad keys, no credit and no
+  internet don't hop between models; another model wouldn't help.
+* **Long results go in short.** A huge web page or log is tidied (compact JSON, repeated lines folded) and,
+  if still long, sent as its start and end with the middle kept on the Mac; Argus reads the middle
+  (`expand_result`) only when the answer may be there. Faster replies, smaller bills.
+* **Skills.** Argus reads instructions for a kind of task when a request needs them, in the same SKILL.md
+  format Claude uses. Built in: *humanizer* (texts and emails that go out as you don't sound machine-written;
+  texts are also tidied before you approve them), *clean-code* (how to fix code, its own included),
+  *brief*. Add your own as `~/.argus/skills/<name>/SKILL.md`; `argusctl skills` lists them.
+* **Brief mode.** "Argus, keep your answers short" turns it on; "talk normally" turns it off.
+* **Google search rests.** When Gemini's free requests run out, Argus stops asking it until they reset
+  (midnight Pacific for the daily limit) and searches the web instead.
+* **Your details off people-search sites.** "Argus, help me get my details off data broker sites": it walks
+  you through California's DROP (one verified request to 500+ brokers), drafts removals for sites like
+  Whitepages and Spokeo, and keeps a list of what was sent, confirmed or came back. You do the identity
+  checks yourself; looking yourself up happens only when you ask.
+
 ## Phone calls from your own number
 
 Argus can phone a business for you (book a table, ask about opening hours) from your own number:
@@ -529,6 +555,8 @@ argusctl errors [--watch]  # recent problems in plain words (or live)
 argusctl report            # a problem report on your Desktop that is safe to share
 argusctl timing [n]        # how long the last spoken answers took, step by step
 argusctl usage             # estimated Claude spend today and this month
+argusctl today             # today's review (argusctl review 2026-11-24 for another day)
+argusctl skills            # skills Argus can use, built in and yours (~/.argus/skills)
 argusctl ask "any news?"   # type a request instead of saying it (Argus answers out loud)
 argusctl say "Hello"       # speak something
 argusctl mic off|on        # microphone

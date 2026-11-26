@@ -898,6 +898,36 @@ def cmd_push(args) -> int:
     return 0
 
 
+def cmd_today(args, *, store=None, now=None) -> int:
+    """The daily review (daily.py) for today so far, or for another day."""
+    from datetime import date, datetime
+    from . import daily
+    from .store import Store
+    settings = config_mod.load()
+    day = args.day if getattr(args, "day", None) else (now or datetime.now()).date().isoformat()
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        print(f"{day!r} isn't a date; use the form 2026-11-24.")
+        return 2
+    reviewer = daily.Reviewer(store or Store(settings.db_path), settings.audit_path)
+    print(daily.report(reviewer.run(day), reviewer.history(day)))
+    return 0
+
+
+def cmd_skills(args) -> int:
+    """Skills Argus can use (built in, and yours in ~/.argus/skills), and any it had to skip."""
+    from . import skills
+    settings = config_mod.load()
+    found, problems = skills.load([settings.skills_dir])
+    for skill in sorted(found.values(), key=lambda k: k.name):
+        print(f"{skill.name} ({skill.source}): {skill.description[:100]}")
+    for problem in problems:
+        print(f"Skipped {problem}")
+    print(f"Add your own: {settings.skills_dir}/<name>/SKILL.md (the same format as Claude's skills).")
+    return 0
+
+
 def cmd_usage(args) -> int:
     """Claude API spend from the activity log (estimates from token counts)."""
     import time
@@ -995,6 +1025,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     s = sub.add_parser("doctor", help="check that everything Argus needs is in place")
     s.add_argument("--offline", action="store_true", help="skip the check that calls the Claude API")
     sub.add_parser("usage", help="estimated Claude API spend today and this month")
+    sub.add_parser("skills", help="skills Argus can use (built in, and yours in ~/.argus/skills)")
+    sub.add_parser("today", help="today's review: what failed, how fast answers were, the trend")
+    s = sub.add_parser("review", help="the daily review for another day (argusctl review 2026-11-24)")
+    s.add_argument("day")
     s = sub.add_parser("lessons", help="what Argus has learned from your corrections and its own mistakes")
     s.add_argument("action", nargs="?", choices=["list", "forget", "clear"], default="list")
     s.add_argument("id", nargs="?", help="lesson number to forget, e.g. 3 or L3")
@@ -1031,6 +1065,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return cmd_push(args)
     if args.cmd == "usage":
         return cmd_usage(args)
+    if args.cmd == "skills":
+        return cmd_skills(args)
+    if args.cmd in ("today", "review"):
+        return cmd_today(args)
     if args.cmd == "lessons":
         return cmd_lessons(args)
     if args.cmd == "phone-token":

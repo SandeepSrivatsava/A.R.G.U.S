@@ -388,3 +388,14 @@ its own words.
 | A worker may split its own task once (at most 4 sub-tasks; sub-tasks can't split again) and a job never holds more than 16 tasks. At most 2 jobs run at once, each for at most 2 hours before it pauses; the budget warns at 80% and stops new work at 100%. Cancelling stops workers mid-task. | `argus/crew.py` |
 | Results from one worker are passed to the next marked as information, not instructions; a busy or rate-limited API is retried with a pause, other failures once, then the task goes to you. Each task keeps a short run history. | `argus/crew.py` |
 | Paperclip: Argus only talks to a server on this Mac or on Tailscale (localhost, 100.64.0.0/10, `*.ts.net`), checked when the setting is read and again before any request. Only the ticket's title and description are sent; the key lives in secrets.env and never reaches Claude. | `argus/paperclip.py`, `argus/config.py` |
+
+## 32. The daily review, model fallback, shortened results, skills and privacy
+
+| Protection | Where |
+|---|---|
+| The daily review reads only the activity log (events, tool names, errors, timings, cost), never what you said, and never changes code: it tells you what to say if you want a fix, and a merge still needs Touch ID. | `argus/daily.py` |
+| Falling back to another model happens only for busy, rate-limited, failing or retired models; never for a wrong key, no credit, a bad request or no internet, and at most twice a request. | `argus/agent.py` (`switch_model`), `argus/tiers.py` |
+| Long tool results kept on the Mac stay in memory only (the newest 40, gone on restart). Guests' results are never shortened and guests can't read kept results. Exact-text tools (code_fix, write_file) are never shortened. | `argus/squeeze.py`, `argus/agent.py` |
+| Skills are instructions, so only files you own that nobody else can change are read (no links, at most 40 KB), never for guests, and each is introduced as unable to change approvals or safety rules, which are enforced in code anyway. Argus can't edit its own built-in skills with code_fix. | `argus/skills.py`, `argus/selfcare.py` |
+| Texts sent for you are tidied before you approve them, so you approve exactly what is sent. | `argus/humanize.py`, `argus/agent.py` |
+| The privacy tool stores only site names, statuses and dates; looking you up on people-search sites happens only when you ask; Argus never fills identity checks, ID uploads or payment pages. | `argus/privacy.py` |

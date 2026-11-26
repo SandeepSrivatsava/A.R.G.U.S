@@ -335,6 +335,8 @@ def test_google_search_through_gemini(tmp_path):
     assert tools["google_search"].run({"question": ""}, ctx).is_error
     fake.gemini = (429, {"error": {"message": "Resource exhausted"}})
     assert "used up" in tools["google_search"].run({"question": "x"}, ctx).content
+    assert "resting" in tools["google_search"].run({"question": "x"}, ctx).content     # no second try for a while
+    made["gemini_rest"]["until"] = 0.0
 
     def down(*a, **k):
         from argus.maps import MapsError

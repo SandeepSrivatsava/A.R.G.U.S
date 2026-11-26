@@ -148,6 +148,8 @@ class App:
         self.crew = crew_mod.Crew(self.store, self.agent, settings, deliver=lambda text: self.deliver(text),
                                   workspace=settings.workspace, audit=self.audit)
         crew_mod.attach(self.crew, self.agent.tools)
+        from . import privacy as privacy_mod                           # data-broker removals (privacy.py)
+        privacy_mod.attach(self.store, self.agent.tools)
         # Paperclip, if a Paperclip server is set up (paperclip.py)
         from . import paperclip as paperclip_mod
         paperclip_mod.attach(settings, self.agent.tools, secrets.get("PAPERCLIP_API_KEY", ""))
@@ -160,13 +162,27 @@ class App:
         self.scheduler = Scheduler(self.store, deliver=self.deliver, run_task=self.run_task, headlines=format_headlines,
                                    tz=settings.timezone or None,
                                    follow_check=followups_mod.make_check(self.agent, self.store, settings.user_name),
-                                   trip_check=weather_mod.make_trip_check(self.agent, self.store, settings.user_name))
+                                   trip_check=weather_mod.make_trip_check(self.agent, self.store, settings.user_name),
+                                   review=self._daily_review)
         self.phone: Optional[PhoneServer] = None
         if voice:
             self.argus = self._build_voice(transcriber, source, speaker_voice, approver)
             argus = self.argus
             argus.names = self.names
             self.policy.owner_verified = lambda: bool(argus.voice_lock_active)   # only his voice gets through
+
+    def _daily_review(self) -> str:
+        """Yesterday's review (daily.py): the note to say, or "" when nothing is worth hearing."""
+        from datetime import datetime
+        from . import daily
+        try:
+            from zoneinfo import ZoneInfo
+            now = datetime.now(ZoneInfo(self.settings.timezone)) if self.settings.timezone else datetime.now()
+        except Exception:
+            now = datetime.now()
+        note = daily.Reviewer(self.store, self.settings.audit_path).morning(now.date())
+        self.audit.log("daily_review", said=bool(note) or None)
+        return note
 
     # ---- pieces ------------------------------------------------------------------------------------
     def _secret_values(self, secrets: dict) -> list:
@@ -295,7 +311,7 @@ class App:
         self.logkeeper = logkeeper_mod.from_settings(s)   # every log, also in ~/Downloads/Logs, 30 days
         if self.logkeeper is not None:
             self.logkeeper.start()
-        sync_default_jobs(self.store, s.morning_headlines, s.morning_briefing, s.timezone or None)
+        sync_default_jobs(self.store, s.morning_headlines, s.morning_briefing, s.timezone or None, s.daily_review)
         self.scheduler.start()
         self.crew.resume()                                # crew jobs that were running before a restart
         if s.phone_enabled:

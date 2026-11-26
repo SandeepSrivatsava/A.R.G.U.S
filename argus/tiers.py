@@ -52,6 +52,18 @@ def choose(content: Any, channel: str, settings) -> Tuple[str, str]:
     return LIGHT, settings.light_model
 
 
+def fallbacks(model: str, settings) -> list:
+    """Other models to try, in order, when `model` is overloaded, rate-limited or retired (the OmniRoute
+    idea: a busy model shouldn't leave you with silence). The main model first, then the heavy one, then the
+    light one; never the same model twice."""
+    order = [settings.model, settings.heavy_model, settings.light_model, getattr(settings, "small_model", "")]
+    out = []
+    for m in order:
+        if m and m != model and m not in out:
+            out.append(m)
+    return out
+
+
 def model_for(tier: str, settings) -> str:
     return {LIGHT: settings.light_model, HEAVY: settings.heavy_model}.get(tier) or settings.model
 

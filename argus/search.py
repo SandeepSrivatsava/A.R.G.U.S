@@ -13,6 +13,7 @@ what's sent to improve its products, which is why only the query goes.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .maps import MapsError, http_json
@@ -50,6 +51,8 @@ def _google_error(service: str, status: int, data: Any, key: str) -> SearchError
     if status in (400, 401, 403) and ("api key" in lowered or "api_key" in lowered):
         return SearchError(f"Google refused the {service} key")
     if status == 429:
+        if re.search(r"per[ _]?day|daily", lowered):
+            return SearchError(f"{service}: today's free requests are used up (daily limit); try tomorrow")
         return SearchError(f"{service}: today's free requests are used up, or too many at once; try later")
     return SearchError(f"{service} answered HTTP {status}" + (f" ({message})" if message else ""))
 
@@ -182,8 +185,26 @@ GOOGLE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["
 CHANNELS = frozenset({"voice", "phone", "cli", "android", "scheduler", "guest", "followup"})
 
 
+def rest_until(error: str, now: float) -> float:
+    """After Google says no more free requests: when to try Gemini again. The daily limit resets at midnight
+    Pacific time; "too many at once" passes in a few minutes."""
+    if "daily limit" in error:
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        pacific = ZoneInfo("America/Los_Angeles")
+        here = datetime.fromtimestamp(now, pacific)
+        midnight = (here + timedelta(days=1)).replace(hour=0, minute=1, second=0, microsecond=0)
+        return midnight.timestamp()
+    if "free requests" in error:
+        return now + 600
+    return now
+
+
 def attach(settings, secrets: Dict[str, str], tools: Dict[str, Any], *, request: Request = http_json,
-           where: Callable[[], Optional[Tuple[float, float]]] = lambda: None) -> Dict[str, Any]:
+           where: Callable[[], Optional[Tuple[float, float]]] = lambda: None,
+           clock: Callable[[], float] = None) -> Dict[str, Any]:
+    import time as _time
+    clock = clock or _time.time
     from .toolbox import Tool, ToolOutput
     made: Dict[str, Any] = {}
     maps_key = str(secrets.get("GOOGLE_MAPS_API_KEY") or "").strip()
@@ -214,13 +235,19 @@ def attach(settings, secrets: Dict[str, str], tools: Dict[str, Any], *, request:
         gemini = made["gemini"] = Gemini(gemini_key, getattr(settings, "gemini_model", "gemini-3.8-flash"),
                                          request=request)
 
+        resting = made["gemini_rest"] = {"until": 0.0}
+
         def google_search(args: Dict[str, Any], ctx) -> ToolOutput:
             question = " ".join(str(args.get("question") or "").split())
             if not question:
                 return ToolOutput.error("Ask a question.")
+            if clock() < resting["until"]:      # no point asking: the free requests are used up for now
+                return ToolOutput("Google search is resting (its free requests are used up for now); "
+                                  "use web_search for this.")
             try:
                 answer, sources, queries = gemini.search(question)
             except SearchError as exc:
+                resting["until"] = rest_until(str(exc), clock())
                 return ToolOutput.error(f"Google search (Gemini): {exc}. Use web_search instead.")
             out = [UNTRUSTED, f"Google (answered by Gemini {gemini.model} from Google Search):", answer]
             if queries:

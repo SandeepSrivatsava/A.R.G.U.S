@@ -165,6 +165,8 @@ class ClaudeMock(ThreadingHTTPServer):
         self.requests: List[Dict[str, Any]] = []
         self.log_path = log_path
         self.fail_next: List[int] = []      # HTTP statuses to return before succeeding (retry tests)
+        self.fail_models: Dict[str, int] = {}   # model -> HTTP status it always answers with (fallback tests)
+        self.models_asked: List[str] = []
         self.invalid: List[str] = []        # requests the real API would have rejected (should stay empty)
         self._ids = 0
         self._lock = threading.Lock()
@@ -206,6 +208,12 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(404, {"type": "error", "error": {"type": "not_found_error", "message": "no"}})
         if self.headers.get("x-api-key") != self.server.key or not self.headers.get("anthropic-version"):
             return self._json(401, {"type": "error", "error": {"type": "authentication_error", "message": "invalid x-api-key"}})
+        self.server.models_asked.append(str(body.get("model")))
+        if body.get("model") in self.server.fail_models:
+            status = self.server.fail_models[body["model"]]
+            kind = {404: "not_found_error", 429: "rate_limit_error", 401: "authentication_error",
+                    400: "invalid_request_error"}.get(status, "overloaded_error")
+            return self._json(status, {"type": "error", "error": {"type": kind, "message": kind}})
         if self.server.fail_next:
             status = self.server.fail_next.pop(0)
             return self._json(status, {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}})

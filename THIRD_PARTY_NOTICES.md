@@ -125,3 +125,13 @@ Argus's crew (`argus/crew.py`) follows the design of Paperclip (https://github.c
 MIT License, Copyright (c) 2026 Paperclip Labs, Inc.): tickets for roles, blocker links, atomic checkout,
 goal ancestry, per-job budgets and owner approvals. No Paperclip code is included; `argus/paperclip.py` talks
 to a Paperclip server through its public REST API.
+
+## Ideas from tools Sandeep sent (2.16.0)
+
+Argus's own code follows ideas from: OmniRoute (switching models when one is unavailable), Headroom
+(https://github.com/chopratejas/headroom, Apache-2.0: shortening tool results and keeping the originals for
+retrieval), Humanizer (https://github.com/blader/humanizer, MIT, after Wikipedia's "Signs of AI writing"),
+"caveman" brief replies, Andrej Karpathy's coding guidelines, and Claude's SKILL.md format. No code or text
+from these projects is included; the built-in skills are written for Argus. California's DROP is a public
+service of the California Privacy Protection Agency (privacy.ca.gov/drop).
+

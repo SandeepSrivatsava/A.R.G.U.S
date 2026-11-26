@@ -13,6 +13,7 @@ from .store import Store
 log = logging.getLogger("argus.scheduler")
 
 HEADLINES_JOB = "Morning headlines"
+REVIEW_JOB = "Daily review: what went wrong yesterday and what to fix"
 BRIEFING_JOB = ("Morning briefing: today's weather (the weather tool, for 'here'); if you have the calendar tool, today's "
                 "events and anything to leave early for; if you have mail_search, anything important that arrived since "
                 "yesterday evening (bookings, replies from people, deliveries; skip newsletters and ads); the 3 most "
@@ -23,13 +24,15 @@ RETIRED_BRIEFINGS = ("Morning briefing: today's weather (the weather tool, for '
                      "preamble.",)
 
 
-def sync_default_jobs(store: Store, headlines_cron: str, briefing_cron: str, tz: Optional[str]) -> None:
+def sync_default_jobs(store: Store, headlines_cron: str, briefing_cron: str, tz: Optional[str],
+                      review_cron: str = "") -> None:
     for old in RETIRED_BRIEFINGS:                     # the briefing's wording changed: replace the old job
         retired = store.task_named(old)
         if retired is not None:
             store.cancel_task(retired)
             store.set("default_job:task", "")
-    for text, mode, cron in ((HEADLINES_JOB, "news", headlines_cron), (BRIEFING_JOB, "task", briefing_cron)):
+    for text, mode, cron in ((HEADLINES_JOB, "news", headlines_cron), (BRIEFING_JOB, "task", briefing_cron),
+                             (REVIEW_JOB, "review", review_cron)):
         existing = store.task_named(text)
         key = f"default_job:{mode}"
         if existing is not None and store.get(key) == cron:
@@ -50,8 +53,10 @@ class Scheduler:
     def __init__(self, store: Store, *, deliver: Callable[[str], None], run_task: Callable[[str], str],
                  headlines: Callable[[], str], tz: Optional[str] = None, interval: float = 20.0,
                  trip_check: Optional[Callable[[Dict[str, Any]], str]] = None,
-                 follow_check: Optional[Callable[[Dict[str, Any]], str]] = None):
+                 follow_check: Optional[Callable[[Dict[str, Any]], str]] = None,
+                 review: Optional[Callable[[], str]] = None):
         self.store = store
+        self.review = review
         self.follow_check = follow_check
         self.trip_check = trip_check
         self.deliver = deliver
@@ -76,6 +81,10 @@ class Scheduler:
                 elif task["mode"] == "followup":
                     from .followups import due
                     again = due(task, now, self.follow_check, self.deliver, self.tz)
+                elif task["mode"] == "review":
+                    note = self.review() if self.review is not None else ""
+                    if note:                              # quiet on days with nothing worth saying
+                        self.deliver(note)
                 elif task["mode"] == "trip":
                     from .weather import read_trip
                     trip = read_trip(task["text"])

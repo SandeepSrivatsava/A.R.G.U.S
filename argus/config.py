@@ -143,6 +143,7 @@ class Settings:
     # built-in scheduled jobs ("" turns one off)
     morning_headlines: str = "0 7 * * *"
     morning_briefing: str = ""
+    daily_review: str = "41 7 * * *"        # yesterday's review, said only when something is worth hearing
 
     # ---- paths -------------------------------------------------------------------------------------
     @property
@@ -160,6 +161,10 @@ class Settings:
     @property
     def run_dir(self) -> Path:
         return self.home / "run"
+
+    @property
+    def skills_dir(self) -> Path:
+        return self.home / "skills"
 
     @property
     def db_path(self) -> Path:
@@ -253,7 +258,8 @@ _SECTIONS: Dict[str, Dict[str, str]] = {
               "ask_first": "calls_ask_first",
               "voice": "call_voice",
               "input_device": "call_input_device", "tap": "call_tap"},
-    "schedule": {"morning_headlines": "morning_headlines", "morning_briefing": "morning_briefing"},
+    "schedule": {"morning_headlines": "morning_headlines", "morning_briefing": "morning_briefing",
+                 "daily_review": "daily_review"},
     "paperclip": {"url": "paperclip_url", "company": "paperclip_company"},
 }
 
@@ -339,7 +345,8 @@ def _validate(s: "Settings") -> None:
         except Exception:
             raise ValueError(f"unknown time zone {s.timezone!r} (use a name like America/Los_Angeles)") from None
     for name, cron in (("schedule.morning_headlines", s.morning_headlines),
-                       ("schedule.morning_briefing", s.morning_briefing)):
+                       ("schedule.morning_briefing", s.morning_briefing),
+                       ("schedule.daily_review", s.daily_review)):
         if cron:
             try:
                 Cron(cron)
